@@ -1,0 +1,36 @@
+// Prisma schema for the private projects area.
+// Local development uses SQLite; production uses Postgres (Neon).
+// The models below are intentionally provider-agnostic so the same schema
+// works in both — we use `prisma db push` rather than migrations.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id        String    @id @default(cuid())
+  title     String
+  slug      String    @unique
+  summary   String
+  // One of: "idea" | "building" | "launched" | "paused" (validated in app code)
+  status    String    @default("building")
+  link      String?
+  startedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  updates   Update[]
+}
+
+model Update {
+  id        String   @id @default(cuid())
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+  title     String
+  body      String // markdown
+  createdAt DateTime @default(now())
+}
