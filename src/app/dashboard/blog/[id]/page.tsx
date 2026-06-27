@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getPostById } from "@/lib/blog";
-import { PostForm } from "@/components/dashboard/PostForm";
+import { PostEditor } from "@/components/dashboard/PostEditor";
 import { ConfirmSubmit } from "@/components/dashboard/ConfirmSubmit";
-import { updatePost, deletePost } from "@/app/dashboard/blog/actions";
+import { deletePost } from "@/app/dashboard/blog/actions";
 
 export default async function EditPostPage({
   params,
@@ -31,29 +31,27 @@ export default async function EditPostPage({
         ) : null}
       </div>
 
-      <div className="rounded-2xl border border-zinc-200 bg-white p-8">
-        <PostForm
-          action={updatePost}
-          submitLabel="Save changes"
-          post={{
-            id: post.id,
-            title: post.title,
-            excerpt: post.excerpt,
-            body: post.body,
-            category: post.category,
-            kind: post.kind,
-            sourceUrl: post.sourceUrl,
-            sourceName: post.sourceName,
-            published: post.published,
-          }}
-        />
-      </div>
+      <PostEditor
+        post={{
+          id: post.id,
+          title: post.title,
+          excerpt: post.excerpt,
+          body: post.body,
+          category: post.category,
+          kind: post.kind,
+          metaDescription: post.metaDescription ?? "",
+          keywords: post.keywords ?? "",
+          imageUrl: post.imageUrl ?? "",
+          imageAlt: post.imageAlt ?? "",
+          sourceUrl: post.sourceUrl ?? "",
+          sourceName: post.sourceName ?? "",
+          published: post.published,
+        }}
+      />
 
       <section className="rounded-2xl border border-red-200 bg-red-50 p-6">
         <h2 className="text-lg font-semibold text-red-900">Delete post</h2>
-        <p className="mb-4 mt-1 text-sm text-red-700">
-          Permanently removes this post.
-        </p>
+        <p className="mb-4 mt-1 text-sm text-red-700">Permanently removes this post.</p>
         <form action={deletePost}>
           <input type="hidden" name="id" value={post.id} />
           <ConfirmSubmit

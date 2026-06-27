@@ -4,8 +4,11 @@ import { notFound } from "next/navigation";
 import { Nav } from "@/components/site/Nav";
 import { Footer } from "@/components/site/Footer";
 import { Markdown } from "@/components/Markdown";
+import { profile } from "@/content/profile";
 import { getPublishedPostBySlug, POST_KIND_LABELS, type PostKind } from "@/lib/blog";
 import { formatDate } from "@/lib/format";
+
+const BASE = "https://abiolaonikoyi.com";
 
 export async function generateMetadata({
   params,
@@ -15,7 +18,33 @@ export async function generateMetadata({
   const { slug } = await params;
   const post = await getPublishedPostBySlug(slug);
   if (!post) return { title: "Not found" };
-  return { title: post.title, description: post.excerpt || undefined };
+
+  const description = post.metaDescription || post.excerpt || undefined;
+  const images = post.imageUrl
+    ? [{ url: post.imageUrl, alt: post.imageAlt || post.title }]
+    : undefined;
+
+  return {
+    title: post.title,
+    description,
+    keywords: post.keywords || undefined,
+    alternates: { canonical: `/blog/${post.slug}` },
+    openGraph: {
+      type: "article",
+      title: post.title,
+      description,
+      url: `${BASE}/blog/${post.slug}`,
+      publishedTime: post.publishedAt?.toISOString(),
+      authors: [profile.name],
+      images,
+    },
+    twitter: {
+      card: post.imageUrl ? "summary_large_image" : "summary",
+      title: post.title,
+      description,
+      images: post.imageUrl ? [post.imageUrl] : undefined,
+    },
+  };
 }
 
 export default async function PostPage({
@@ -27,8 +56,26 @@ export default async function PostPage({
   const post = await getPublishedPostBySlug(slug);
   if (!post) notFound();
 
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@type": "BlogPosting",
+    headline: post.title,
+    description: post.metaDescription || post.excerpt || undefined,
+    image: post.imageUrl || undefined,
+    datePublished: post.publishedAt?.toISOString(),
+    dateModified: post.updatedAt.toISOString(),
+    keywords: post.keywords || undefined,
+    author: { "@type": "Person", name: profile.name, url: BASE },
+    publisher: { "@type": "Person", name: profile.name, url: BASE },
+    mainEntityOfPage: `${BASE}/blog/${post.slug}`,
+  };
+
   return (
     <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
       <Nav />
       <main className="flex-1 pt-28">
         <article className="mx-auto max-w-2xl px-6 py-16">
@@ -54,6 +101,33 @@ export default async function PostPage({
           </h1>
           {post.excerpt ? (
             <p className="mt-3 text-lg text-zinc-400">{post.excerpt}</p>
+          ) : null}
+
+          {post.imageUrl ? (
+            <figure className="mt-8">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={post.imageUrl}
+                alt={post.imageAlt || post.title}
+                className="w-full rounded-2xl border border-white/10 object-cover"
+              />
+              {post.imageCredit ? (
+                <figcaption className="mt-2 text-xs text-zinc-500">
+                  {post.imageCreditUrl ? (
+                    <a
+                      href={post.imageCreditUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:text-zinc-300"
+                    >
+                      {post.imageCredit}
+                    </a>
+                  ) : (
+                    post.imageCredit
+                  )}
+                </figcaption>
+              ) : null}
+            </figure>
           ) : null}
 
           <div className="mt-8 border-t border-white/10 pt-8 text-[1.05rem]">

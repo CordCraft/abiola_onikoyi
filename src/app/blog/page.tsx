@@ -41,28 +41,38 @@ export default async function BlogIndexPage() {
                 <li key={p.id}>
                   <Link
                     href={`/blog/${p.slug}`}
-                    className="group block py-7 transition-colors hover:bg-white/[0.02]"
+                    className="group flex gap-5 py-7 transition-colors hover:bg-white/[0.02]"
                   >
-                    <div className="flex flex-wrap items-center gap-2 text-xs">
-                      <span className="rounded-full bg-accent/10 px-2.5 py-1 font-semibold text-accent">
-                        {POST_KIND_LABELS[p.kind as PostKind] ?? p.kind}
-                      </span>
-                      <span className="text-zinc-500">{p.category}</span>
-                      {p.publishedAt ? (
-                        <>
-                          <span className="text-zinc-600">·</span>
-                          <span className="text-zinc-500">
-                            {formatDate(p.publishedAt)}
-                          </span>
-                        </>
+                    {p.imageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={p.imageUrl}
+                        alt={p.imageAlt || p.title}
+                        className="hidden h-24 w-36 shrink-0 rounded-lg border border-white/10 object-cover sm:block"
+                      />
+                    ) : null}
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span className="rounded-full bg-accent/10 px-2.5 py-1 font-semibold text-accent">
+                          {POST_KIND_LABELS[p.kind as PostKind] ?? p.kind}
+                        </span>
+                        <span className="text-zinc-500">{p.category}</span>
+                        {p.publishedAt ? (
+                          <>
+                            <span className="text-zinc-600">·</span>
+                            <span className="text-zinc-500">
+                              {formatDate(p.publishedAt)}
+                            </span>
+                          </>
+                        ) : null}
+                      </div>
+                      <h2 className="mt-2 text-xl font-semibold text-zinc-100 group-hover:text-white">
+                        {p.title}
+                      </h2>
+                      {p.excerpt ? (
+                        <p className="mt-1 text-zinc-400">{p.excerpt}</p>
                       ) : null}
                     </div>
-                    <h2 className="mt-2 text-xl font-semibold text-zinc-100 group-hover:text-white">
-                      {p.title}
-                    </h2>
-                    {p.excerpt ? (
-                      <p className="mt-1 text-zinc-400">{p.excerpt}</p>
-                    ) : null}
                   </Link>
                 </li>
               ))}

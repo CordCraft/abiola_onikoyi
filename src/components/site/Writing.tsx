@@ -47,6 +47,14 @@ export async function Writing() {
               href={`/blog/${p.slug}`}
               className="group flex flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-6 transition-colors hover:border-white/20"
             >
+              {p.imageUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={p.imageUrl}
+                  alt={p.imageAlt || p.title}
+                  className="mb-4 h-32 w-full rounded-lg border border-white/10 object-cover"
+                />
+              ) : null}
               <div className="flex items-center gap-2 text-xs">
                 <span className="rounded-full bg-accent/10 px-2 py-0.5 font-semibold text-accent">
                   {POST_KIND_LABELS[p.kind as PostKind] ?? p.kind}

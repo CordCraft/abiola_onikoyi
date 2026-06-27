@@ -145,6 +145,36 @@ export function PostForm({
         </div>
       </div>
 
+      <fieldset className="rounded-xl border border-zinc-200 p-4">
+        <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+          SEO &amp; image (optional)
+        </legend>
+        <div className="space-y-4">
+          <div>
+            <label htmlFor="metaDescription" className={labelClass}>
+              Meta description
+            </label>
+            <input id="metaDescription" name="metaDescription" className={inputClass} />
+          </div>
+          <div>
+            <label htmlFor="keywords" className={labelClass}>
+              Keywords (comma-separated)
+            </label>
+            <input id="keywords" name="keywords" className={inputClass} />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label htmlFor="imageUrl" className={labelClass}>Image URL</label>
+              <input id="imageUrl" name="imageUrl" type="url" className={inputClass} />
+            </div>
+            <div>
+              <label htmlFor="imageAlt" className={labelClass}>Image alt text</label>
+              <input id="imageAlt" name="imageAlt" className={inputClass} />
+            </div>
+          </div>
+        </div>
+      </fieldset>
+
       <label className="flex items-center gap-2 text-sm font-medium text-zinc-700">
         <input
           type="checkbox"

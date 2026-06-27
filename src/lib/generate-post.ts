@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import Parser from "rss-parser";
 import { prisma } from "@/lib/prisma";
 import { uniquePostSlug } from "@/lib/blog";
+import { fetchStockImage } from "@/lib/openverse";
 import {
   POST_CATEGORIES,
   type PostCategory,
@@ -19,7 +20,15 @@ const FEEDS = [
 
 const MODEL = "claude-opus-4-8";
 
-type GeneratedFields = { title: string; excerpt: string; body: string };
+type GeneratedFields = {
+  title: string;
+  excerpt: string;
+  body: string;
+  metaDescription: string;
+  keywords: string;
+  imageQuery: string;
+  imageAlt: string;
+};
 
 function pickWeeklyPlan(): { kind: PostKind; category: PostCategory } {
   // Alternate news/insight week over week; rotate the theme.
@@ -71,10 +80,25 @@ async function generateFields(
     title: String(data.title).trim(),
     excerpt: String(data.excerpt ?? "").trim(),
     body: String(data.body).trim(),
+    metaDescription: String(data.metaDescription ?? data.excerpt ?? "")
+      .trim()
+      .slice(0, 160),
+    keywords: String(data.keywords ?? "").trim(),
+    imageQuery: String(data.imageQuery ?? "").trim(),
+    imageAlt: String(data.imageAlt ?? "").trim(),
   };
 }
 
-const VOICE = `You are writing in the first person as ${profile.name}, a petroleum engineer at Saudi Aramco (ex-Shell) and inventor on five US patents. Voice: knowledgeable, measured, practical, forward-looking on sustainable energy. Avoid hype and buzzwords. Do not use em dashes. Return ONLY a JSON object with keys "title" (string), "excerpt" (one-sentence summary, string) and "body" (markdown string, ~500-650 words with a few short paragraphs and at most one short list). No code fences, no commentary outside the JSON.`;
+const VOICE = `You are writing in the first person as ${profile.name}, a petroleum engineer at Saudi Aramco (ex-Shell) and inventor on five US patents. Voice: knowledgeable, measured, practical, forward-looking on sustainable energy. Avoid hype and buzzwords. Do not use em dashes.
+
+Optimise for SEO and readability. The title should be specific and compelling (about 60 characters). Return ONLY a JSON object (no code fences, no text outside it) with these keys:
+- "title": string
+- "excerpt": one-sentence summary (string)
+- "body": markdown, ~500-650 words, a few short paragraphs and at most one short list, with one or two "## " subheadings that include relevant keywords
+- "metaDescription": a search-result meta description, max 155 characters
+- "keywords": 5-7 comma-separated SEO keywords/phrases
+- "imageQuery": a 2-4 word search phrase for a relevant stock photo (concrete and visual, e.g. "oil refinery pipeline")
+- "imageAlt": a short descriptive alt text for that image`;
 
 async function findFreshNewsItem(): Promise<
   { title: string; link: string; snippet: string; source: string } | null
@@ -139,6 +163,11 @@ export async function generateWeeklyPost() {
 
   const slug = await uniquePostSlug(fields.title);
 
+  // Find a relevant openly-licensed photo (best-effort; null is fine).
+  const image = fields.imageQuery
+    ? await fetchStockImage(fields.imageQuery)
+    : null;
+
   return prisma.post.create({
     data: {
       slug,
@@ -147,6 +176,12 @@ export async function generateWeeklyPost() {
       body: fields.body,
       category,
       kind,
+      metaDescription: fields.metaDescription || fields.excerpt || null,
+      keywords: fields.keywords || null,
+      imageUrl: image?.url ?? null,
+      imageAlt: fields.imageAlt || fields.title,
+      imageCredit: image?.credit ?? null,
+      imageCreditUrl: image?.creditUrl ?? null,
       sourceUrl,
       sourceName,
       published: false, // drafts await review

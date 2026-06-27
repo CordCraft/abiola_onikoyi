@@ -45,6 +45,14 @@ model Post {
   category    String
   // "news" | "insight"
   kind        String    @default("insight")
+  // SEO
+  metaDescription String?
+  keywords        String? // comma-separated
+  // Article image (sourced from Openverse)
+  imageUrl       String?
+  imageAlt       String?
+  imageCredit    String?
+  imageCreditUrl String?
   sourceUrl   String?
   sourceName  String?
   published   Boolean   @default(false)

@@ -68,19 +68,19 @@ export const profile: Profile = {
   initials: "AO",
   headline: "Petroleum Engineer @ Saudi Aramco",
   tagline:
-    "Petroleum engineer with 11+ years across reservoir management, well testing, and production optimization. Inventor on five US patents, and committed to delivering sustainable energy solutions.",
+    "Petroleum engineer with 17+ years across reservoir management, well testing, and production optimization. Inventor on five US patents, and committed to delivering sustainable energy solutions.",
   location: "Riyadh, Saudi Arabia",
   email: "abiolaonikoyi@gmail.com",
   photo: "/photo.jpg",
 
   about: [
-    "I'm a petroleum engineer in Saudi Aramco's Water Injection Unit, bringing over 11 years of expertise in reservoir management, well testing, and production optimization. My focus is on innovative solutions for efficient water injection and sustained reservoir performance.",
+    "I'm a petroleum engineer in Saudi Aramco's Water Injection Unit, bringing over 17 years of expertise in reservoir management, well testing, and production optimization. My focus is on innovative solutions for efficient water injection and sustained reservoir performance.",
     "Prior experience at Shell gave me a strong foundation in wells and reservoir management, surveillance reviews, and intervention operations. I'm committed to delivering sustainable energy solutions by leveraging advanced technical skills and collaborating across functions to meet organisational objectives.",
     "Alongside my engineering work I'm an inventor on five US patents and an active builder of entrepreneurial ventures.",
   ],
 
   stats: [
-    { value: "11+", label: "Years in petroleum engineering" },
+    { value: "17+", label: "Years in petroleum engineering" },
     { value: "5", label: "US patents as inventor" },
     { value: "2", label: "Global energy majors" },
     { value: "MS", label: "Petroleum Engineering" },

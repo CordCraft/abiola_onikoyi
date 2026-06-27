@@ -47,6 +47,10 @@ export async function createPost(
   const kind = parseKind(formData.get("kind"));
   const sourceUrl = String(formData.get("sourceUrl") ?? "").trim() || null;
   const sourceName = String(formData.get("sourceName") ?? "").trim() || null;
+  const metaDescription = String(formData.get("metaDescription") ?? "").trim() || null;
+  const keywords = String(formData.get("keywords") ?? "").trim() || null;
+  const imageUrl = String(formData.get("imageUrl") ?? "").trim() || null;
+  const imageAlt = String(formData.get("imageAlt") ?? "").trim() || null;
   const published = formData.get("published") === "on";
 
   if (!title) return { error: "Title is required." };
@@ -61,6 +65,10 @@ export async function createPost(
       body,
       category,
       kind,
+      metaDescription,
+      keywords,
+      imageUrl,
+      imageAlt,
       sourceUrl,
       sourceName,
       published,
@@ -90,6 +98,10 @@ export async function updatePost(
   const kind = parseKind(formData.get("kind"));
   const sourceUrl = String(formData.get("sourceUrl") ?? "").trim() || null;
   const sourceName = String(formData.get("sourceName") ?? "").trim() || null;
+  const metaDescription = String(formData.get("metaDescription") ?? "").trim() || null;
+  const keywords = String(formData.get("keywords") ?? "").trim() || null;
+  const imageUrl = String(formData.get("imageUrl") ?? "").trim() || null;
+  const imageAlt = String(formData.get("imageAlt") ?? "").trim() || null;
   const published = formData.get("published") === "on";
 
   if (!title) return { error: "Title is required." };
@@ -105,6 +117,10 @@ export async function updatePost(
       body,
       category,
       kind,
+      metaDescription,
+      keywords,
+      imageUrl,
+      imageAlt,
       sourceUrl,
       sourceName,
       published,
