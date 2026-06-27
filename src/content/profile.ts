@@ -144,6 +144,12 @@ export const profile: Profile = {
 
   education: [
     {
+      school: "London School of Management Technology",
+      credential: "Doctorate of Business Administration (DBA)",
+      end: "2025",
+      details: "London, United Kingdom",
+    },
+    {
       school: "Heriot-Watt University",
       credential: "Master of Science (MS)",
       field: "Petroleum Engineering",

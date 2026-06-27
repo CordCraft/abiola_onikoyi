@@ -189,7 +189,9 @@ export function Education() {
                 <h3 className="text-lg font-semibold text-white">{ed.school}</h3>
                 {ed.start || ed.end ? (
                   <span className="shrink-0 text-sm font-medium text-zinc-500">
-                    {ed.start} to {ed.end}
+                    {ed.start && ed.end && ed.start !== ed.end
+                      ? `${ed.start} to ${ed.end}`
+                      : ed.end || ed.start}
                   </span>
                 ) : null}
               </div>

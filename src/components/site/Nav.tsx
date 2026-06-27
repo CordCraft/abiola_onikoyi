@@ -35,10 +35,15 @@ export function Nav() {
       <nav className="mx-auto flex h-16 max-w-5xl items-center justify-between px-6">
         <Link
           href="/"
-          className="flex items-center gap-2 font-semibold tracking-tight text-white"
+          className="flex items-center gap-2.5 font-semibold tracking-tight text-white"
         >
-          <span className="grid h-8 w-8 place-items-center rounded-md bg-gradient-to-br from-accent to-accent-2 text-sm font-bold text-zinc-950">
-            {profile.initials}
+          <span className="grid h-9 w-9 place-items-center overflow-hidden rounded-md bg-white p-1">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/logo-mark.png"
+              alt={`${profile.name} logo`}
+              className="h-full w-full object-contain"
+            />
           </span>
           <span className="hidden sm:inline">{profile.name}</span>
         </Link>
