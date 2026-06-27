@@ -4,7 +4,7 @@ export function Footer() {
   const year = 2026; // updated annually; avoids hydration mismatch from new Date()
 
   return (
-    <footer className="mt-auto border-t hairline bg-background/55 backdrop-blur-[2px]">
+    <footer className="mt-auto border-t hairline bg-background/45 backdrop-blur-[2px]">
       <div className="mx-auto flex max-w-5xl flex-col items-center justify-between gap-4 px-6 py-10 sm:flex-row">
         <p className="text-sm text-zinc-500">
           © {year} {profile.name}. All rights reserved.

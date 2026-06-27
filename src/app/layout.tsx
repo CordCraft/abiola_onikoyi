@@ -16,12 +16,12 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   metadataBase: new URL("https://abiolaonikoyi.com"),
   title: {
-    default: `${profile.name} — ${profile.headline}`,
-    template: `%s — ${profile.name}`,
+    default: `${profile.name} · ${profile.headline}`,
+    template: `%s · ${profile.name}`,
   },
   description: profile.tagline,
   openGraph: {
-    title: `${profile.name} — ${profile.headline}`,
+    title: `${profile.name} · ${profile.headline}`,
     description: profile.tagline,
     url: "https://abiolaonikoyi.com",
     siteName: profile.name,

@@ -40,7 +40,7 @@ export function ProjectForm({ action, project, submitLabel }: ProjectFormProps) 
           type="text"
           required
           defaultValue={project?.title ?? ""}
-          placeholder="e.g. Acme — AI scheduling assistant"
+          placeholder="e.g. Acme, an AI scheduling assistant"
           className={inputClass}
         />
       </div>

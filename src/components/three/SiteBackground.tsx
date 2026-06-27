@@ -23,9 +23,9 @@ const vertexShader = /* glsl */ `
       + cos(p.z * 0.22 + uTime * 0.8) * 1.3
       + sin((p.x + p.z) * 0.13 + uTime * 0.55) * 0.9;
 
-    // Ripple that follows the cursor
+    // Gentle ripple that follows the cursor
     float md = distance(p.xz, uMouse);
-    wave += exp(-md * md * 0.012) * 2.6 * sin(uTime * 2.2 - md * 0.8);
+    wave += exp(-md * md * 0.012) * 1.0 * sin(uTime * 1.8 - md * 0.8);
 
     p.y += wave * uAmp;
     vH = wave;
@@ -33,7 +33,7 @@ const vertexShader = /* glsl */ `
     vec4 mv = modelViewMatrix * vec4(p, 1.0);
     vDist = -mv.z;
     gl_Position = projectionMatrix * mv;
-    gl_PointSize = (1.6 + (vH + 2.0) * 0.9) * (320.0 / -mv.z);
+    gl_PointSize = (0.9 + (vH + 2.0) * 0.5) * (300.0 / -mv.z);
   }
 `;
 
@@ -52,7 +52,7 @@ const fragmentShader = /* glsl */ `
     float t = clamp((vH + 2.0) / 4.0, 0.0, 1.0);
     vec3 col = mix(uColorA, uColorB, t);
     float fog = clamp(1.0 - (vDist - 12.0) / 70.0, 0.0, 1.0);
-    gl_FragColor = vec4(col, alpha * fog * 0.95);
+    gl_FragColor = vec4(col, alpha * fog * 0.55);
   }
 `;
 
@@ -85,8 +85,8 @@ export function SiteBackground() {
     container.appendChild(renderer.domElement);
 
     // Dense grid of points on the XZ plane
-    const COLS = 150;
-    const ROWS = 150;
+    const COLS = 120;
+    const ROWS = 120;
     const SPACING = 0.7;
     const HALF = (COLS * SPACING) / 2;
     const count = COLS * ROWS;
@@ -107,9 +107,9 @@ export function SiteBackground() {
       uTime: { value: 0 },
       uScroll: { value: 0 },
       uMouse: { value: new THREE.Vector2(0, 0) },
-      uAmp: { value: 1 },
-      uColorA: { value: new THREE.Color("#1e3a8a") }, // deep blue (troughs)
-      uColorB: { value: new THREE.Color("#2dd4bf") }, // teal (crests)
+      uAmp: { value: 0.6 },
+      uColorA: { value: new THREE.Color("#27364f") }, // muted slate-blue (troughs)
+      uColorB: { value: new THREE.Color("#3aa6a0") }, // soft teal (crests)
     };
 
     const material = new THREE.ShaderMaterial({
@@ -118,7 +118,7 @@ export function SiteBackground() {
       fragmentShader,
       transparent: true,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
+      blending: THREE.NormalBlending,
     });
 
     const points = new THREE.Points(geometry, material);
@@ -149,7 +149,7 @@ export function SiteBackground() {
 
     const renderFrame = () => {
       const delta = Math.min(clock.getDelta(), 0.05);
-      uniforms.uTime.value += delta * 0.7;
+      uniforms.uTime.value += delta * 0.4;
       uniforms.uScroll.value = scrollProgress;
 
       // Ease mouse and project into the field plane for the ripple
@@ -158,13 +158,13 @@ export function SiteBackground() {
       uniforms.uMouse.value.set(mouse.x * HALF, mouse.y * HALF);
 
       // Scroll drives the whole field: it rotates and the camera flies through it
-      group.rotation.y = uniforms.uTime.value * 0.03 + scrollProgress * 1.4;
-      group.rotation.x = -0.15 + scrollProgress * 0.5;
-      group.rotation.z = scrollProgress * 0.2;
+      group.rotation.y = uniforms.uTime.value * 0.02 + scrollProgress * 0.6;
+      group.rotation.x = -0.18 + scrollProgress * 0.25;
+      group.rotation.z = scrollProgress * 0.08;
 
-      camera.position.x += (mouse.x * 6 - camera.position.x) * 0.04;
-      camera.position.y = 16 - scrollProgress * 10 - mouse.y * 3;
-      camera.position.z = 30 - scrollProgress * 14;
+      camera.position.x += (mouse.x * 3 - camera.position.x) * 0.04;
+      camera.position.y = 16 - scrollProgress * 5 - mouse.y * 1.5;
+      camera.position.z = 30 - scrollProgress * 7;
       camera.lookAt(0, 0, 0);
 
       renderer.render(scene, camera);

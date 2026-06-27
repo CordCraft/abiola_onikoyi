@@ -54,7 +54,7 @@ export function About() {
 
 export function Experience() {
   return (
-    <section id="experience" className="relative border-t hairline bg-background/55 py-28 backdrop-blur-[2px]">
+    <section id="experience" className="relative border-t hairline bg-background/45 py-28 backdrop-blur-[2px]">
       <div className="mx-auto max-w-5xl px-6">
         <Reveal>
           <SectionHeading kicker="Experience" title="Career" />
@@ -69,7 +69,7 @@ export function Experience() {
               <div className="flex flex-wrap items-baseline justify-between gap-x-4">
                 <h3 className="text-lg font-semibold text-white">{job.role}</h3>
                 <span className="text-sm font-medium text-zinc-500">
-                  {job.start} — {job.end}
+                  {job.start} to {job.end}
                 </span>
               </div>
               <p className="mt-1 font-medium text-accent">
@@ -101,7 +101,7 @@ export function Experience() {
 
 export function Skills() {
   return (
-    <section id="skills" className="relative border-t hairline bg-background/55 py-28 backdrop-blur-[2px]">
+    <section id="skills" className="relative border-t hairline bg-background/45 py-28 backdrop-blur-[2px]">
       <div className="mx-auto max-w-5xl px-6">
         <Reveal>
           <SectionHeading kicker="Expertise" title="What I bring" />
@@ -135,7 +135,7 @@ export function Skills() {
 
 export function Patents() {
   return (
-    <section id="patents" className="relative border-t hairline bg-background/55 py-28 backdrop-blur-[2px]">
+    <section id="patents" className="relative border-t hairline bg-background/45 py-28 backdrop-blur-[2px]">
       <div className="mx-auto max-w-5xl px-6">
         <Reveal>
           <SectionHeading kicker="Innovation" title="Patents" />
@@ -174,7 +174,7 @@ export function Patents() {
 
 export function Education() {
   return (
-    <section id="education" className="relative border-t hairline bg-background/55 py-28 backdrop-blur-[2px]">
+    <section id="education" className="relative border-t hairline bg-background/45 py-28 backdrop-blur-[2px]">
       <div className="mx-auto max-w-5xl px-6">
         <Reveal>
           <SectionHeading kicker="Education" title="Studies" />
@@ -189,7 +189,7 @@ export function Education() {
                 <h3 className="text-lg font-semibold text-white">{ed.school}</h3>
                 {ed.start || ed.end ? (
                   <span className="shrink-0 text-sm font-medium text-zinc-500">
-                    {ed.start} — {ed.end}
+                    {ed.start} to {ed.end}
                   </span>
                 ) : null}
               </div>
@@ -215,7 +215,7 @@ export function Education() {
 
 export function Contact() {
   return (
-    <section id="contact" className="relative border-t hairline bg-background/55 py-28 backdrop-blur-[2px]">
+    <section id="contact" className="relative border-t hairline bg-background/45 py-28 backdrop-blur-[2px]">
       <div className="mx-auto max-w-5xl px-6">
         <Reveal>
           <SectionHeading kicker="Contact" title="Let's connect" />

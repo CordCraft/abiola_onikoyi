@@ -7,7 +7,7 @@ import { createSession } from "@/lib/session";
 export type LoginState = { error?: string } | undefined;
 
 // Best-effort in-memory throttle. On serverless this resets per instance, so it
-// is a mild deterrent rather than a guarantee — adequate for a single-user site
+// is a mild deterrent rather than a guarantee, adequate for a single-user site
 // behind HTTPS with a strong password.
 const attempts = new Map<string, { count: number; first: number }>();
 const WINDOW_MS = 10 * 60 * 1000; // 10 minutes
