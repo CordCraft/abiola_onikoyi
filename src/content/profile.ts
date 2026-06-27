@@ -60,7 +60,7 @@ export const profile: Profile = {
     "Building ventures at the intersection of technology, data, and people.",
   location: "United Kingdom",
   email: "hello@abiolaonikoyi.com",
-  photo: null, // e.g. "/photo.jpg" once you add the image to /public
+  photo: "/photo.jpg",
 
   about: [
     "I'm a technology leader and entrepreneur focused on turning ambitious ideas into products that create real-world value. My work spans strategy, product, and execution.",
