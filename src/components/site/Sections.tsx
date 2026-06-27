@@ -1,5 +1,6 @@
 import { profile } from "@/content/profile";
 import { Reveal } from "@/components/anim/Reveal";
+import { Parallax } from "@/components/anim/Parallax";
 
 function SectionHeading({ kicker, title }: { kicker: string; title: string }) {
   return (
@@ -16,7 +17,10 @@ function SectionHeading({ kicker, title }: { kicker: string; title: string }) {
 
 export function About() {
   return (
-    <section id="about" className="relative py-28">
+    <section
+      id="about"
+      className="relative bg-background/40 py-28 backdrop-blur-[2px]"
+    >
       <div className="mx-auto max-w-5xl px-6">
         <Reveal>
           <SectionHeading kicker="About" title="Background" />
@@ -28,15 +32,19 @@ export function About() {
             ))}
           </div>
           <div className="relative">
-            <div className="absolute -inset-1 rounded-2xl bg-gradient-to-br from-accent/40 to-accent-2/40 opacity-60 blur-md" />
-            {profile.photo ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={profile.photo}
-                alt={profile.name}
-                className="relative w-full rounded-2xl border border-white/10 object-cover"
-              />
-            ) : null}
+            <Parallax amount={36}>
+              <div className="relative">
+                <div className="absolute -inset-1 rounded-2xl bg-gradient-to-br from-accent/40 to-accent-2/40 opacity-60 blur-md" />
+                {profile.photo ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={profile.photo}
+                    alt={profile.name}
+                    className="relative w-full rounded-2xl border border-white/10 object-cover"
+                  />
+                ) : null}
+              </div>
+            </Parallax>
           </div>
         </Reveal>
       </div>
@@ -46,7 +54,7 @@ export function About() {
 
 export function Experience() {
   return (
-    <section id="experience" className="relative border-t hairline py-28">
+    <section id="experience" className="relative border-t hairline bg-background/55 py-28 backdrop-blur-[2px]">
       <div className="mx-auto max-w-5xl px-6">
         <Reveal>
           <SectionHeading kicker="Experience" title="Career" />
@@ -93,7 +101,7 @@ export function Experience() {
 
 export function Skills() {
   return (
-    <section id="skills" className="relative border-t hairline py-28">
+    <section id="skills" className="relative border-t hairline bg-background/55 py-28 backdrop-blur-[2px]">
       <div className="mx-auto max-w-5xl px-6">
         <Reveal>
           <SectionHeading kicker="Expertise" title="What I bring" />
@@ -127,7 +135,7 @@ export function Skills() {
 
 export function Patents() {
   return (
-    <section id="patents" className="relative border-t hairline py-28">
+    <section id="patents" className="relative border-t hairline bg-background/55 py-28 backdrop-blur-[2px]">
       <div className="mx-auto max-w-5xl px-6">
         <Reveal>
           <SectionHeading kicker="Innovation" title="Patents" />
@@ -166,7 +174,7 @@ export function Patents() {
 
 export function Education() {
   return (
-    <section id="education" className="relative border-t hairline py-28">
+    <section id="education" className="relative border-t hairline bg-background/55 py-28 backdrop-blur-[2px]">
       <div className="mx-auto max-w-5xl px-6">
         <Reveal>
           <SectionHeading kicker="Education" title="Studies" />
@@ -207,7 +215,7 @@ export function Education() {
 
 export function Contact() {
   return (
-    <section id="contact" className="relative border-t hairline py-28">
+    <section id="contact" className="relative border-t hairline bg-background/55 py-28 backdrop-blur-[2px]">
       <div className="mx-auto max-w-5xl px-6">
         <Reveal>
           <SectionHeading kicker="Contact" title="Let's connect" />

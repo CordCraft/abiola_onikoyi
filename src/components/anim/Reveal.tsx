@@ -9,8 +9,8 @@ import { ScrollTrigger } from "gsap/ScrollTrigger";
 export function Reveal({
   children,
   className,
-  y = 28,
-  stagger = 0.09,
+  y = 44,
+  stagger = 0.1,
   start = "top 85%",
 }: {
   children: ReactNode;
@@ -34,13 +34,14 @@ export function Reveal({
 
     const ctx = gsap.context(() => {
       if (prefersReduced) {
-        gsap.set(targets, { opacity: 1, y: 0 });
+        gsap.set(targets, { opacity: 1, y: 0, scale: 1 });
         return;
       }
       gsap.from(targets, {
         opacity: 0,
         y,
-        duration: 0.8,
+        scale: 0.96,
+        duration: 0.9,
         ease: "power3.out",
         stagger,
         scrollTrigger: { trigger: el, start, once: true },

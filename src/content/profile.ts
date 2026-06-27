@@ -70,7 +70,7 @@ export const profile: Profile = {
   tagline:
     "Petroleum engineer with 11+ years across reservoir management, well testing, and production optimization — and an inventor on five US patents — committed to delivering sustainable energy solutions.",
   location: "Riyadh, Saudi Arabia",
-  email: "hello@abiolaonikoyi.com",
+  email: "abiolaonikoyi@gmail.com",
   photo: "/photo.jpg",
 
   about: [
@@ -91,7 +91,7 @@ export const profile: Profile = {
       label: "LinkedIn",
       href: "https://www.linkedin.com/in/abiola-onikoyi-97a37a36",
     },
-    { label: "Email", href: "mailto:hello@abiolaonikoyi.com" },
+    { label: "Email", href: "mailto:abiolaonikoyi@gmail.com" },
   ],
 
   experience: [

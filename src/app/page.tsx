@@ -1,3 +1,4 @@
+import { SiteBackground } from "@/components/three/SiteBackground";
 import { Nav } from "@/components/site/Nav";
 import { Footer } from "@/components/site/Footer";
 import { Hero } from "@/components/site/Hero";
@@ -13,6 +14,7 @@ import {
 export default function Home() {
   return (
     <>
+      <SiteBackground />
       <Nav />
       <main className="flex-1">
         <Hero />
