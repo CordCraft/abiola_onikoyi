@@ -76,7 +76,7 @@ export const profile: Profile = {
   about: [
     "I'm a petroleum engineer in Saudi Aramco's Water Injection Unit, bringing over 11 years of expertise in reservoir management, well testing, and production optimization. My focus is on innovative solutions for efficient water injection and sustained reservoir performance.",
     "Prior experience at Shell gave me a strong foundation in wells and reservoir management, surveillance reviews, and intervention operations. I'm committed to delivering sustainable energy solutions by leveraging advanced technical skills and collaborating across functions to meet organisational objectives.",
-    "Alongside my engineering work I'm an inventor on five US patents and an active builder of entrepreneurial ventures, which I track in the private area of this site.",
+    "Alongside my engineering work I'm an inventor on five US patents and an active builder of entrepreneurial ventures.",
   ],
 
   stats: [

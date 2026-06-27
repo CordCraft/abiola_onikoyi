@@ -34,3 +34,23 @@ model Update {
   body      String // markdown
   createdAt DateTime @default(now())
 }
+
+model Post {
+  id          String    @id @default(cuid())
+  slug        String    @unique
+  title       String
+  excerpt     String
+  body        String // markdown
+  // One of the "What I bring" themes, e.g. "Reservoir & Production"
+  category    String
+  // "news" | "insight"
+  kind        String    @default("insight")
+  sourceUrl   String?
+  sourceName  String?
+  published   Boolean   @default(false)
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([published, publishedAt])
+}

@@ -54,6 +54,10 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"     
    - `ADMIN_USERNAME` = your username
    - `ADMIN_PASSWORD_HASH` = the bcrypt hash from step 5
    - `SESSION_SECRET` = the random string from step 5
+   - `ANTHROPIC_API_KEY` = your Anthropic key (for AI-written blog insights; from
+     console.anthropic.com)
+   - `CRON_SECRET` = a random string protecting the weekly blog job
+     (`node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"`)
 4. Deploy. Future `git push`es auto-deploy.
 
 ### 7. Connect the domain
@@ -69,6 +73,11 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"     
   protected at the data layer regardless of edge/middleware behavior.
 - **Prisma client** is generated automatically during the build
   (`prisma generate` runs via the `build` and `postinstall` scripts).
+- **Weekly blog:** the scheduled function in `netlify/functions/weekly-post.mts`
+  runs every Monday 08:00 UTC and creates one **draft** post (news pulled from
+  energy RSS feeds, insights written by Claude). Review and publish drafts under
+  `/dashboard/blog`. Netlify auto-detects the function; no extra config needed.
+  You can also click "Generate draft now" in the dashboard to test it.
 
 ## Updating content
 - **Public portfolio:** edit `src/content/profile.ts`, commit, and push (Netlify

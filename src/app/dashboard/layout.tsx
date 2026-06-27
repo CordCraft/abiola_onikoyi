@@ -14,14 +14,24 @@ export default async function DashboardLayout({
     <div className="min-h-screen bg-zinc-100">
       <header className="border-b border-zinc-200 bg-white">
         <div className="mx-auto flex h-16 max-w-4xl items-center justify-between px-6">
-          <Link href="/dashboard" className="flex items-center gap-2">
-            <span className="grid h-8 w-8 place-items-center rounded-md bg-zinc-900 text-sm font-bold text-white">
-              {profile.initials}
-            </span>
-            <span className="font-semibold tracking-tight text-zinc-900">
-              Projects
-            </span>
-          </Link>
+          <div className="flex items-center gap-6">
+            <Link href="/dashboard" className="flex items-center gap-2">
+              <span className="grid h-8 w-8 place-items-center rounded-md bg-zinc-900 text-sm font-bold text-white">
+                {profile.initials}
+              </span>
+              <span className="font-semibold tracking-tight text-zinc-900">
+                Dashboard
+              </span>
+            </Link>
+            <nav className="flex items-center gap-4 text-sm font-medium text-zinc-600">
+              <Link href="/dashboard" className="hover:text-zinc-900">
+                Projects
+              </Link>
+              <Link href="/dashboard/blog" className="hover:text-zinc-900">
+                Blog
+              </Link>
+            </nav>
+          </div>
 
           <div className="flex items-center gap-4 text-sm">
             <Link

@@ -2,6 +2,7 @@ import { SiteBackground } from "@/components/three/SiteBackground";
 import { Nav } from "@/components/site/Nav";
 import { Footer } from "@/components/site/Footer";
 import { Hero } from "@/components/site/Hero";
+import { Writing } from "@/components/site/Writing";
 import {
   About,
   Experience,
@@ -22,6 +23,7 @@ export default function Home() {
         <Experience />
         <Skills />
         <Patents />
+        <Writing />
         <Education />
         <Contact />
       </main>

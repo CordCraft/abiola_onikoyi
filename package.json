@@ -10,6 +10,7 @@
     "postinstall": "prisma generate"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.106.0",
     "@prisma/client": "^6.19.3",
     "bcryptjs": "^3.0.3",
     "gsap": "^3.15.0",
@@ -18,9 +19,11 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-markdown": "^10.1.0",
+    "rss-parser": "^3.13.0",
     "three": "^0.185.0"
   },
   "devDependencies": {
+    "@netlify/functions": "^5.3.0",
     "@tailwindcss/postcss": "^4",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",
