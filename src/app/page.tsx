@@ -1,10 +1,11 @@
 import { Nav } from "@/components/site/Nav";
 import { Footer } from "@/components/site/Footer";
+import { Hero } from "@/components/site/Hero";
 import {
-  Hero,
   About,
   Experience,
   Skills,
+  Patents,
   Education,
   Contact,
 } from "@/components/site/Sections";
@@ -18,6 +19,7 @@ export default function Home() {
         <About />
         <Experience />
         <Skills />
+        <Patents />
         <Education />
         <Contact />
       </main>

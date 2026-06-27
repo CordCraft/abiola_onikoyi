@@ -7,8 +7,8 @@
 export type ExperienceItem = {
   company: string;
   role: string;
-  start: string; // e.g. "2021"
-  end: string; // e.g. "Present"
+  start: string;
+  end: string;
   location?: string;
   summary?: string;
   highlights?: string[];
@@ -16,7 +16,7 @@ export type ExperienceItem = {
 
 export type EducationItem = {
   school: string;
-  credential: string; // degree / certificate
+  credential: string;
   field?: string;
   start?: string;
   end?: string;
@@ -33,93 +33,202 @@ export type SocialLink = {
   href: string;
 };
 
+export type PatentItem = {
+  title: string;
+  number: string;
+  url: string;
+  status: "Granted" | "Pending";
+  year: string;
+};
+
+export type Stat = {
+  value: string;
+  label: string;
+};
+
 export type Profile = {
   name: string;
   initials: string;
-  headline: string; // short professional title
-  tagline: string; // one-sentence summary under the headline
+  headline: string;
+  tagline: string;
   location: string;
   email: string;
-  // Path to a photo in /public. Leave as the placeholder until you add one.
   photo: string | null;
-  about: string[]; // each string is a paragraph
+  about: string[];
+  stats: Stat[];
   socials: SocialLink[];
   experience: ExperienceItem[];
   education: EducationItem[];
   skills: SkillGroup[];
+  patents: PatentItem[];
 };
 
-// NOTE: The values below are professional placeholders. Replace them with the
-// real details from your LinkedIn profile (or send them to me and I'll fill
-// them in). Anything you leave blank simply won't show on the site.
 export const profile: Profile = {
   name: "Abiola Onikoyi",
   initials: "AO",
-  headline: "Entrepreneur & Technology Leader",
+  headline: "Petroleum Engineer @ Saudi Aramco",
   tagline:
-    "Building ventures at the intersection of technology, data, and people.",
-  location: "United Kingdom",
+    "Petroleum engineer with 11+ years across reservoir management, well testing, and production optimization — and an inventor on five US patents — committed to delivering sustainable energy solutions.",
+  location: "Riyadh, Saudi Arabia",
   email: "hello@abiolaonikoyi.com",
   photo: "/photo.jpg",
 
   about: [
-    "I'm a technology leader and entrepreneur focused on turning ambitious ideas into products that create real-world value. My work spans strategy, product, and execution.",
-    "This site is a living overview of my professional background. The private area collects the entrepreneurial projects I'm actively building, with regular updates on their progress.",
+    "I'm a petroleum engineer in Saudi Aramco's Water Injection Unit, bringing over 11 years of expertise in reservoir management, well testing, and production optimization. My focus is on innovative solutions for efficient water injection and sustained reservoir performance.",
+    "Prior experience at Shell gave me a strong foundation in wells and reservoir management, surveillance reviews, and intervention operations. I'm committed to delivering sustainable energy solutions — leveraging advanced technical skills and collaborating across functions to meet organisational objectives.",
+    "Alongside my engineering work I'm an inventor on five US patents and an active builder of entrepreneurial ventures, which I track in the private area of this site.",
+  ],
+
+  stats: [
+    { value: "11+", label: "Years in petroleum engineering" },
+    { value: "5", label: "US patents as inventor" },
+    { value: "2", label: "Global energy majors" },
+    { value: "MS", label: "Petroleum Engineering" },
   ],
 
   socials: [
-    { label: "LinkedIn", href: "https://www.linkedin.com/in/" },
+    {
+      label: "LinkedIn",
+      href: "https://www.linkedin.com/in/abiola-onikoyi-97a37a36",
+    },
     { label: "Email", href: "mailto:hello@abiolaonikoyi.com" },
   ],
 
   experience: [
     {
-      company: "Company Name",
-      role: "Your Role / Title",
-      start: "2022",
+      company: "Saudi Aramco",
+      role: "Petroleum Engineer — Water Injection Unit",
+      start: "Aug 2014",
       end: "Present",
-      location: "City, Country",
+      location: "Riyadh, Saudi Arabia",
       summary:
-        "One or two lines describing what you do here and the impact you've had.",
+        "Driving reservoir management, well testing, and production optimization for one of the world's largest energy companies, with a focus on efficient water injection and reservoir performance.",
       highlights: [
-        "A notable achievement or responsibility.",
-        "Another measurable result or initiative you led.",
+        "Reservoir management and surveillance for water injection operations.",
+        "Well testing, production optimization, and field development.",
+        "Inventor on five US patents filed with Saudi Aramco spanning well testing, flow measurement, and machine learning.",
       ],
     },
     {
-      company: "Previous Company",
-      role: "Previous Role",
-      start: "2019",
-      end: "2022",
-      location: "City, Country",
-      summary: "Short description of the role and your contributions.",
-      highlights: ["Key accomplishment.", "Key accomplishment."],
+      company: "Shell",
+      role: "Production Technologist",
+      start: "Aug 2009",
+      end: "Aug 2014",
+      location: "Port Harcourt, Nigeria",
+      summary:
+        "Asset production technologist responsible for wells and reservoir performance, after completing the Shell Special Intensive Training Programme (SITP).",
+      highlights: [
+        "Wells and fields performance monitoring; reservoir management and surveillance reviews.",
+        "Construction of integrated production system models for wells and reservoir management.",
+        "Intervention, workover, and recompletion design and implementation.",
+        "Maturation of locked-in opportunities; GOR and BS&W trending and management.",
+      ],
+    },
+    {
+      company: "Keystone Bank (Bank PHB)",
+      role: "Senior Executive Assistant",
+      start: "Nov 2008",
+      end: "Aug 2009",
+      location: "Abeokuta, Nigeria",
+      highlights: ["Grew the branch deposit base by ₦1 billion in eight months."],
+    },
+    {
+      company: "Zenith Bank",
+      role: "Executive Assistant",
+      start: "Mar 2007",
+      end: "Nov 2008",
+      location: "Nigeria",
+      highlights: ["Grew the branch deposit base by ₦500 million in seven months."],
     },
   ],
 
   education: [
     {
-      school: "University Name",
-      credential: "Degree (e.g. BSc)",
-      field: "Field of Study",
-      start: "2015",
-      end: "2018",
-      details: "Optional notes — honours, focus areas, activities.",
+      school: "Heriot-Watt University",
+      credential: "Master of Science (MS)",
+      field: "Petroleum Engineering",
+      start: "2013",
+      end: "2015",
+    },
+    {
+      school: "University of Lagos",
+      credential: "Bachelor of Science (BS)",
+      field: "Chemical Engineering",
+      start: "2001",
+      end: "2006",
     },
   ],
 
   skills: [
     {
-      category: "Leadership",
-      items: ["Strategy", "Product Management", "Team Building", "Fundraising"],
+      category: "Reservoir & Production",
+      items: [
+        "Reservoir Management",
+        "Well Testing",
+        "Production Optimization",
+        "Field Development",
+        "Water Injection",
+        "Surveillance Reviews",
+      ],
     },
     {
-      category: "Technology",
-      items: ["Software Architecture", "Data & Analytics", "Cloud", "AI / ML"],
+      category: "Operations",
+      items: [
+        "Intervention Operations",
+        "Workover & Recompletion",
+        "Integrated Production Modelling",
+        "Wells & Reservoir Management",
+      ],
     },
     {
-      category: "Business",
-      items: ["Go-to-Market", "Operations", "Partnerships", "Finance"],
+      category: "Innovation",
+      items: [
+        "Patents & IP",
+        "Machine Learning Applications",
+        "Data Analysis",
+        "Sustainable Energy Solutions",
+      ],
+    },
+  ],
+
+  patents: [
+    {
+      title:
+        "Method and apparatus for drone conveyed single phase ultrasonic flowmeter",
+      number: "US20250231056A1",
+      url: "https://patents.google.com/patent/US20250231056A1/en",
+      status: "Pending",
+      year: "2025",
+    },
+    {
+      title: "Systems and methods for flow rate validation in a well system",
+      number: "US12163416B2",
+      url: "https://patents.google.com/patent/US12163416B2/en",
+      status: "Granted",
+      year: "2024",
+    },
+    {
+      title: "System for automated real-time water injection well testing",
+      number: "US12000276B2",
+      url: "https://patents.google.com/patent/US12000276B2/en",
+      status: "Granted",
+      year: "2024",
+    },
+    {
+      title:
+        "Method and apparatus for temporary sealing of flange leaks on industrial pipelines",
+      number: "US20250237340A1",
+      url: "https://patents.google.com/patent/US20250237340A1/en",
+      status: "Pending",
+      year: "2025",
+    },
+    {
+      title:
+        "Temperature profile prediction in oil and gas industry utilizing machine learning model",
+      number: "US20240183255A1",
+      url: "https://patents.google.com/patent/US20240183255A1/en",
+      status: "Pending",
+      year: "2024",
     },
   ],
 };
