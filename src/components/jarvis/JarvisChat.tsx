@@ -7,8 +7,116 @@ import { applyProposal, discardProposal } from "@/app/jarvis/actions";
 type Msg = { role: "user" | "assistant"; content: string };
 type Proposal = { id: string; summary: string; kind: string };
 
-// All file types Jarvis can handle
-const ACCEPTED = ".pdf,.txt,.md,.csv,.json,.yaml,.yml,.png,.jpg,.jpeg,.webp,.gif,.xlsx,.xls,.ods,.docx,.doc,.pptx,.ppt";
+export type Attachment =
+  | { kind: "text"; name: string; text: string }
+  | { kind: "image"; name: string; mimeType: string; base64: string }
+  | { kind: "error"; name: string; message: string };
+
+const ACCEPTED =
+  ".pdf,.txt,.md,.csv,.json,.yaml,.yml,.png,.jpg,.jpeg,.webp,.gif" +
+  ",.xlsx,.xls,.ods,.docx,.doc,.pptx,.ppt";
+
+// ── Browser-side file processing ──────────────────────────────────────────────
+// All heavy lifting happens here so we never send raw binary to the server.
+// Netlify functions have a 6 MB body limit; extracted text is far smaller.
+
+function arrayBufferToBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  let binary = "";
+  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+async function processFile(file: File): Promise<Attachment> {
+  const name = file.name;
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+
+  try {
+    // ── Excel / ODS ─────────────────────────────────────────────────────────
+    if (["xlsx", "xls", "ods"].includes(ext) || file.type.includes("spreadsheet") || file.type.includes("excel")) {
+      const XLSX = await import("xlsx");
+      const wb = XLSX.read(await file.arrayBuffer());
+      const text = wb.SheetNames.map(
+        (sn) => `Sheet: ${sn}\n${XLSX.utils.sheet_to_csv(wb.Sheets[sn])}`,
+      ).join("\n\n---\n\n");
+      return { kind: "text", name, text };
+    }
+
+    // ── Word (.docx / .doc) ─────────────────────────────────────────────────
+    if (["docx", "doc"].includes(ext) || file.type.includes("wordprocessingml") || file.type.includes("msword")) {
+      const mammoth = await import("mammoth");
+      const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
+      return { kind: "text", name, text: result.value };
+    }
+
+    // ── PowerPoint (.pptx / .ppt) ───────────────────────────────────────────
+    if (["pptx", "ppt"].includes(ext) || file.type.includes("presentationml") || file.type.includes("powerpoint")) {
+      // PPTX is a ZIP of XML — extract slide text without a zip library by
+      // reading the raw bytes and pulling <a:t> text run contents via regex.
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      // Scan for XML-looking text in the file bytes (slides are not compressed)
+      let raw = "";
+      for (let i = 0; i < bytes.length; i++) {
+        if (bytes[i] >= 0x20 && bytes[i] < 0x80) raw += String.fromCharCode(bytes[i]);
+      }
+      const runs = [...raw.matchAll(/<a:t[^>]*>([^<]+)<\/a:t>/g)].map((m) => m[1]);
+      const text = runs.join(" ").replace(/\s+/g, " ").trim() || "(no text extracted from presentation)";
+      return { kind: "text", name, text };
+    }
+
+    // ── PDF ──────────────────────────────────────────────────────────────────
+    if (ext === "pdf" || file.type === "application/pdf") {
+      const pdfjsLib = await import("pdfjs-dist");
+      if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+      }
+      const loadingTask = pdfjsLib.getDocument({ data: await file.arrayBuffer() });
+      const pdf = await loadingTask.promise;
+      const pageTexts: string[] = [];
+      for (let p = 1; p <= pdf.numPages; p++) {
+        const page = await pdf.getPage(p);
+        const content = await page.getTextContent();
+        const lineText = content.items
+          .map((item: unknown) => {
+            const t = item as { str?: string; hasEOL?: boolean };
+            return (t.str ?? "") + (t.hasEOL ? "\n" : "");
+          })
+          .join("");
+        pageTexts.push(`[Page ${p}]\n${lineText.trim()}`);
+      }
+      return { kind: "text", name, text: pageTexts.join("\n\n") };
+    }
+
+    // ── Images ───────────────────────────────────────────────────────────────
+    const imgTypes: Record<string, string> = {
+      jpg: "image/jpeg", jpeg: "image/jpeg",
+      png: "image/png", gif: "image/gif", webp: "image/webp",
+    };
+    if (ext in imgTypes || file.type.startsWith("image/")) {
+      if (file.size > 5 * 1024 * 1024) {
+        return { kind: "error", name, message: `${name} is too large for an image (max 5 MB). Please resize it.` };
+      }
+      return {
+        kind: "image",
+        name,
+        mimeType: imgTypes[ext] ?? file.type,
+        base64: arrayBufferToBase64(await file.arrayBuffer()),
+      };
+    }
+
+    // ── Plain text / CSV / JSON / Markdown / YAML ────────────────────────────
+    return { kind: "text", name, text: await file.text() };
+
+  } catch (err) {
+    return {
+      kind: "error",
+      name,
+      message: `Could not read ${name}: ${err instanceof Error ? err.message : "unknown error"}`,
+    };
+  }
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
 
 export function JarvisChat({
   initialThreadId,
@@ -23,29 +131,28 @@ export function JarvisChat({
   const [messages, setMessages] = useState<Msg[]>(initialMessages);
   const [proposals, setProposals] = useState<Proposal[]>(initialProposals);
   const [input, setInput] = useState("");
-  const [files, setFiles] = useState<File[]>([]);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [processing, setProcessing] = useState(false); // file extraction in progress
   const [sending, setSending] = useState(false);
-  // Voice state
   const [listening, setListening] = useState(false);
-  const [interimText, setInterimText] = useState(""); // live transcript shown as placeholder
+  const [interimText, setInterimText] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const committedRef = useRef("");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
-  const committedRef = useRef(""); // accumulated final transcripts during this session
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [messages, sending, proposals]);
+  }, [messages, sending, proposals, processing]);
 
-  function removeFile(index: number) {
-    setFiles((f) => f.filter((_, i) => i !== index));
+  function removeFile(i: number) {
+    setPendingFiles((f) => f.filter((_, idx) => idx !== i));
   }
 
-  // ── Voice ────────────────────────────────────────────────────────────────
+  // ── Voice ─────────────────────────────────────────────────────────────────
 
   const stopListening = useCallback(() => {
     recognitionRef.current?.stop();
@@ -61,48 +168,34 @@ export function JarvisChat({
       setError("Voice input is not supported in this browser. Try Chrome or Edge.");
       return;
     }
+    if (listening) { stopListening(); return; }
 
-    if (listening) {
-      stopListening();
-      return;
-    }
-
-    committedRef.current = input; // preserve anything already typed
-
+    committedRef.current = input;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rec = new SR() as any;
     rec.lang = "en-US";
-    rec.interimResults = true;  // stream partial results
-    rec.continuous = true;       // keep going through pauses
+    rec.interimResults = true;
+    rec.continuous = true;
     rec.maxAlternatives = 1;
 
     rec.onresult = (e: { results: { isFinal: boolean; [k: number]: { transcript: string } }[]; resultIndex: number }) => {
       let interim = "";
-      // Walk only new results from resultIndex onward
       for (let i = e.resultIndex; i < e.results.length; i++) {
-        const transcript = e.results[i][0].transcript;
+        const t = e.results[i][0].transcript;
         if (e.results[i].isFinal) {
-          // Append to the committed buffer with a space
-          committedRef.current =
-            (committedRef.current + " " + transcript).trimStart();
+          committedRef.current = (committedRef.current + " " + t).trimStart();
         } else {
-          interim = transcript;
+          interim = t;
         }
       }
-      // Update textarea with committed + current interim
       setInput(committedRef.current + (interim ? " " + interim : ""));
       setInterimText(interim);
     };
-
     rec.onerror = (e: { error: string }) => {
-      if (e.error !== "no-speech") {
-        setError(`Voice error: ${e.error}`);
-      }
+      if (e.error !== "no-speech") setError(`Voice error: ${e.error}`);
       stopListening();
     };
-
     rec.onend = () => {
-      // continuous mode: restart unless the user clicked stop
       if (recognitionRef.current) {
         try { recognitionRef.current.start(); } catch { /* already started */ }
       } else {
@@ -116,56 +209,48 @@ export function JarvisChat({
     setListening(true);
   }
 
-  // ── Send ─────────────────────────────────────────────────────────────────
+  // ── Send ──────────────────────────────────────────────────────────────────
 
   async function send() {
     const text = input.trim();
-    if ((!text && files.length === 0) || sending) return;
+    if ((!text && pendingFiles.length === 0) || sending || processing) return;
+    if (listening) { stopListening(); committedRef.current = ""; }
 
-    // Stop voice if active before sending
-    if (listening) stopListening();
-    committedRef.current = "";
-
-    const attachedFiles = [...files];
+    const filesToProcess = [...pendingFiles];
     setInput("");
-    setFiles([]);
+    setPendingFiles([]);
     setError(null);
 
+    // Show user message immediately
     const displayContent =
       text +
-      (attachedFiles.length
-        ? (text ? "\n" : "") + attachedFiles.map((f) => `[attached: ${f.name}]`).join("\n")
+      (filesToProcess.length
+        ? (text ? "\n" : "") + filesToProcess.map((f) => `[attached: ${f.name}]`).join("\n")
         : "");
     setMessages((m) => [...m, { role: "user", content: displayContent }]);
+
+    // Extract file content in browser (may take a moment for large PDFs)
+    let attachments: Attachment[] = [];
+    if (filesToProcess.length > 0) {
+      setProcessing(true);
+      attachments = await Promise.all(filesToProcess.map(processFile));
+      setProcessing(false);
+    }
+
     setSending(true);
-
     try {
-      let res: Response;
-      if (attachedFiles.length > 0) {
-        const fd = new FormData();
-        if (threadId) fd.append("threadId", threadId);
-        fd.append("message", text);
-        attachedFiles.forEach((f) => fd.append("files", f));
-        res = await fetch("/jarvis/api/chat", { method: "POST", body: fd });
-      } else {
-        res = await fetch("/jarvis/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ threadId, message: text }),
-        });
-      }
-
+      const res = await fetch("/jarvis/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ threadId, message: text, attachments }),
+      });
       const data = await res.json();
       if (!res.ok || data.error) {
         setError(data.error || "Request failed.");
       } else {
         setMessages((m) => [...m, { role: "assistant", content: data.reply }]);
         setProposals(
-          (data.proposals ?? []).map((p: Proposal) => ({
-            id: p.id,
-            summary: p.summary,
-            kind: p.kind,
-          })),
+          (data.proposals ?? []).map((p: Proposal) => ({ id: p.id, summary: p.summary, kind: p.kind })),
         );
         if (!threadId && data.threadId) {
           setThreadId(data.threadId);
@@ -173,7 +258,7 @@ export function JarvisChat({
         }
       }
     } catch {
-      setError("Network error.");
+      setError("Network error — please try again.");
     } finally {
       setSending(false);
     }
@@ -184,10 +269,7 @@ export function JarvisChat({
     if (r?.ok) {
       const p = proposals.find((x) => x.id === id);
       setProposals((ps) => ps.filter((x) => x.id !== id));
-      setMessages((m) => [
-        ...m,
-        { role: "assistant", content: `Saved: ${p?.summary ?? "change"}.` },
-      ]);
+      setMessages((m) => [...m, { role: "assistant", content: `Saved: ${p?.summary ?? "change"}.` }]);
     } else {
       setError(r?.error ?? "Could not save.");
     }
@@ -197,7 +279,7 @@ export function JarvisChat({
     setProposals((ps) => ps.filter((x) => x.id !== id));
   }
 
-  // ── Render ───────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="flex h-[calc(100vh-11rem)] flex-col rounded-2xl border border-zinc-200 bg-white">
@@ -208,6 +290,7 @@ export function JarvisChat({
             Ask anything about your ventures. Attach documents (PDF, Excel, Word, PowerPoint, CSV...) or click the mic to speak.
           </p>
         ) : null}
+
         {messages.map((m, i) => (
           <div key={i} className={m.role === "user" ? "flex justify-end" : ""}>
             {m.role === "user" ? (
@@ -221,7 +304,14 @@ export function JarvisChat({
             )}
           </div>
         ))}
-        {sending ? (
+
+        {processing ? (
+          <div>
+            <span className="inline-block rounded-2xl bg-zinc-50 px-4 py-2 text-sm text-zinc-400 ring-1 ring-zinc-200">
+              Reading files...
+            </span>
+          </div>
+        ) : sending ? (
           <div>
             <span className="inline-block rounded-2xl bg-zinc-50 px-4 py-2 text-sm text-zinc-400 ring-1 ring-zinc-200">
               Thinking...
@@ -261,9 +351,9 @@ export function JarvisChat({
       {/* Input area */}
       <div className="border-t border-zinc-200 p-3">
         {/* Attached files */}
-        {files.length > 0 ? (
+        {pendingFiles.length > 0 ? (
           <div className="mb-2 flex flex-wrap gap-1.5">
-            {files.map((f, i) => (
+            {pendingFiles.map((f, i) => (
               <span
                 key={i}
                 className="flex items-center gap-1 rounded-full bg-zinc-100 px-2.5 py-1 text-xs text-zinc-700"
@@ -272,11 +362,7 @@ export function JarvisChat({
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
                 </svg>
                 <span className="max-w-[140px] truncate">{f.name}</span>
-                <button
-                  onClick={() => removeFile(i)}
-                  className="ml-0.5 rounded-full p-0.5 hover:bg-zinc-200"
-                  aria-label="Remove file"
-                >
+                <button onClick={() => removeFile(i)} className="ml-0.5 rounded-full p-0.5 hover:bg-zinc-200" aria-label="Remove">
                   <svg className="h-2.5 w-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                   </svg>
@@ -286,7 +372,7 @@ export function JarvisChat({
           </div>
         ) : null}
 
-        {/* Listening banner with live interim transcript */}
+        {/* Listening banner */}
         {listening ? (
           <div className="mb-2 flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
             <span className="relative flex h-2 w-2 shrink-0">
@@ -295,7 +381,7 @@ export function JarvisChat({
             </span>
             <span className="font-medium">Listening</span>
             {interimText ? (
-              <span className="truncate text-red-500 italic">{interimText}</span>
+              <span className="truncate italic text-red-500">{interimText}</span>
             ) : (
               <span className="text-red-400">Speak now...</span>
             )}
@@ -303,7 +389,6 @@ export function JarvisChat({
         ) : null}
 
         <div className="flex items-end gap-2">
-          {/* Hidden file input */}
           <input
             ref={fileInputRef}
             type="file"
@@ -311,17 +396,15 @@ export function JarvisChat({
             multiple
             className="hidden"
             onChange={(e) => {
-              const picked = Array.from(e.target.files ?? []);
-              setFiles((prev) => [...prev, ...picked]);
+              setPendingFiles((prev) => [...prev, ...Array.from(e.target.files ?? [])]);
               e.target.value = "";
             }}
           />
 
-          {/* Attach button */}
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            title="Attach file (PDF, Excel, Word, PowerPoint, image, CSV...)"
+            title="Attach file"
             className="shrink-0 rounded-lg p-2 text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
           >
             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -330,32 +413,25 @@ export function JarvisChat({
           </button>
 
           <textarea
-            ref={textareaRef}
             value={input}
             onChange={(e) => {
               setInput(e.target.value);
               if (!listening) committedRef.current = e.target.value;
             }}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void send();
-              }
+              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); }
             }}
             rows={2}
             placeholder={listening ? "Listening... (your words appear here)" : "Message Jarvis..."}
             className="flex-1 resize-none rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/30"
           />
 
-          {/* Mic button */}
           <button
             type="button"
             onClick={toggleVoice}
-            title={listening ? "Stop recording" : "Speak to Jarvis (continuous, pause-tolerant)"}
+            title={listening ? "Stop recording" : "Speak to Jarvis"}
             className={`shrink-0 rounded-lg p-2 transition-colors ${
-              listening
-                ? "bg-red-100 text-red-600 hover:bg-red-200"
-                : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
+              listening ? "bg-red-100 text-red-600 hover:bg-red-200" : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
             }`}
           >
             {listening ? (
@@ -372,7 +448,7 @@ export function JarvisChat({
 
           <button
             onClick={() => void send()}
-            disabled={sending || (!input.trim() && files.length === 0)}
+            disabled={sending || processing || (!input.trim() && pendingFiles.length === 0)}
             className="shrink-0 rounded-lg bg-zinc-900 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-zinc-700 disabled:opacity-50"
           >
             Send

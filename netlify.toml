@@ -11,3 +11,7 @@
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
+
+[functions]
+  # Jarvis chat processes large documents via Anthropic — needs extended time
+  timeout = 60
