@@ -1,14 +1,14 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Markdown } from "@/components/Markdown";
 import { applyProposal, discardProposal } from "@/app/jarvis/actions";
 
 type Msg = { role: "user" | "assistant"; content: string };
 type Proposal = { id: string; summary: string; kind: string };
 
-const ACCEPTED = ".pdf,.txt,.md,.csv,.json,.png,.jpg,.jpeg,.webp,.gif";
-// Note: Excel (.xlsx/.xls) and Word (.docx) files are not supported. Export them as PDF or CSV first.
+// All file types Jarvis can handle
+const ACCEPTED = ".pdf,.txt,.md,.csv,.json,.yaml,.yml,.png,.jpg,.jpeg,.webp,.gif,.xlsx,.xls,.ods,.docx,.doc,.pptx,.ppt";
 
 export function JarvisChat({
   initialThreadId,
@@ -25,12 +25,17 @@ export function JarvisChat({
   const [input, setInput] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [sending, setSending] = useState(false);
+  // Voice state
   const [listening, setListening] = useState(false);
+  const [interimText, setInterimText] = useState(""); // live transcript shown as placeholder
   const [error, setError] = useState<string | null>(null);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
+  const committedRef = useRef(""); // accumulated final transcripts during this session
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -40,53 +45,87 @@ export function JarvisChat({
     setFiles((f) => f.filter((_, i) => i !== index));
   }
 
+  // ── Voice ────────────────────────────────────────────────────────────────
+
+  const stopListening = useCallback(() => {
+    recognitionRef.current?.stop();
+    recognitionRef.current = null;
+    setListening(false);
+    setInterimText("");
+  }, []);
+
   function toggleVoice() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
     if (!SR) {
-      setError("Voice input is not supported in this browser.");
+      setError("Voice input is not supported in this browser. Try Chrome or Edge.");
       return;
     }
 
-    if (listening && recognitionRef.current) {
-      recognitionRef.current.stop();
+    if (listening) {
+      stopListening();
       return;
     }
 
-    const rec = new SR() as {
-      lang: string;
-      interimResults: boolean;
-      continuous: boolean;
-      start(): void;
-      stop(): void;
-      onresult: ((e: { results: { transcript: string }[][] }) => void) | null;
-      onend: (() => void) | null;
-      onerror: ((e: { error: string }) => void) | null;
-    };
+    committedRef.current = input; // preserve anything already typed
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rec = new SR() as any;
     rec.lang = "en-US";
-    rec.interimResults = false;
-    rec.continuous = false;
-    rec.onresult = (e) => {
-      const transcript = e.results[0][0].transcript;
-      setInput((prev) => (prev ? prev + " " + transcript : transcript));
+    rec.interimResults = true;  // stream partial results
+    rec.continuous = true;       // keep going through pauses
+    rec.maxAlternatives = 1;
+
+    rec.onresult = (e: { results: { isFinal: boolean; [k: number]: { transcript: string } }[]; resultIndex: number }) => {
+      let interim = "";
+      // Walk only new results from resultIndex onward
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const transcript = e.results[i][0].transcript;
+        if (e.results[i].isFinal) {
+          // Append to the committed buffer with a space
+          committedRef.current =
+            (committedRef.current + " " + transcript).trimStart();
+        } else {
+          interim = transcript;
+        }
+      }
+      // Update textarea with committed + current interim
+      setInput(committedRef.current + (interim ? " " + interim : ""));
+      setInterimText(interim);
     };
+
+    rec.onerror = (e: { error: string }) => {
+      if (e.error !== "no-speech") {
+        setError(`Voice error: ${e.error}`);
+      }
+      stopListening();
+    };
+
     rec.onend = () => {
-      setListening(false);
-      recognitionRef.current = null;
+      // continuous mode: restart unless the user clicked stop
+      if (recognitionRef.current) {
+        try { recognitionRef.current.start(); } catch { /* already started */ }
+      } else {
+        setListening(false);
+        setInterimText("");
+      }
     };
-    rec.onerror = (e) => {
-      setError(`Voice error: ${e.error}`);
-      setListening(false);
-      recognitionRef.current = null;
-    };
+
     recognitionRef.current = rec;
     rec.start();
     setListening(true);
   }
 
+  // ── Send ─────────────────────────────────────────────────────────────────
+
   async function send() {
     const text = input.trim();
     if ((!text && files.length === 0) || sending) return;
+
+    // Stop voice if active before sending
+    if (listening) stopListening();
+    committedRef.current = "";
+
     const attachedFiles = [...files];
     setInput("");
     setFiles([]);
@@ -95,8 +134,7 @@ export function JarvisChat({
     const displayContent =
       text +
       (attachedFiles.length
-        ? (text ? "\n" : "") +
-          attachedFiles.map((f) => `[attached: ${f.name}]`).join("\n")
+        ? (text ? "\n" : "") + attachedFiles.map((f) => `[attached: ${f.name}]`).join("\n")
         : "");
     setMessages((m) => [...m, { role: "user", content: displayContent }]);
     setSending(true);
@@ -159,13 +197,15 @@ export function JarvisChat({
     setProposals((ps) => ps.filter((x) => x.id !== id));
   }
 
+  // ── Render ───────────────────────────────────────────────────────────────
+
   return (
     <div className="flex h-[calc(100vh-11rem)] flex-col rounded-2xl border border-zinc-200 bg-white">
+      {/* Messages */}
       <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto p-5">
         {messages.length === 0 ? (
           <p className="text-sm text-zinc-400">
-            Ask anything about your ventures. Try &quot;what&apos;s stalled and what should I
-            tackle first?&quot; or attach a document and say &quot;summarise this and create a project for it&quot;.
+            Ask anything about your ventures. Attach documents (PDF, Excel, Word, PowerPoint, CSV...) or click the mic to speak.
           </p>
         ) : null}
         {messages.map((m, i) => (
@@ -218,8 +258,9 @@ export function JarvisChat({
         ) : null}
       </div>
 
+      {/* Input area */}
       <div className="border-t border-zinc-200 p-3">
-        {/* Attached files preview */}
+        {/* Attached files */}
         {files.length > 0 ? (
           <div className="mb-2 flex flex-wrap gap-1.5">
             {files.map((f, i) => (
@@ -230,7 +271,7 @@ export function JarvisChat({
                 <svg className="h-3 w-3 shrink-0 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
                 </svg>
-                {f.name}
+                <span className="max-w-[140px] truncate">{f.name}</span>
                 <button
                   onClick={() => removeFile(i)}
                   className="ml-0.5 rounded-full p-0.5 hover:bg-zinc-200"
@@ -242,6 +283,22 @@ export function JarvisChat({
                 </button>
               </span>
             ))}
+          </div>
+        ) : null}
+
+        {/* Listening banner with live interim transcript */}
+        {listening ? (
+          <div className="mb-2 flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500" />
+            </span>
+            <span className="font-medium">Listening</span>
+            {interimText ? (
+              <span className="truncate text-red-500 italic">{interimText}</span>
+            ) : (
+              <span className="text-red-400">Speak now...</span>
+            )}
           </div>
         ) : null}
 
@@ -264,7 +321,7 @@ export function JarvisChat({
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            title="Attach file"
+            title="Attach file (PDF, Excel, Word, PowerPoint, image, CSV...)"
             className="shrink-0 rounded-lg p-2 text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
           >
             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -273,8 +330,12 @@ export function JarvisChat({
           </button>
 
           <textarea
+            ref={textareaRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value);
+              if (!listening) committedRef.current = e.target.value;
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
@@ -282,7 +343,7 @@ export function JarvisChat({
               }
             }}
             rows={2}
-            placeholder={listening ? "Listening..." : "Message Jarvis..."}
+            placeholder={listening ? "Listening... (your words appear here)" : "Message Jarvis..."}
             className="flex-1 resize-none rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/30"
           />
 
@@ -290,7 +351,7 @@ export function JarvisChat({
           <button
             type="button"
             onClick={toggleVoice}
-            title={listening ? "Stop recording" : "Speak to Jarvis"}
+            title={listening ? "Stop recording" : "Speak to Jarvis (continuous, pause-tolerant)"}
             className={`shrink-0 rounded-lg p-2 transition-colors ${
               listening
                 ? "bg-red-100 text-red-600 hover:bg-red-200"
@@ -298,12 +359,10 @@ export function JarvisChat({
             }`}
           >
             {listening ? (
-              /* Stop icon */
               <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
                 <rect x="6" y="6" width="12" height="12" rx="2" />
               </svg>
             ) : (
-              /* Mic icon */
               <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" />
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8" />

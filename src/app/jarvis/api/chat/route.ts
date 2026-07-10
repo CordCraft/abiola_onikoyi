@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import * as XLSX from "xlsx";
+import mammoth from "mammoth";
 import { verifySession } from "@/lib/dal";
 import { prisma } from "@/lib/prisma";
 import { profile } from "@/content/profile";
@@ -11,81 +13,153 @@ export const dynamic = "force-dynamic";
 
 const MODEL = "claude-opus-4-8";
 const MAX_TOOL_LOOPS = 6;
-const MAX_FILE_BYTES = 20 * 1024 * 1024; // 20 MB per file
+const MAX_FILE_BYTES = 30 * 1024 * 1024; // 30 MB per file
 
 type SupportedImageType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
 const IMAGE_TYPES = new Set<string>(["image/jpeg", "image/png", "image/gif", "image/webp"]);
-const TEXT_TYPES = new Set<string>([
-  "text/plain",
-  "text/markdown",
-  "text/csv",
-  "text/html",
-  "application/json",
-  "application/csv",
-  "",   // some browsers send empty MIME for .txt / .md
-]);
-
-// Binary Office/proprietary formats we cannot decode meaningfully
-const UNSUPPORTED_TYPES = new Set<string>([
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",   // xlsx
-  "application/vnd.ms-excel",                                              // xls
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // docx
-  "application/msword",                                                    // doc
-  "application/vnd.openxmlformats-officedocument.presentationml.presentation", // pptx
-  "application/vnd.ms-powerpoint",                                         // ppt
-]);
 
 type FileResult =
   | { kind: "block"; block: Anthropic.ContentBlockParam }
-  | { kind: "skipped"; reason: string }
+  | { kind: "error"; message: string }
   | { kind: "toobig" };
+
+/** Extract text from a PPTX file (ZIP of XML) without any extra library. */
+async function extractPptxText(buffer: Buffer): Promise<string> {
+  // PPTX is a ZIP. Use XLSX's zip reader since it's already a dependency.
+  const zip = XLSX.CFB.read(buffer, { type: "buffer" });
+  const texts: string[] = [];
+  for (const entry of zip.FileIndex) {
+    if (entry.name.match(/ppt\/slides\/slide\d+\.xml/)) {
+      const xml = entry.content ? Buffer.from(entry.content).toString("utf-8") : "";
+      // Strip XML tags and grab text runs
+      const stripped = xml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+      if (stripped) texts.push(stripped);
+    }
+  }
+  return texts.join("\n\n") || "(no text content found in presentation)";
+}
 
 async function fileToContentBlock(file: File): Promise<FileResult> {
   if (file.size > MAX_FILE_BYTES) return { kind: "toobig" };
 
-  const mimeType = file.type;
   const nameLower = file.name.toLowerCase();
-
-  if (UNSUPPORTED_TYPES.has(mimeType) ||
-      nameLower.endsWith(".xlsx") || nameLower.endsWith(".xls") ||
-      nameLower.endsWith(".docx") || nameLower.endsWith(".doc") ||
-      nameLower.endsWith(".pptx") || nameLower.endsWith(".ppt")) {
-    return {
-      kind: "skipped",
-      reason: `${file.name} is a binary Office format that Jarvis cannot read directly. Please export it as a PDF or CSV and re-attach.`,
-    };
-  }
-
   const buffer = Buffer.from(await file.arrayBuffer());
 
-  if (mimeType === "application/pdf" || nameLower.endsWith(".pdf")) {
-    const base64 = buffer.toString("base64");
+  // ---- PDF ----------------------------------------------------------------
+  if (nameLower.endsWith(".pdf") || file.type === "application/pdf") {
     return {
       kind: "block",
       block: {
         type: "document",
         title: file.name,
-        source: { type: "base64", media_type: "application/pdf", data: base64 },
+        source: { type: "base64", media_type: "application/pdf", data: buffer.toString("base64") },
       } as Anthropic.DocumentBlockParam,
     };
   }
 
-  if (IMAGE_TYPES.has(mimeType)) {
-    const base64 = buffer.toString("base64");
+  // ---- Images -------------------------------------------------------------
+  if (IMAGE_TYPES.has(file.type)) {
     return {
       kind: "block",
       block: {
         type: "image",
-        source: { type: "base64", media_type: mimeType as SupportedImageType, data: base64 },
+        source: { type: "base64", media_type: file.type as SupportedImageType, data: buffer.toString("base64") },
       },
     };
   }
 
-  // Plain text / markdown / CSV / JSON — use PlainTextSource document block
-  if (TEXT_TYPES.has(mimeType) ||
-      nameLower.endsWith(".md") || nameLower.endsWith(".txt") ||
-      nameLower.endsWith(".csv") || nameLower.endsWith(".json")) {
+  // ---- Excel (.xlsx / .xls / .csv via SheetJS) ----------------------------
+  if (nameLower.endsWith(".xlsx") || nameLower.endsWith(".xls") ||
+      nameLower.endsWith(".ods") ||
+      file.type.includes("spreadsheet") || file.type.includes("excel")) {
+    try {
+      const wb = XLSX.read(buffer, { type: "buffer" });
+      const parts: string[] = wb.SheetNames.map((name) => {
+        const csv = XLSX.utils.sheet_to_csv(wb.Sheets[name]);
+        return `Sheet: ${name}\n${csv}`;
+      });
+      const text = parts.join("\n\n---\n\n");
+      return {
+        kind: "block",
+        block: {
+          type: "document",
+          title: file.name,
+          source: { type: "text", media_type: "text/plain", data: text },
+        } as Anthropic.DocumentBlockParam,
+      };
+    } catch (e) {
+      return { kind: "error", message: `Could not parse ${file.name}: ${e instanceof Error ? e.message : String(e)}` };
+    }
+  }
+
+  // ---- Word (.docx) via mammoth -------------------------------------------
+  if (nameLower.endsWith(".docx") || nameLower.endsWith(".doc") ||
+      file.type.includes("wordprocessingml") || file.type.includes("msword")) {
+    try {
+      const result = await mammoth.extractRawText({ buffer });
+      return {
+        kind: "block",
+        block: {
+          type: "document",
+          title: file.name,
+          source: { type: "text", media_type: "text/plain", data: result.value },
+        } as Anthropic.DocumentBlockParam,
+      };
+    } catch (e) {
+      return { kind: "error", message: `Could not parse ${file.name}: ${e instanceof Error ? e.message : String(e)}` };
+    }
+  }
+
+  // ---- PowerPoint (.pptx) via ZIP+XML extraction --------------------------
+  if (nameLower.endsWith(".pptx") || nameLower.endsWith(".ppt") ||
+      file.type.includes("presentationml") || file.type.includes("powerpoint")) {
+    try {
+      const text = await extractPptxText(buffer);
+      return {
+        kind: "block",
+        block: {
+          type: "document",
+          title: file.name,
+          source: { type: "text", media_type: "text/plain", data: text },
+        } as Anthropic.DocumentBlockParam,
+      };
+    } catch (e) {
+      return { kind: "error", message: `Could not parse ${file.name}: ${e instanceof Error ? e.message : String(e)}` };
+    }
+  }
+
+  // ---- Plain text / Markdown / CSV / JSON ---------------------------------
+  {
+    const isText =
+      file.type.startsWith("text/") ||
+      file.type === "application/json" ||
+      file.type === "" ||
+      nameLower.endsWith(".txt") || nameLower.endsWith(".md") ||
+      nameLower.endsWith(".csv") || nameLower.endsWith(".json") ||
+      nameLower.endsWith(".yaml") || nameLower.endsWith(".yml");
+    if (isText) {
+      return {
+        kind: "block",
+        block: {
+          type: "document",
+          title: file.name,
+          source: { type: "text", media_type: "text/plain", data: buffer.toString("utf-8") },
+        } as Anthropic.DocumentBlockParam,
+      };
+    }
+  }
+
+  // ---- Unknown: try as plain text, fall back gracefully -------------------
+  try {
     const text = buffer.toString("utf-8");
+    // Rough heuristic: if more than 30% of chars are non-printable, it's binary
+    const nonPrintable = (text.match(/[\x00-\x08\x0e-\x1f\x7f-\x9f]/g) ?? []).length;
+    if (nonPrintable / text.length > 0.3) {
+      return {
+        kind: "error",
+        message: `${file.name} appears to be a binary file Jarvis cannot read. Try converting it to PDF or text.`,
+      };
+    }
     return {
       kind: "block",
       block: {
@@ -94,12 +168,12 @@ async function fileToContentBlock(file: File): Promise<FileResult> {
         source: { type: "text", media_type: "text/plain", data: text },
       } as Anthropic.DocumentBlockParam,
     };
+  } catch {
+    return {
+      kind: "error",
+      message: `${file.name} could not be read. Try converting it to PDF or text.`,
+    };
   }
-
-  return {
-    kind: "skipped",
-    reason: `${file.name} has an unrecognised format (${mimeType || "unknown"}). Supported: PDF, images, text, CSV, markdown.`,
-  };
 }
 
 export async function POST(req: Request) {
@@ -153,24 +227,23 @@ export async function POST(req: Request) {
     orderBy: { createdAt: "asc" },
   });
 
-  // Process files — separate readable blocks from skipped/oversized notices
+  // Process files — separate readable blocks from error notices
   const fileResults = await Promise.all(uploadedFiles.map(fileToContentBlock));
   const fileBlocks: Anthropic.ContentBlockParam[] = [];
-  const skippedNotices: string[] = [];
+  const errorNotices: string[] = [];
   for (const result of fileResults) {
     if (result.kind === "block") fileBlocks.push(result.block);
-    else if (result.kind === "skipped") skippedNotices.push(result.reason);
-    else skippedNotices.push("One file was too large (max 20 MB) and was skipped.");
+    else if (result.kind === "error") errorNotices.push(result.message);
+    else errorNotices.push("One file was too large (max 30 MB) and was skipped.");
   }
 
   const userContent: Anthropic.ContentBlockParam[] = [];
-  const messageWithNotices =
-    [message, ...skippedNotices].filter(Boolean).join("\n\n");
-  if (messageWithNotices) userContent.push({ type: "text", text: messageWithNotices });
+  const fullText = [message, ...errorNotices].filter(Boolean).join("\n\n");
+  if (fullText) userContent.push({ type: "text", text: fullText });
   userContent.push(...fileBlocks);
 
   if (userContent.length === 0) {
-    return NextResponse.json({ error: "No readable content. Please attach a PDF, image, or text file." }, { status: 400 });
+    return NextResponse.json({ error: "No readable content." }, { status: 400 });
   }
 
   // Persist text representation to DB
