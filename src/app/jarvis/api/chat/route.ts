@@ -5,15 +5,21 @@ import { prisma } from "@/lib/prisma";
 import { profile } from "@/content/profile";
 import { buildContext } from "@/lib/jarvis/context";
 import { jarvisTools, executeTool } from "@/lib/jarvis/tools";
-import type { Attachment } from "@/components/jarvis/JarvisChat";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MODEL = "claude-opus-4-8";
 const MAX_TOOL_LOOPS = 6;
+// Keep each document under ~40k tokens. 1 token ≈ 4 chars.
+const MAX_CHARS_PER_FILE = 120_000;
 
 type SupportedImageType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+
+type Attachment =
+  | { kind: "text"; name: string; text: string }
+  | { kind: "image"; name: string; mimeType: string; base64: string }
+  | { kind: "error"; name: string; message: string };
 
 function buildAttachmentBlocks(attachments: Attachment[]): {
   blocks: Anthropic.ContentBlockParam[];
@@ -24,11 +30,17 @@ function buildAttachmentBlocks(attachments: Attachment[]): {
 
   for (const att of attachments) {
     if (att.kind === "text") {
-      if (!att.text.trim()) continue;
+      let text = att.text.trim();
+      if (!text) continue;
+      if (text.length > MAX_CHARS_PER_FILE) {
+        text =
+          text.slice(0, MAX_CHARS_PER_FILE) +
+          `\n\n[... document truncated at ${MAX_CHARS_PER_FILE.toLocaleString()} characters ...]`;
+      }
       blocks.push({
         type: "document",
         title: att.name,
-        source: { type: "text", media_type: "text/plain", data: att.text },
+        source: { type: "text", media_type: "text/plain", data: text },
       } as Anthropic.DocumentBlockParam);
     } else if (att.kind === "image") {
       blocks.push({
@@ -40,7 +52,6 @@ function buildAttachmentBlocks(attachments: Attachment[]): {
         },
       });
     } else {
-      // kind === "error" — surface the message as a text note so Claude can explain
       notices.push(att.message);
     }
   }
@@ -49,23 +60,33 @@ function buildAttachmentBlocks(attachments: Attachment[]): {
 }
 
 export async function POST(req: Request) {
-  await verifySession();
+  // Wrap everything so ANY unhandled exception returns proper JSON instead of
+  // Netlify's opaque error body (which the client shows as "Request failed.").
+  try {
+    await verifySession();
+  } catch {
+    return NextResponse.json({ error: "Session expired. Please sign in again." }, { status: 401 });
+  }
 
   if (!process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json(
-      { error: "ANTHROPIC_API_KEY is not set on the server." },
+      { error: "ANTHROPIC_API_KEY is not configured on the server." },
       { status: 500 },
     );
   }
 
-  const body = (await req.json().catch(() => ({}))) as {
-    threadId?: string;
-    message?: string;
-    attachments?: Attachment[];
-  };
+  let body: { threadId?: string; message?: string; attachments?: Attachment[] };
+  try {
+    body = (await req.json()) as typeof body;
+  } catch (e) {
+    return NextResponse.json(
+      { error: `Could not parse request body: ${e instanceof Error ? e.message : String(e)}` },
+      { status: 400 },
+    );
+  }
 
   const message = (body.message ?? "").trim();
-  const attachments: Attachment[] = body.attachments ?? [];
+  const attachments: Attachment[] = Array.isArray(body.attachments) ? body.attachments : [];
 
   if (!message && attachments.length === 0) {
     return NextResponse.json({ error: "Empty message." }, { status: 400 });
@@ -73,19 +94,26 @@ export async function POST(req: Request) {
 
   // Resolve or create thread
   let threadId = body.threadId ?? null;
-  if (threadId) {
-    const exists = await prisma.jarvisThread.findUnique({ where: { id: threadId } });
-    if (!exists) threadId = null;
-  }
-  if (!threadId) {
-    const title =
-      message.slice(0, 60) ||
-      attachments
-        .map((a) => a.name)
-        .join(", ")
-        .slice(0, 60);
-    const t = await prisma.jarvisThread.create({ data: { title } });
-    threadId = t.id;
+  try {
+    if (threadId) {
+      const exists = await prisma.jarvisThread.findUnique({ where: { id: threadId } });
+      if (!exists) threadId = null;
+    }
+    if (!threadId) {
+      const title =
+        message.slice(0, 60) ||
+        attachments
+          .map((a) => a.name)
+          .join(", ")
+          .slice(0, 60);
+      const t = await prisma.jarvisThread.create({ data: { title } });
+      threadId = t.id;
+    }
+  } catch (e) {
+    return NextResponse.json(
+      { error: `Database error: ${e instanceof Error ? e.message : String(e)}` },
+      { status: 500 },
+    );
   }
 
   // Prior messages
@@ -103,7 +131,7 @@ export async function POST(req: Request) {
   userContent.push(...attBlocks);
 
   if (userContent.length === 0) {
-    return NextResponse.json({ error: "No readable content." }, { status: 400 });
+    return NextResponse.json({ error: "No readable content was sent." }, { status: 400 });
   }
 
   // Persist text summary to DB
@@ -112,9 +140,17 @@ export async function POST(req: Request) {
     .map((a) => `[attached: ${a.name}]`)
     .join("\n");
   const dbContent = [message, attachedNames].filter(Boolean).join("\n");
-  await prisma.jarvisMessage.create({
-    data: { threadId, role: "user", content: dbContent },
-  });
+
+  try {
+    await prisma.jarvisMessage.create({
+      data: { threadId, role: "user", content: dbContent },
+    });
+  } catch (e) {
+    return NextResponse.json(
+      { error: `Could not save message: ${e instanceof Error ? e.message : String(e)}` },
+      { status: 500 },
+    );
+  }
 
   const context = await buildContext();
   const system = `You are Jarvis, ${profile.name}'s personal chief-of-staff and second brain. You have live access to their ventures, projects, tasks, goals, notes and decisions (snapshot below). Be concise, direct, and action-oriented. Use the read tools to look things up when needed.
@@ -145,7 +181,7 @@ ${context}`;
     for (let i = 0; i < MAX_TOOL_LOOPS; i++) {
       const response = await client.messages.create({
         model: MODEL,
-        max_tokens: 2000,
+        max_tokens: 2048,
         system,
         tools: jarvisTools,
         messages,
@@ -173,20 +209,24 @@ ${context}`;
     }
   } catch (err) {
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Chat failed." },
+      { error: `Anthropic API error: ${err instanceof Error ? err.message : String(err)}` },
       { status: 500 },
     );
   }
 
   if (!finalText) finalText = "(no response)";
 
-  await prisma.jarvisMessage.create({
-    data: { threadId, role: "assistant", content: finalText },
-  });
-  await prisma.jarvisThread.update({
-    where: { id: threadId },
-    data: { updatedAt: new Date() },
-  });
+  try {
+    await prisma.jarvisMessage.create({
+      data: { threadId, role: "assistant", content: finalText },
+    });
+    await prisma.jarvisThread.update({
+      where: { id: threadId },
+      data: { updatedAt: new Date() },
+    });
+  } catch {
+    // Non-fatal — reply was generated, just couldn't persist it
+  }
 
   const proposals = await prisma.jarvisProposal.findMany({
     where: { threadId, status: "pending" },

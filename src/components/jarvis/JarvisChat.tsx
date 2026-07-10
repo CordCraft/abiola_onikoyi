@@ -246,7 +246,7 @@ export function JarvisChat({
       });
       const data = await res.json();
       if (!res.ok || data.error) {
-        setError(data.error || "Request failed.");
+        setError(data.error || data.message || `Server error (HTTP ${res.status})`)
       } else {
         setMessages((m) => [...m, { role: "assistant", content: data.reply }]);
         setProposals(
