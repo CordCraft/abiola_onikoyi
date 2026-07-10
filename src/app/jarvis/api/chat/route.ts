@@ -201,13 +201,28 @@ ${context}`;
       send({ type: "meta", threadId: resolvedThreadId });
 
       let finalText = "";
+      let usedTool = false;
+      let forcedOnce = false;
+      // Force the model to actually emit tool calls when the user clearly wants
+      // something recorded (or attached files that should be captured), instead
+      // of just describing the records in prose and ending the turn.
+      const shouldForceTools =
+        attachments.some((a) => a.kind !== "error") ||
+        /\b(add|capture|save|record|log|update|create|store|load|note|task|decision|propose|knowledge base|memory|overview|project)\b/i.test(
+          message,
+        );
+
       try {
         for (let i = 0; i < MAX_TOOL_LOOPS; i++) {
+          // On a forcing pass we require a tool call via tool_choice.
+          const forceThisPass = shouldForceTools && !usedTool && i > 0 && forcedOnce;
+
           const messageStream = client.messages.stream({
             model: MODEL,
             max_tokens: 2048,
             system,
             tools: jarvisTools,
+            tool_choice: forceThisPass ? { type: "any" } : { type: "auto" },
             messages,
           });
 
@@ -219,6 +234,7 @@ ${context}`;
           const response = await messageStream.finalMessage();
 
           if (response.stop_reason === "tool_use") {
+            usedTool = true;
             messages.push({ role: "assistant", content: response.content });
             const toolResults: Anthropic.ToolResultBlockParam[] = [];
             for (const block of response.content) {
@@ -228,6 +244,19 @@ ${context}`;
               }
             }
             messages.push({ role: "user", content: toolResults });
+            continue;
+          }
+
+          // Model ended its turn. If it should have recorded something but never
+          // called a tool, nudge it once to actually emit the tool calls.
+          if (shouldForceTools && !usedTool && !forcedOnce) {
+            forcedOnce = true;
+            messages.push({ role: "assistant", content: response.content });
+            messages.push({
+              role: "user",
+              content:
+                "Now actually emit the propose_* tool calls for everything you just described. Call the tools directly. Do not reply with prose.",
+            });
             continue;
           }
 

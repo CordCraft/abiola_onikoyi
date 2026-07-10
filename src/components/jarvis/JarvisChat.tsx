@@ -34,19 +34,23 @@ async function processFile(file: File): Promise<Attachment> {
   try {
     // ── Excel / ODS ─────────────────────────────────────────────────────────
     if (["xlsx", "xls", "ods"].includes(ext) || file.type.includes("spreadsheet") || file.type.includes("excel")) {
-      const XLSX = await import("xlsx");
-      const wb = XLSX.read(await file.arrayBuffer());
+      const mod = await import("xlsx");
+      // xlsx is CommonJS; under webpack the API may sit on .default
+      const XLSX = (mod as unknown as { default?: typeof mod }).default ?? mod;
+      const data = new Uint8Array(await file.arrayBuffer());
+      const wb = XLSX.read(data, { type: "array" });
       const text = wb.SheetNames.map(
         (sn) => `Sheet: ${sn}\n${XLSX.utils.sheet_to_csv(wb.Sheets[sn])}`,
       ).join("\n\n---\n\n");
-      return { kind: "text", name, text };
+      return { kind: "text", name, text: text || "(empty spreadsheet)" };
     }
 
     // ── Word (.docx / .doc) ─────────────────────────────────────────────────
     if (["docx", "doc"].includes(ext) || file.type.includes("wordprocessingml") || file.type.includes("msword")) {
-      const mammoth = await import("mammoth");
+      const mod = await import("mammoth");
+      const mammoth = (mod as unknown as { default?: typeof mod }).default ?? mod;
       const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
-      return { kind: "text", name, text: result.value };
+      return { kind: "text", name, text: result.value || "(no text extracted from document)" };
     }
 
     // ── PowerPoint (.pptx / .ppt) ───────────────────────────────────────────
