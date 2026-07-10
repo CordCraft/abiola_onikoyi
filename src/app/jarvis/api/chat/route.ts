@@ -8,6 +8,7 @@ import { jarvisTools, executeTool } from "@/lib/jarvis/tools";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60; // allow long document-analysis calls
 
 const MODEL = "claude-opus-4-8";
 const MAX_TOOL_LOOPS = 6;
@@ -176,62 +177,95 @@ ${context}`;
     },
   ];
 
-  let finalText = "";
-  try {
-    for (let i = 0; i < MAX_TOOL_LOOPS; i++) {
-      const response = await client.messages.create({
-        model: MODEL,
-        max_tokens: 2048,
-        system,
-        tools: jarvisTools,
-        messages,
-      });
+  // Stream newline-delimited JSON events back to the client. Streaming keeps
+  // the connection alive during long Opus calls (avoiding serverless TTFB
+  // timeouts) and shows the reply live as it is written.
+  const resolvedThreadId = threadId;
+  const encoder = new TextEncoder();
 
-      if (response.stop_reason === "tool_use") {
-        messages.push({ role: "assistant", content: response.content });
-        const toolResults: Anthropic.ToolResultBlockParam[] = [];
-        for (const block of response.content) {
-          if (block.type === "tool_use") {
-            const out = await executeTool(block.name, block.input, threadId);
-            toolResults.push({ type: "tool_result", tool_use_id: block.id, content: out });
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = (event: Record<string, unknown>) =>
+        controller.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
+
+      // Emit the threadId immediately so the client can update the URL and the
+      // connection receives its first byte right away.
+      send({ type: "meta", threadId: resolvedThreadId });
+
+      let finalText = "";
+      try {
+        for (let i = 0; i < MAX_TOOL_LOOPS; i++) {
+          const messageStream = client.messages.stream({
+            model: MODEL,
+            max_tokens: 2048,
+            system,
+            tools: jarvisTools,
+            messages,
+          });
+
+          // Stream text deltas live to the client
+          messageStream.on("text", (delta) => {
+            send({ type: "delta", text: delta });
+          });
+
+          const response = await messageStream.finalMessage();
+
+          if (response.stop_reason === "tool_use") {
+            messages.push({ role: "assistant", content: response.content });
+            const toolResults: Anthropic.ToolResultBlockParam[] = [];
+            for (const block of response.content) {
+              if (block.type === "tool_use") {
+                const out = await executeTool(block.name, block.input, resolvedThreadId);
+                toolResults.push({ type: "tool_result", tool_use_id: block.id, content: out });
+              }
+            }
+            messages.push({ role: "user", content: toolResults });
+            continue;
           }
+
+          finalText = response.content
+            .filter((b): b is Anthropic.TextBlock => b.type === "text")
+            .map((b) => b.text)
+            .join("")
+            .trim();
+          break;
         }
-        messages.push({ role: "user", content: toolResults });
-        continue;
+      } catch (err) {
+        send({ type: "error", error: `Anthropic API error: ${err instanceof Error ? err.message : String(err)}` });
+        controller.close();
+        return;
       }
 
-      finalText = response.content
-        .filter((b): b is Anthropic.TextBlock => b.type === "text")
-        .map((b) => b.text)
-        .join("")
-        .trim();
-      break;
-    }
-  } catch (err) {
-    return NextResponse.json(
-      { error: `Anthropic API error: ${err instanceof Error ? err.message : String(err)}` },
-      { status: 500 },
-    );
-  }
+      if (!finalText) finalText = "(no response)";
 
-  if (!finalText) finalText = "(no response)";
+      // Persist and gather proposals
+      try {
+        await prisma.jarvisMessage.create({
+          data: { threadId: resolvedThreadId, role: "assistant", content: finalText },
+        });
+        await prisma.jarvisThread.update({
+          where: { id: resolvedThreadId },
+          data: { updatedAt: new Date() },
+        });
+      } catch {
+        // Non-fatal
+      }
 
-  try {
-    await prisma.jarvisMessage.create({
-      data: { threadId, role: "assistant", content: finalText },
-    });
-    await prisma.jarvisThread.update({
-      where: { id: threadId },
-      data: { updatedAt: new Date() },
-    });
-  } catch {
-    // Non-fatal — reply was generated, just couldn't persist it
-  }
+      const proposals = await prisma.jarvisProposal.findMany({
+        where: { threadId: resolvedThreadId, status: "pending" },
+        orderBy: { createdAt: "asc" },
+      });
 
-  const proposals = await prisma.jarvisProposal.findMany({
-    where: { threadId, status: "pending" },
-    orderBy: { createdAt: "asc" },
+      send({ type: "done", threadId: resolvedThreadId, reply: finalText, proposals });
+      controller.close();
+    },
   });
 
-  return NextResponse.json({ threadId, reply: finalText, proposals });
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      "X-Accel-Buffering": "no",
+    },
+  });
 }

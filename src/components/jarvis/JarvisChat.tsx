@@ -238,24 +238,99 @@ export function JarvisChat({
     }
 
     setSending(true);
+    let assistantIndex = -1; // index of the live assistant message being streamed
     try {
       const res = await fetch("/jarvis/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ threadId, message: text, attachments }),
       });
-      const data = await res.json();
-      if (!res.ok || data.error) {
-        setError(data.error || data.message || `Server error (HTTP ${res.status})`)
-      } else {
-        setMessages((m) => [...m, { role: "assistant", content: data.reply }]);
-        setProposals(
-          (data.proposals ?? []).map((p: Proposal) => ({ id: p.id, summary: p.summary, kind: p.kind })),
-        );
-        if (!threadId && data.threadId) {
-          setThreadId(data.threadId);
-          window.history.replaceState(null, "", `/jarvis/chat?t=${data.threadId}`);
+
+      if (!res.ok) {
+        // Error responses come back as plain JSON, not a stream
+        let msg = `Server error (HTTP ${res.status})`;
+        try {
+          const errData = await res.json();
+          msg = errData.error || errData.message || msg;
+        } catch { /* keep default */ }
+        setError(msg);
+        setSending(false);
+        return;
+      }
+
+      if (!res.body) {
+        setError("No response stream from server.");
+        setSending(false);
+        return;
+      }
+
+      // Consume the newline-delimited JSON stream
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let streamedText = "";
+
+      const handleEvent = (evt: {
+        type: string;
+        text?: string;
+        threadId?: string;
+        reply?: string;
+        proposals?: Proposal[];
+        error?: string;
+      }) => {
+        if (evt.type === "meta") {
+          if (!threadId && evt.threadId) {
+            setThreadId(evt.threadId);
+            window.history.replaceState(null, "", `/jarvis/chat?t=${evt.threadId}`);
+          }
+        } else if (evt.type === "delta" && evt.text) {
+          streamedText += evt.text;
+          setMessages((m) => {
+            const copy = [...m];
+            if (assistantIndex === -1) {
+              copy.push({ role: "assistant", content: streamedText });
+              assistantIndex = copy.length - 1;
+            } else {
+              copy[assistantIndex] = { role: "assistant", content: streamedText };
+            }
+            return copy;
+          });
+        } else if (evt.type === "done") {
+          // Finalize text (in case tool calls produced text after deltas)
+          const finalReply = evt.reply ?? streamedText;
+          setMessages((m) => {
+            const copy = [...m];
+            if (assistantIndex === -1) {
+              copy.push({ role: "assistant", content: finalReply });
+            } else {
+              copy[assistantIndex] = { role: "assistant", content: finalReply };
+            }
+            return copy;
+          });
+          setProposals(
+            (evt.proposals ?? []).map((p) => ({ id: p.id, summary: p.summary, kind: p.kind })),
+          );
+        } else if (evt.type === "error") {
+          setError(evt.error ?? "Something went wrong.");
         }
+      };
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buffer.indexOf("\n")) !== -1) {
+          const line = buffer.slice(0, nl).trim();
+          buffer = buffer.slice(nl + 1);
+          if (line) {
+            try { handleEvent(JSON.parse(line)); } catch { /* ignore partial */ }
+          }
+        }
+      }
+      // Flush any trailing event
+      if (buffer.trim()) {
+        try { handleEvent(JSON.parse(buffer.trim())); } catch { /* ignore */ }
       }
     } catch {
       setError("Network error — please try again.");
