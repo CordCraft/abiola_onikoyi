@@ -487,7 +487,10 @@ export function JarvisChat({
             multiple
             className="hidden"
             onChange={(e) => {
-              setPendingFiles((prev) => [...prev, ...Array.from(e.target.files ?? [])]);
+              // Capture files synchronously BEFORE clearing the input, otherwise
+              // the deferred state updater reads an already-emptied file list.
+              const picked = Array.from(e.target.files ?? []);
+              if (picked.length) setPendingFiles((prev) => [...prev, ...picked]);
               e.target.value = "";
             }}
           />
