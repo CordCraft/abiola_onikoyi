@@ -3,45 +3,90 @@ import { getOverview, isStalled, isPast, daysSince } from "@/lib/jarvis/queries"
 import { formatDate } from "@/lib/format";
 
 const priorityBadge: Record<string, string> = {
-  high: "bg-red-100 text-red-700",
-  medium: "bg-amber-100 text-amber-700",
-  low: "bg-zinc-200 text-zinc-600",
+  high: "bg-red-50 text-red-700 ring-1 ring-red-200",
+  medium: "bg-amber-50 text-amber-700 ring-1 ring-amber-200",
+  low: "bg-zinc-100 text-zinc-600 ring-1 ring-zinc-200",
 };
+
+const cardBase =
+  "rounded-2xl border border-white/60 bg-white/80 shadow-[0_1px_3px_rgba(0,0,0,0.04),0_10px_30px_-12px_rgba(0,0,0,0.12)] backdrop-blur-sm";
+
+function SectionLabel({ children, accent }: { children: React.ReactNode; accent?: string }) {
+  return (
+    <h2 className={`text-xs font-semibold uppercase tracking-[0.12em] ${accent ?? "text-zinc-500"}`}>
+      {children}
+    </h2>
+  );
+}
 
 export default async function JarvisOverview() {
   const { projects, tasks, goals } = await getOverview();
   const stalled = projects.filter((p) => isStalled(p));
   const active = projects.filter((p) => !isStalled(p));
 
+  const overdueCount = tasks.filter((t) => isPast(t.dueDate)).length;
+
   return (
     <div className="space-y-10">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900">Overview</h1>
-          <p className="mt-1 text-sm text-zinc-500">Your ventures at a glance. Ask Jarvis to move things forward.</p>
+      {/* Hero */}
+      <div className="relative overflow-hidden rounded-3xl border border-white/60 bg-gradient-to-br from-zinc-900 via-zinc-900 to-indigo-950 p-8 text-white shadow-[0_20px_50px_-20px_rgba(30,27,75,0.5)]">
+        <div className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-indigo-500/25 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-20 left-10 h-56 w-56 rounded-full bg-violet-500/20 blur-3xl" />
+        <div className="relative flex flex-wrap items-end justify-between gap-6">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-[0.14em] text-indigo-300">Second brain</p>
+            <h1 className="mt-1.5 text-3xl font-bold tracking-tight">Overview</h1>
+            <p className="mt-2 max-w-md text-sm text-zinc-300">
+              Your ventures at a glance. Ask Jarvis to capture documents, log decisions, and move things forward.
+            </p>
+          </div>
+          <div className="flex gap-2.5">
+            <Link
+              href="/jarvis/chat"
+              className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-zinc-900 shadow-sm transition-transform hover:-translate-y-0.5"
+            >
+              Open chat
+            </Link>
+            <Link
+              href="/jarvis/projects/new"
+              className="rounded-xl border border-white/25 bg-white/5 px-4 py-2.5 text-sm font-semibold text-white backdrop-blur transition-colors hover:bg-white/10"
+            >
+              + Project
+            </Link>
+          </div>
         </div>
-        <div className="flex gap-2">
-          <Link href="/jarvis/chat" className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-700">
-            Open chat
-          </Link>
-          <Link href="/jarvis/projects/new" className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50">
-            + Project
-          </Link>
+
+        {/* Stat strip */}
+        <div className="relative mt-7 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {[
+            { label: "Active", value: active.length, tone: "text-emerald-300" },
+            { label: "Stalled", value: stalled.length, tone: stalled.length ? "text-red-300" : "text-zinc-400" },
+            { label: "Overdue", value: overdueCount, tone: overdueCount ? "text-amber-300" : "text-zinc-400" },
+            { label: "Goals", value: goals.length, tone: "text-indigo-300" },
+          ].map((s) => (
+            <div key={s.label} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 backdrop-blur">
+              <div className={`text-2xl font-bold ${s.tone}`}>{s.value}</div>
+              <div className="text-xs uppercase tracking-wide text-zinc-400">{s.label}</div>
+            </div>
+          ))}
         </div>
       </div>
 
       {stalled.length > 0 ? (
         <section>
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-red-700">
-            Stalled ({stalled.length})
-          </h2>
+          <SectionLabel accent="text-red-600">Stalled ({stalled.length})</SectionLabel>
           <ul className="mt-3 space-y-3">
             {stalled.map((p) => (
               <li key={p.id}>
-                <Link href={`/jarvis/projects/${p.id}`} className="block rounded-xl border border-red-200 bg-red-50/50 p-4 hover:bg-red-50">
+                <Link
+                  href={`/jarvis/projects/${p.id}`}
+                  className="block rounded-2xl border border-red-200/70 bg-red-50/60 p-4 backdrop-blur-sm transition-colors hover:bg-red-50"
+                >
                   <div className="flex items-center justify-between gap-3">
                     <span className="font-semibold text-zinc-900">{p.name}</span>
-                    <span className="text-xs text-red-600">no activity in {daysSince(p.lastActivityAt)} days</span>
+                    <span className="shrink-0 rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-700">
+                      idle {daysSince(p.lastActivityAt)}d
+                    </span>
                   </div>
                   {p.venture ? <p className="mt-0.5 text-xs text-zinc-500">{p.venture.name}</p> : null}
                 </Link>
@@ -52,22 +97,34 @@ export default async function JarvisOverview() {
       ) : null}
 
       <section>
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Active projects</h2>
+        <SectionLabel>Active projects</SectionLabel>
         {active.length === 0 ? (
-          <p className="mt-3 text-sm text-zinc-500">No active projects. <Link href="/jarvis/projects/new" className="text-zinc-900 underline">Create one</Link>.</p>
+          <p className="mt-3 text-sm text-zinc-500">
+            No active projects.{" "}
+            <Link href="/jarvis/projects/new" className="font-medium text-indigo-600 underline-offset-2 hover:underline">
+              Create one
+            </Link>
+            .
+          </p>
         ) : (
           <ul className="mt-3 grid gap-3 sm:grid-cols-2">
             {active.map((p) => (
               <li key={p.id}>
-                <Link href={`/jarvis/projects/${p.id}`} className="block rounded-xl border border-zinc-200 bg-white p-4 hover:shadow-sm">
+                <Link
+                  href={`/jarvis/projects/${p.id}`}
+                  className={`group block ${cardBase} p-4 transition-all hover:-translate-y-0.5 hover:shadow-[0_1px_3px_rgba(0,0,0,0.04),0_18px_40px_-16px_rgba(30,27,75,0.28)]`}
+                >
                   <div className="flex items-start justify-between gap-3">
-                    <span className="font-semibold text-zinc-900">{p.name}</span>
+                    <span className="font-semibold text-zinc-900 transition-colors group-hover:text-indigo-700">
+                      {p.name}
+                    </span>
                     <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${priorityBadge[p.priority] ?? priorityBadge.low}`}>
                       {p.priority}
                     </span>
                   </div>
-                  <p className="mt-1 text-xs text-zinc-500">
-                    {p.venture ? `${p.venture.name} · ` : ""}{p._count.tasks} tasks · updated {daysSince(p.lastActivityAt)}d ago
+                  <p className="mt-1.5 text-xs text-zinc-500">
+                    {p.venture ? `${p.venture.name} · ` : ""}
+                    {p._count.tasks} tasks · updated {daysSince(p.lastActivityAt)}d ago
                   </p>
                 </Link>
               </li>
@@ -77,22 +134,24 @@ export default async function JarvisOverview() {
       </section>
 
       <section>
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Upcoming & overdue tasks</h2>
+        <SectionLabel>Upcoming &amp; overdue tasks</SectionLabel>
         {tasks.length === 0 ? (
           <p className="mt-3 text-sm text-zinc-500">No dated tasks.</p>
         ) : (
-          <ul className="mt-3 space-y-2">
+          <ul className={`mt-3 divide-y divide-zinc-100 overflow-hidden ${cardBase}`}>
             {tasks.map((t) => {
               const overdue = isPast(t.dueDate);
               return (
-                <li key={t.id} className="flex items-center justify-between rounded-lg border border-zinc-200 bg-white px-4 py-2.5">
-                  <div className="min-w-0">
-                    <span className="text-sm font-medium text-zinc-900">{t.title}</span>
-                    {t.project ? <span className="ml-2 text-xs text-zinc-400">{t.project.name}</span> : null}
+                <li key={t.id} className="flex items-center justify-between px-4 py-3 transition-colors hover:bg-zinc-50/70">
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${overdue ? "bg-red-500" : "bg-zinc-300"}`} />
+                    <span className="truncate text-sm font-medium text-zinc-900">{t.title}</span>
+                    {t.project ? <span className="truncate text-xs text-zinc-400">{t.project.name}</span> : null}
                   </div>
                   {t.dueDate ? (
                     <span className={`shrink-0 text-xs font-medium ${overdue ? "text-red-600" : "text-zinc-500"}`}>
-                      {overdue ? "overdue " : "due "}{formatDate(t.dueDate)}
+                      {overdue ? "overdue " : "due "}
+                      {formatDate(t.dueDate)}
                     </span>
                   ) : null}
                 </li>
@@ -104,8 +163,10 @@ export default async function JarvisOverview() {
 
       <section>
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Goals</h2>
-          <Link href="/jarvis/goals" className="text-xs font-medium text-zinc-500 hover:text-zinc-900">Manage →</Link>
+          <SectionLabel>Goals</SectionLabel>
+          <Link href="/jarvis/goals" className="text-xs font-medium text-zinc-500 transition-colors hover:text-indigo-600">
+            Manage →
+          </Link>
         </div>
         {goals.length === 0 ? (
           <p className="mt-3 text-sm text-zinc-500">No goals yet.</p>
@@ -115,14 +176,19 @@ export default async function JarvisOverview() {
               const done = g.milestones.filter((m) => m.done).length;
               const pct = g.milestones.length ? Math.round((done / g.milestones.length) * 100) : 0;
               return (
-                <li key={g.id} className="rounded-xl border border-zinc-200 bg-white p-4">
+                <li key={g.id} className={`${cardBase} p-4`}>
                   <div className="flex items-center justify-between gap-3">
                     <span className="font-semibold text-zinc-900">{g.title}</span>
-                    <span className="text-xs text-zinc-500">{done}/{g.milestones.length}</span>
+                    <span className="text-xs font-medium text-zinc-500">
+                      {done}/{g.milestones.length}
+                    </span>
                   </div>
                   {g.milestones.length ? (
-                    <div className="mt-2 h-1.5 w-full rounded-full bg-zinc-100">
-                      <div className="h-1.5 rounded-full bg-emerald-500" style={{ width: `${pct}%` }} />
+                    <div className="mt-2.5 h-2 w-full overflow-hidden rounded-full bg-zinc-100">
+                      <div
+                        className="h-2 rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 transition-all"
+                        style={{ width: `${pct}%` }}
+                      />
                     </div>
                   ) : null}
                 </li>

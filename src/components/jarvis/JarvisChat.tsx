@@ -357,23 +357,30 @@ export function JarvisChat({
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex h-[calc(100vh-11rem)] flex-col rounded-2xl border border-zinc-200 bg-white">
+    <div className="flex h-[calc(100vh-11rem)] flex-col overflow-hidden rounded-3xl border border-white/60 bg-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.04),0_20px_50px_-24px_rgba(30,27,75,0.28)] backdrop-blur-sm">
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto p-5">
         {messages.length === 0 ? (
-          <p className="text-sm text-zinc-400">
-            Ask anything about your ventures. Attach documents (PDF, Excel, Word, PowerPoint, CSV...) or click the mic to speak.
-          </p>
+          <div className="flex h-full flex-col items-center justify-center text-center">
+            <span className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-lg shadow-indigo-500/30">
+              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" />
+              </svg>
+            </span>
+            <p className="mt-4 max-w-sm text-sm text-zinc-500">
+              Ask anything about your ventures. Attach documents (PDF, Excel, Word, PowerPoint, CSV...) or tap the mic to speak.
+            </p>
+          </div>
         ) : null}
 
         {messages.map((m, i) => (
           <div key={i} className={m.role === "user" ? "flex justify-end" : ""}>
             {m.role === "user" ? (
-              <span className="inline-block max-w-[85%] whitespace-pre-wrap rounded-2xl bg-zinc-900 px-4 py-2 text-sm text-white">
+              <span className="inline-block max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-gradient-to-br from-zinc-800 to-zinc-900 px-4 py-2.5 text-sm text-white shadow-sm">
                 {m.content}
               </span>
             ) : (
-              <div className="max-w-[92%] rounded-2xl bg-zinc-50 px-4 py-3 text-sm ring-1 ring-zinc-200">
+              <div className="max-w-[92%] rounded-2xl rounded-bl-md bg-white px-4 py-3 text-sm shadow-sm ring-1 ring-zinc-200/80">
                 <Markdown tone="light">{m.content}</Markdown>
               </div>
             )}
@@ -397,18 +404,23 @@ export function JarvisChat({
         {proposals.length > 0 ? (
           <div className="space-y-2">
             {proposals.map((p) => (
-              <div key={p.id} className="rounded-xl border border-indigo-200 bg-indigo-50 p-3">
-                <p className="text-sm text-indigo-900">{p.summary}</p>
-                <div className="mt-2 flex gap-2">
+              <div key={p.id} className="rounded-2xl border border-indigo-200/80 bg-gradient-to-br from-indigo-50 to-violet-50/60 p-3.5 shadow-sm">
+                <div className="flex items-start gap-2">
+                  <span className="mt-0.5 shrink-0 rounded-md bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-700">
+                    {p.kind.replace(/_/g, " ")}
+                  </span>
+                  <p className="text-sm text-indigo-950">{p.summary}</p>
+                </div>
+                <div className="mt-2.5 flex gap-2">
                   <button
                     onClick={() => confirm(p.id)}
-                    className="rounded-md bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-700"
+                    className="rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-indigo-700"
                   >
                     Confirm
                   </button>
                   <button
                     onClick={() => discard(p.id)}
-                    className="rounded-md px-3 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+                    className="rounded-lg px-3 py-1.5 text-xs font-medium text-indigo-700 transition-colors hover:bg-indigo-100"
                   >
                     Discard
                   </button>
@@ -424,7 +436,7 @@ export function JarvisChat({
       </div>
 
       {/* Input area */}
-      <div className="border-t border-zinc-200 p-3">
+      <div className="border-t border-zinc-200/70 bg-white/60 p-3 backdrop-blur">
         {/* Attached files */}
         {pendingFiles.length > 0 ? (
           <div className="mb-2 flex flex-wrap gap-1.5">
@@ -524,7 +536,7 @@ export function JarvisChat({
           <button
             onClick={() => void send()}
             disabled={sending || processing || (!input.trim() && pendingFiles.length === 0)}
-            className="shrink-0 rounded-lg bg-zinc-900 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-zinc-700 disabled:opacity-50"
+            className="shrink-0 rounded-lg bg-gradient-to-br from-indigo-600 to-violet-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:brightness-110 disabled:opacity-40 disabled:hover:brightness-100"
           >
             Send
           </button>

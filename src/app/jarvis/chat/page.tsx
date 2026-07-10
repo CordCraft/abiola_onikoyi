@@ -24,19 +24,22 @@ export default async function JarvisChatPage({
       <aside className="space-y-3">
         <Link
           href="/jarvis/chat"
-          className="block rounded-lg bg-zinc-900 px-3 py-2 text-center text-sm font-semibold text-white hover:bg-zinc-700"
+          className="flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-br from-indigo-600 to-violet-600 px-3 py-2.5 text-center text-sm font-semibold text-white shadow-sm transition-all hover:brightness-110"
         >
-          + New chat
+          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+          </svg>
+          New chat
         </Link>
         <ul className="space-y-1">
           {threads.map((th) => (
             <li key={th.id}>
               <Link
                 href={`/jarvis/chat?t=${th.id}`}
-                className={`block truncate rounded-md px-3 py-2 text-sm ${
+                className={`block truncate rounded-lg px-3 py-2 text-sm transition-colors ${
                   th.id === thread?.id
-                    ? "bg-white font-medium text-zinc-900 ring-1 ring-zinc-200"
-                    : "text-zinc-600 hover:bg-white"
+                    ? "bg-white font-medium text-zinc-900 shadow-sm ring-1 ring-zinc-200/80"
+                    : "text-zinc-500 hover:bg-white/70 hover:text-zinc-900"
                 }`}
               >
                 {th.title || "Untitled"}
