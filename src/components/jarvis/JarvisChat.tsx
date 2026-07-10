@@ -7,7 +7,8 @@ import { applyProposal, discardProposal } from "@/app/jarvis/actions";
 type Msg = { role: "user" | "assistant"; content: string };
 type Proposal = { id: string; summary: string; kind: string };
 
-const ACCEPTED = ".pdf,.txt,.md,.csv,.png,.jpg,.jpeg,.webp,.gif";
+const ACCEPTED = ".pdf,.txt,.md,.csv,.json,.png,.jpg,.jpeg,.webp,.gif";
+// Note: Excel (.xlsx/.xls) and Word (.docx) files are not supported. Export them as PDF or CSV first.
 
 export function JarvisChat({
   initialThreadId,
