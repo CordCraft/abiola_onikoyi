@@ -62,3 +62,129 @@ model Post {
 
   @@index([published, publishedAt])
 }
+
+// ---------------------------------------------------------------------------
+// Jarvis — personal second brain (private /jarvis area)
+// ---------------------------------------------------------------------------
+
+model JarvisVenture {
+  id          String          @id @default(cuid())
+  name        String
+  description String?
+  status      String          @default("active") // active | paused | archived
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  projects    JarvisProject[]
+  notes       JarvisNote[]
+}
+
+model JarvisProject {
+  id             String           @id @default(cuid())
+  name           String
+  venture        JarvisVenture?   @relation(fields: [ventureId], references: [id], onDelete: SetNull)
+  ventureId      String?
+  status         String           @default("active") // idea | active | stalled | paused | done
+  priority       String           @default("medium") // low | medium | high
+  summary        String?
+  lastActivityAt DateTime         @default(now())
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  tasks          JarvisTask[]
+  notes          JarvisNote[]
+  decisions      JarvisDecision[]
+
+  @@index([status, lastActivityAt])
+}
+
+model JarvisTask {
+  id          String         @id @default(cuid())
+  project     JarvisProject? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId   String?
+  title       String
+  status      String         @default("todo") // todo | doing | done
+  priority    String         @default("medium")
+  dueDate     DateTime?
+  completedAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([status, dueDate])
+}
+
+model JarvisNote {
+  id        String         @id @default(cuid())
+  project   JarvisProject? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String?
+  venture   JarvisVenture? @relation(fields: [ventureId], references: [id], onDelete: Cascade)
+  ventureId String?
+  body      String
+  tags      String?
+  createdAt DateTime       @default(now())
+
+  @@index([createdAt])
+}
+
+model JarvisDecision {
+  id        String         @id @default(cuid())
+  project   JarvisProject? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String?
+  title     String
+  rationale String
+  createdAt DateTime       @default(now())
+}
+
+model JarvisGoal {
+  id          String            @id @default(cuid())
+  title       String
+  description String?
+  horizon     String? // freeform, e.g. "wealth", "autism impact"
+  status      String            @default("active")
+  targetDate  DateTime?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  milestones  JarvisMilestone[]
+}
+
+model JarvisMilestone {
+  id        String     @id @default(cuid())
+  goal      JarvisGoal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  goalId    String
+  title     String
+  done      Boolean    @default(false)
+  dueDate   DateTime?
+  createdAt DateTime   @default(now())
+}
+
+model JarvisThread {
+  id        String           @id @default(cuid())
+  title     String?
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  messages  JarvisMessage[]
+  proposals JarvisProposal[]
+}
+
+model JarvisMessage {
+  id        String       @id @default(cuid())
+  thread    JarvisThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  threadId  String
+  role      String // user | assistant
+  content   String
+  createdAt DateTime     @default(now())
+
+  @@index([threadId, createdAt])
+}
+
+model JarvisProposal {
+  id        String        @id @default(cuid())
+  thread    JarvisThread? @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  threadId  String?
+  kind      String // create_project | update_project | create_task | log_note | log_decision | set_goal
+  summary   String // human-readable one-liner for the confirm card
+  payload   Json
+  status    String        @default("pending") // pending | applied | discarded
+  createdAt DateTime      @default(now())
+  appliedAt DateTime?
+
+  @@index([status, createdAt])
+}

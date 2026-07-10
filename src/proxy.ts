@@ -8,13 +8,17 @@ import { decryptSession } from "@/lib/jwt";
 // via verifySession() (see src/lib/dal.ts).
 export async function proxy(req: NextRequest) {
   const path = req.nextUrl.pathname;
-  const isDashboard = path === "/dashboard" || path.startsWith("/dashboard/");
+  const isProtected =
+    path === "/dashboard" ||
+    path.startsWith("/dashboard/") ||
+    path === "/jarvis" ||
+    path.startsWith("/jarvis/");
   const isLogin = path === "/login";
 
   const token = req.cookies.get("session")?.value;
   const session = await decryptSession(token);
 
-  if (isDashboard && !session?.user) {
+  if (isProtected && !session?.user) {
     const url = new URL("/login", req.nextUrl);
     if (path !== "/dashboard") url.searchParams.set("from", path);
     return NextResponse.redirect(url);
@@ -28,5 +32,11 @@ export async function proxy(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard", "/dashboard/:path*", "/login"],
+  matcher: [
+    "/dashboard",
+    "/dashboard/:path*",
+    "/jarvis",
+    "/jarvis/:path*",
+    "/login",
+  ],
 };
