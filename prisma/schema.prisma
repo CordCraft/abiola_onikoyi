@@ -120,6 +120,8 @@ model JarvisNote {
   ventureId String?
   body      String
   tags      String?
+  // "capture" = quick-capture inbox item awaiting filing; null = normal note
+  source    String?
   createdAt DateTime       @default(now())
 
   @@index([createdAt])
@@ -171,9 +173,18 @@ model JarvisMessage {
   threadId  String
   role      String // user | assistant
   content   String
+  // SavedRecord[] receipts from the turn that produced this assistant message
+  receipts  Json?
   createdAt DateTime     @default(now())
 
   @@index([threadId, createdAt])
+}
+
+// Single-user key-value settings (calendar ICS url, briefing preferences, ...).
+model JarvisSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
 }
 
 // A document uploaded through chat (or elsewhere): the extracted text content

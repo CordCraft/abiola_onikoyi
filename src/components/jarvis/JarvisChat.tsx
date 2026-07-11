@@ -2,17 +2,34 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Markdown } from "@/components/Markdown";
-import { undoRecord } from "@/app/jarvis/actions";
+import { undoRecord, saveMeetingTranscript } from "@/app/jarvis/actions";
 
-type Msg = { role: "user" | "assistant"; content: string };
-type SavedRecord = {
+const OUTBOX_KEY = "jarvis-outbox";
+const VOICE_KEY = "jarvis-tts-voice";
+
+type OutboxItem = { text: string; ts: number };
+
+function readOutbox(): OutboxItem[] {
+  try {
+    return JSON.parse(localStorage.getItem(OUTBOX_KEY) ?? "[]");
+  } catch {
+    return [];
+  }
+}
+function writeOutbox(items: OutboxItem[]) {
+  try {
+    localStorage.setItem(OUTBOX_KEY, JSON.stringify(items.slice(-20)));
+  } catch { /* storage full or unavailable */ }
+}
+
+export type SavedRecord = {
   kind: string;
   id: string;
   summary: string;
   undoable: boolean;
   undone?: boolean;
 };
-type ChatItem =
+export type ChatItem =
   | { kind: "msg"; role: "user" | "assistant"; content: string }
   | { kind: "receipts"; records: SavedRecord[] };
 
@@ -168,8 +185,17 @@ async function processFile(file: File): Promise<Attachment> {
 
 // ── Text-to-speech helpers ───────────────────────────────────────────────────
 
+// [[doc:<id>|<name>]] citation markers become clickable document chips.
+function renderCitations(s: string): string {
+  return s.replace(
+    /\[\[doc:([A-Za-z0-9]+)\|([^\]|]+)\]\]/g,
+    (_, id, name) => `[\u{1F4C4} ${String(name).trim()}](/jarvis/documents/${id})`,
+  );
+}
+
 function stripMarkdownForSpeech(s: string): string {
   return s
+    .replace(/\[\[doc:[^|\]]+\|([^\]]+)\]\]/g, "")
     .replace(/```[\s\S]*?```/g, " (code omitted) ")
     .replace(/`([^`]+)`/g, "$1")
     .replace(/\*\*([^*]+)\*\*/g, "$1")
@@ -206,16 +232,16 @@ type VoicePhase = "standby" | "capturing" | "thinking" | "speaking";
 
 export function JarvisChat({
   initialThreadId,
-  initialMessages,
+  initialItems,
+  initialInput,
 }: {
   initialThreadId: string | null;
-  initialMessages: Msg[];
+  initialItems: ChatItem[];
+  initialInput?: string;
 }) {
   const [threadId, setThreadId] = useState(initialThreadId);
-  const [items, setItems] = useState<ChatItem[]>(
-    initialMessages.map((m) => ({ kind: "msg" as const, ...m })),
-  );
-  const [input, setInput] = useState("");
+  const [items, setItems] = useState<ChatItem[]>(initialItems);
+  const [input, setInput] = useState(initialInput ?? "");
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [processing, setProcessing] = useState(false);
   const [sending, setSending] = useState(false);
@@ -229,6 +255,18 @@ export function JarvisChat({
   const [voiceMode, setVoiceMode] = useState(false);
   const [voicePhase, setVoicePhase] = useState<VoicePhase>("standby");
   const [voiceLive, setVoiceLive] = useState("");
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [voiceName, setVoiceName] = useState<string>("");
+
+  // Meeting recorder
+  const [meeting, setMeeting] = useState(false);
+  const [meetingLive, setMeetingLive] = useState("");
+  const [meetingSaving, setMeetingSaving] = useState(false);
+  const meetingBufRef = useRef("");
+  const meetingStartRef = useRef(0);
+
+  // Offline outbox
+  const [outboxCount, setOutboxCount] = useState(0);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -279,7 +317,7 @@ export function JarvisChat({
     recRef.current = null;
   }, []);
 
-  const startRecognition = useCallback((mode: "dictation" | "voice") => {
+  const startRecognition = useCallback((mode: "dictation" | "voice" | "meeting") => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const w = window as any;
     const SR = w.SpeechRecognition ?? w.webkitSpeechRecognition;
@@ -321,6 +359,15 @@ export function JarvisChat({
         }
         setInput(committedRef.current + (interim ? " " + interim : ""));
         setInterimText(interim);
+        return;
+      }
+
+      if (mode === "meeting") {
+        for (const f of finals) {
+          meetingBufRef.current = (meetingBufRef.current + " " + f).trimStart();
+        }
+        const tail = meetingBufRef.current.slice(-160);
+        setMeetingLive((tail.length < meetingBufRef.current.length ? "..." : "") + tail + (interim ? " " + interim : ""));
         return;
       }
 
@@ -372,6 +419,7 @@ export function JarvisChat({
         setError("Microphone access was blocked. Allow it in your browser settings.");
         shouldListenRef.current = false;
         if (mode === "voice") exitVoiceMode();
+        else if (mode === "meeting") setMeeting(false);
         else setDictating(false);
       }
       // no-speech / aborted / network: the onend restart handles recovery
@@ -458,6 +506,14 @@ export function JarvisChat({
         }
         const u = new SpeechSynthesisUtterance(chunks[idx++]);
         u.rate = 1.04;
+        // Honor the user's chosen voice (Memory in localStorage, per device)
+        try {
+          const wanted = localStorage.getItem(VOICE_KEY);
+          if (wanted) {
+            const v = window.speechSynthesis.getVoices().find((x) => x.name === wanted);
+            if (v) u.voice = v;
+          }
+        } catch { /* fine */ }
         u.onend = () => setTimeout(next, 50);
         u.onerror = () => {
           if (gen !== speakGenRef.current) return;
@@ -525,6 +581,7 @@ export function JarvisChat({
       );
       return;
     }
+    if (meeting) return; // do not hijack an active meeting recording
     if (dictating) {
       stopRecognition();
       setDictating(false);
@@ -538,7 +595,7 @@ export function JarvisChat({
     try { window.speechSynthesis?.speak(new SpeechSynthesisUtterance("")); } catch { /* fine */ }
     void acquireWakeLock();
     startRecognition("voice");
-  }, [acquireWakeLock, dictating, exitVoiceMode, setPhase, startRecognition, stopRecognition, stopSpeaking]);
+  }, [acquireWakeLock, dictating, meeting, exitVoiceMode, setPhase, startRecognition, stopRecognition, stopSpeaking]);
 
   // Pause/resume on tab visibility changes
   useEffect(() => {
@@ -557,6 +614,95 @@ export function JarvisChat({
     document.addEventListener("visibilitychange", onVis);
     return () => document.removeEventListener("visibilitychange", onVis);
   }, [acquireWakeLock, setPhase, startRecognition, stopRecognition, stopSpeaking]);
+
+  // TTS voices load asynchronously on most platforms
+  useEffect(() => {
+    if (!("speechSynthesis" in window)) return;
+    const load = () => {
+      const all = window.speechSynthesis.getVoices().filter((v) => v.lang.startsWith("en"));
+      if (all.length) setVoices(all);
+    };
+    // Defer initial reads so state updates never run synchronously in the effect
+    queueMicrotask(() => {
+      load();
+      try {
+        setVoiceName(localStorage.getItem(VOICE_KEY) ?? "");
+      } catch { /* fine */ }
+    });
+    window.speechSynthesis.addEventListener("voiceschanged", load);
+    return () => window.speechSynthesis.removeEventListener("voiceschanged", load);
+  }, []);
+
+  // Offline outbox: count on mount, flush when the connection returns
+  useEffect(() => {
+    queueMicrotask(() => setOutboxCount(readOutbox().length));
+    const flush = async () => {
+      let queue = readOutbox();
+      while (queue.length && navigator.onLine) {
+        if (sendingRef.current) break; // resume on next online/interval tick
+        const item = queue[0];
+        writeOutbox(queue.slice(1));
+        setOutboxCount(queue.length - 1);
+        await sendRef.current(item.text);
+        queue = readOutbox();
+      }
+    };
+    const onOnline = () => void flush();
+    window.addEventListener("online", onOnline);
+    if (navigator.onLine) void flush();
+    return () => window.removeEventListener("online", onOnline);
+  }, []);
+
+  // ── Meeting recorder ───────────────────────────────────────────────────────
+
+  async function toggleMeeting() {
+    if (voiceMode || dictating) return;
+    if (meeting) {
+      stopRecognition();
+      setMeeting(false);
+      setMeetingLive("");
+      const transcript = meetingBufRef.current.trim();
+      meetingBufRef.current = "";
+      if (!transcript) return;
+      setMeetingSaving(true);
+      try {
+        const r = await saveMeetingTranscript(transcript);
+        if (r.error || !r.id) {
+          setError(r.error ?? "Could not save the transcript.");
+        } else {
+          setItems((it) => [
+            ...it,
+            {
+              kind: "receipts",
+              records: [
+                {
+                  kind: "document",
+                  id: r.id!,
+                  summary: `Saved meeting transcript "${r.name}"`,
+                  undoable: true,
+                },
+              ],
+            },
+          ]);
+          void sendRef.current(
+            `Analyse the meeting transcript "${r.name}" [doc:${r.id}]: read it, then save the key decisions (log_decision), action items (create_task), and a short summary note (log_note) under the right project. Cite the document.`,
+          );
+        }
+      } finally {
+        setMeetingSaving(false);
+      }
+      return;
+    }
+    if (!speechAvailable()) {
+      setError("Voice recognition is not supported in this browser. Try Chrome, Edge, or Safari.");
+      return;
+    }
+    setError(null);
+    meetingBufRef.current = "";
+    meetingStartRef.current = Date.now();
+    setMeetingLive("");
+    if (startRecognition("meeting")) setMeeting(true);
+  }
 
   // Unmount cleanup
   useEffect(() => {
@@ -579,7 +725,7 @@ export function JarvisChat({
   // ── Dictation (push-to-talk) ───────────────────────────────────────────────
 
   function toggleDictation() {
-    if (voiceMode) return; // hands-free owns the mic
+    if (voiceMode || meeting) return; // hands-free / meeting own the mic
     if (dictating) {
       stopRecognition();
       setDictating(false);
@@ -645,6 +791,7 @@ export function JarvisChat({
     let receiptsIndex = -1;
     let streamedText = "";
     let finalReply = "";
+    let gotResponse = false;
 
     const handleEvent = (evt: {
       type: string;
@@ -711,6 +858,7 @@ export function JarvisChat({
         body: JSON.stringify({ threadId: threadIdRef.current, message: text, attachments, voice: isVoice }),
         signal: controller.signal,
       });
+      gotResponse = true;
 
       if (!res.ok) {
         let msg = `Server error (HTTP ${res.status})`;
@@ -747,7 +895,15 @@ export function JarvisChat({
       }
     } catch (e) {
       if ((e as Error)?.name !== "AbortError") {
-        setError("Network error. Please try again.");
+        // If the request never reached the server, queue text-only messages
+        // for automatic resend when the connection returns.
+        if (!gotResponse && text && attachments.length === 0) {
+          writeOutbox([...readOutbox(), { text, ts: Date.now() }]);
+          setOutboxCount(readOutbox().length);
+          setError("You're offline. The message is queued and will send automatically.");
+        } else {
+          setError("Network error. Please try again.");
+        }
       }
     } finally {
       sendingRef.current = false;
@@ -832,7 +988,7 @@ export function JarvisChat({
                 </span>
               ) : (
                 <div className="max-w-[92%] rounded-2xl rounded-bl-md bg-white px-4 py-3 text-sm shadow-sm ring-1 ring-zinc-200/80">
-                  <Markdown tone="light">{item.content}</Markdown>
+                  <Markdown tone="light">{renderCitations(item.content)}</Markdown>
                 </div>
               )}
             </div>
@@ -918,6 +1074,34 @@ export function JarvisChat({
           </div>
         ) : null}
 
+        {/* Offline outbox */}
+        {outboxCount > 0 ? (
+          <div className="mb-2 flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <svg className="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            {outboxCount} message{outboxCount > 1 ? "s" : ""} queued, will send when back online
+          </div>
+        ) : null}
+
+        {/* Meeting recorder banner */}
+        {meeting || meetingSaving ? (
+          <div className="mb-2 flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500" />
+            </span>
+            <span className="font-medium">
+              {meetingSaving ? "Saving transcript..." : "Recording meeting"}
+            </span>
+            {meeting ? (
+              <span className="min-w-0 flex-1 truncate italic text-red-500">
+                {meetingLive || "Capturing what is said..."}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+
         {/* Hands-free status banner */}
         {voiceMode ? (
           <div
@@ -940,6 +1124,27 @@ export function JarvisChat({
               )}
             </span>
             <span className="min-w-0 flex-1 truncate font-medium">{voiceStatus}</span>
+            {voices.length > 0 ? (
+              <select
+                value={voiceName}
+                onChange={(e) => {
+                  setVoiceName(e.target.value);
+                  try {
+                    if (e.target.value) localStorage.setItem(VOICE_KEY, e.target.value);
+                    else localStorage.removeItem(VOICE_KEY);
+                  } catch { /* fine */ }
+                }}
+                className="max-w-[130px] shrink-0 rounded border border-zinc-200 bg-white px-1 py-0.5 text-[10px] text-zinc-600"
+                title="Jarvis's speaking voice on this device"
+              >
+                <option value="">Default voice</option>
+                {voices.map((v) => (
+                  <option key={v.name} value={v.name}>
+                    {v.name.replace(/^(Microsoft|Google) /, "").slice(0, 24)}
+                  </option>
+                ))}
+              </select>
+            ) : null}
           </div>
         ) : dictating ? (
           <div className="mb-2 flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
@@ -1007,13 +1212,35 @@ export function JarvisChat({
             className="min-w-0 flex-1 resize-none rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/30"
           />
 
+          {/* Meeting recorder */}
+          <button
+            type="button"
+            onClick={() => void toggleMeeting()}
+            title={meeting ? "Stop and analyse the meeting" : "Record a meeting"}
+            aria-label="Record meeting"
+            disabled={voiceMode || dictating || meetingSaving}
+            className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg transition-colors disabled:opacity-30 ${
+              meeting ? "bg-red-100 text-red-600 hover:bg-red-200" : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
+            }`}
+          >
+            {meeting ? (
+              <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
+                <rect x="6" y="6" width="12" height="12" rx="2" />
+              </svg>
+            ) : (
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
+              </svg>
+            )}
+          </button>
+
           {/* Dictation mic */}
           <button
             type="button"
             onClick={toggleDictation}
             title={dictating ? "Stop dictation" : "Dictate a message"}
             aria-label="Dictate"
-            disabled={voiceMode}
+            disabled={voiceMode || meeting}
             className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg transition-colors disabled:opacity-30 ${
               dictating ? "bg-red-100 text-red-600 hover:bg-red-200" : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
             }`}
@@ -1050,9 +1277,13 @@ export function JarvisChat({
           <button
             onClick={() => void send()}
             disabled={sending || processing || (!input.trim() && pendingFiles.length === 0)}
-            className="h-10 shrink-0 rounded-lg bg-gradient-to-br from-indigo-600 to-violet-600 px-4 text-sm font-semibold text-white shadow-sm transition-all hover:brightness-110 disabled:opacity-40 disabled:hover:brightness-100 md:px-5"
+            aria-label="Send"
+            className="grid h-10 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-indigo-600 to-violet-600 px-3 text-sm font-semibold text-white shadow-sm transition-all hover:brightness-110 disabled:opacity-40 disabled:hover:brightness-100 md:px-5"
           >
-            Send
+            <span className="hidden md:inline">Send</span>
+            <svg className="h-5 w-5 md:hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+            </svg>
           </button>
         </div>
       </div>

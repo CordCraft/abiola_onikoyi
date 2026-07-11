@@ -1,6 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/format";
+import { getUpcomingEvents, formatEvents } from "@/lib/jarvis/calendar";
 
 // Jarvis tool surface. Read tools run live queries. Write tools apply
 // IMMEDIATELY (no confirmation step) and report a receipt the UI shows with an
@@ -86,6 +87,17 @@ export const jarvisTools = [
       type: "object" as const,
       properties: { id: { type: "string" } },
       required: ["id"],
+    },
+  },
+  {
+    name: "get_calendar",
+    description:
+      "Read the user's upcoming calendar events (from their connected calendar feed). Use for questions about meetings, schedule, or availability.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        days: { type: "number", description: "How many days ahead to look (default 7, max 31)" },
+      },
     },
   },
 
@@ -204,6 +216,36 @@ export const jarvisTools = [
         summary: { type: "string", description: "1-3 sentence summary of the document" },
       },
       required: ["documentId", "summary"],
+    },
+  },
+  {
+    name: "save_document",
+    description:
+      "Create a new document in the library from content you produce: an image transcription, a meeting summary, research output, or any text worth keeping verbatim. Applies immediately.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        name: { type: "string", description: "Short filename-like title, e.g. 'Whiteboard - funding options.txt'" },
+        content: { type: "string", description: "The full text content to store" },
+        projectId: { type: "string" },
+        projectName: { type: "string" },
+        summary: { type: "string", description: "1-2 sentence summary" },
+      },
+      required: ["name", "content"],
+    },
+  },
+  {
+    name: "file_note",
+    description:
+      "Attach an inbox note (quick capture) to a project, converting it into a normal project note. Use the [note:<id>] ids shown in the Inbox section of the snapshot.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        noteId: { type: "string" },
+        projectId: { type: "string" },
+        projectName: { type: "string" },
+      },
+      required: ["noteId"],
     },
   },
 ];
@@ -333,43 +375,90 @@ export async function executeTool(
     }
     case "search_notes": {
       const q = str(input.query) ?? "";
-      const ns = await prisma.jarvisNote.findMany({
-        where: { body: { contains: q, mode: "insensitive" } },
-        orderBy: { createdAt: "desc" },
-        take: 12,
-        include: { project: { select: { name: true } } },
-      });
-      if (!ns.length) return "(no matching notes)";
-      return ns
-        .map((n) => `- ${n.project ? `(${n.project.name}) ` : ""}${n.body.slice(0, 220)}`)
+      if (!q) return "A query is required.";
+      // Full-text search first (matches word forms: "financing" finds
+      // "financed"), then substring fallback so short/partial terms still hit.
+      type NoteRow = { id: string; body: string; projectName: string | null };
+      let rows: NoteRow[] = [];
+      try {
+        rows = await prisma.$queryRaw<NoteRow[]>`
+          SELECT n.id, n.body, p.name AS "projectName"
+          FROM "JarvisNote" n LEFT JOIN "JarvisProject" p ON p.id = n."projectId"
+          WHERE to_tsvector('english', n.body) @@ websearch_to_tsquery('english', ${q})
+          ORDER BY ts_rank(to_tsvector('english', n.body), websearch_to_tsquery('english', ${q})) DESC
+          LIMIT 12`;
+      } catch {
+        rows = [];
+      }
+      if (!rows.length) {
+        const ns = await prisma.jarvisNote.findMany({
+          where: { body: { contains: q, mode: "insensitive" } },
+          orderBy: { createdAt: "desc" },
+          take: 12,
+          include: { project: { select: { name: true } } },
+        });
+        rows = ns.map((n) => ({ id: n.id, body: n.body, projectName: n.project?.name ?? null }));
+      }
+      if (!rows.length) return "(no matching notes)";
+      return rows
+        .map((n) => `- ${n.projectName ? `(${n.projectName}) ` : ""}${n.body.slice(0, 220)}`)
         .join("\n");
     }
     case "search_documents": {
       const q = str(input.query) ?? "";
       if (!q) return "A query is required.";
-      const docs = await prisma.jarvisDocument.findMany({
-        where: {
-          OR: [
-            { name: { contains: q, mode: "insensitive" } },
-            { content: { contains: q, mode: "insensitive" } },
-            { summary: { contains: q, mode: "insensitive" } },
-          ],
-        },
-        orderBy: { createdAt: "desc" },
-        take: 10,
-        include: { project: { select: { name: true } } },
-      });
-      if (!docs.length) return "(no matching documents)";
-      return docs
-        .map((d) => {
+      type DocRow = { id: string; name: string; projectName: string | null; snippet: string };
+      let rows: DocRow[] = [];
+      try {
+        rows = await prisma.$queryRaw<DocRow[]>`
+          SELECT d.id, d.name, p.name AS "projectName",
+            ts_headline('english', left(d.content, 20000), websearch_to_tsquery('english', ${q}),
+              'MaxWords=35, MinWords=15, StartSel=, StopSel=') AS snippet
+          FROM "JarvisDocument" d LEFT JOIN "JarvisProject" p ON p.id = d."projectId"
+          WHERE to_tsvector('english', d.name || ' ' || coalesce(d.summary, '') || ' ' || d.content)
+            @@ websearch_to_tsquery('english', ${q})
+          ORDER BY ts_rank(to_tsvector('english', d.name || ' ' || coalesce(d.summary, '') || ' ' || d.content),
+            websearch_to_tsquery('english', ${q})) DESC
+          LIMIT 10`;
+      } catch {
+        rows = [];
+      }
+      if (!rows.length) {
+        const docs = await prisma.jarvisDocument.findMany({
+          where: {
+            OR: [
+              { name: { contains: q, mode: "insensitive" } },
+              { content: { contains: q, mode: "insensitive" } },
+              { summary: { contains: q, mode: "insensitive" } },
+            ],
+          },
+          orderBy: { createdAt: "desc" },
+          take: 10,
+          include: { project: { select: { name: true } } },
+        });
+        rows = docs.map((d) => {
           const idx = d.content.toLowerCase().indexOf(q.toLowerCase());
           const snippet =
             idx >= 0
               ? d.content.slice(Math.max(0, idx - 80), idx + 160).replace(/\s+/g, " ")
               : d.content.slice(0, 160).replace(/\s+/g, " ");
-          return `- ${d.name}${d.project ? ` (${d.project.name})` : ""} [doc:${d.id}]\n  ...${snippet}...`;
-        })
+          return { id: d.id, name: d.name, projectName: d.project?.name ?? null, snippet };
+        });
+      }
+      if (!rows.length) return "(no matching documents)";
+      return rows
+        .map(
+          (d) =>
+            `- ${d.name}${d.projectName ? ` (${d.projectName})` : ""} [doc:${d.id}]\n  ...${d.snippet.replace(/\s+/g, " ")}...`,
+        )
         .join("\n");
+    }
+    case "get_calendar": {
+      const days = Math.min(Math.max(Number(input.days) || 7, 1), 31);
+      const events = await getUpcomingEvents(days);
+      if (events === null)
+        return "No calendar is connected. The user can paste their calendar's secret ICS address on the Memory page (/jarvis/memory).";
+      return `Upcoming events (next ${days} days):\n${formatEvents(events)}`;
     }
     case "read_document": {
       const id = str(input.id);
@@ -555,6 +644,49 @@ export async function executeTool(
         undoable: false,
       });
       return `SAVED: document "${doc.name}" filed${ref ? ` under ${ref.name}` : ""} with summary.`;
+    }
+
+    case "save_document": {
+      const docName = str(input.name);
+      const content = str(input.content);
+      if (!docName || !content) return "name and content are required.";
+      const ref = await resolveProject(input);
+      const d = await prisma.jarvisDocument.create({
+        data: {
+          name: docName.slice(0, 200),
+          content: content.slice(0, 400_000),
+          summary: str(input.summary) ?? null,
+          projectId: ref?.id ?? null,
+        },
+      });
+      await bump(ref?.id);
+      saved({
+        kind: "document",
+        id: d.id,
+        summary: `Saved document "${docName}"${ref ? ` under ${ref.name}` : ""}`,
+        undoable: true,
+      });
+      return `SAVED document "${docName}" [doc:${d.id}]${ref ? ` under ${ref.name}` : ""}.`;
+    }
+    case "file_note": {
+      const noteId = str(input.noteId);
+      if (!noteId) return "noteId is required.";
+      const note = await prisma.jarvisNote.findUnique({ where: { id: noteId } });
+      if (!note) return "Note not found.";
+      const ref = await resolveProject(input);
+      if (!ref) return "No matching project. Provide projectId or projectName.";
+      await prisma.jarvisNote.update({
+        where: { id: noteId },
+        data: { projectId: ref.id, source: null },
+      });
+      await bump(ref.id);
+      saved({
+        kind: "note",
+        id: noteId,
+        summary: `Filed inbox note under ${ref.name}: "${note.body.slice(0, 60)}${note.body.length > 60 ? "..." : ""}"`,
+        undoable: false,
+      });
+      return `SAVED: inbox note filed under ${ref.name}.`;
     }
 
     default:

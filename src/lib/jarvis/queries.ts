@@ -4,10 +4,21 @@ import { verifySession } from "@/lib/dal";
 
 export * from "@/lib/jarvis/constants";
 
+// Neon's free tier suspends when idle; the first query after a wake can fail.
+// One short retry absorbs almost all of those errors.
+async function retryOnce<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch {
+    await new Promise((r) => setTimeout(r, 1200));
+    return await fn();
+  }
+}
+
 // --- Overview / dashboard ---
 export async function getOverview() {
   await verifySession();
-  const [projects, tasks, goals] = await Promise.all([
+  const [projects, tasks, goals] = await retryOnce(() => Promise.all([
     prisma.jarvisProject.findMany({
       where: { status: { in: ["active", "stalled"] } },
       orderBy: { lastActivityAt: "asc" },
@@ -24,7 +35,7 @@ export async function getOverview() {
       orderBy: { createdAt: "asc" },
       include: { milestones: true },
     }),
-  ]);
+  ]));
   return { projects, tasks, goals };
 }
 
@@ -68,6 +79,28 @@ export async function getProject(id: string) {
   });
 }
 
+// --- Inbox (quick captures) ---
+export async function listInboxNotes() {
+  await verifySession();
+  return prisma.jarvisNote.findMany({
+    where: { source: "capture", projectId: null },
+    orderBy: { createdAt: "desc" },
+    take: 20,
+  });
+}
+
+// --- Latest morning briefing (for the overview card) ---
+export async function latestBriefing() {
+  await verifySession();
+  return prisma.jarvisNote.findFirst({
+    where: {
+      body: { startsWith: "Morning briefing:" },
+      createdAt: { gt: new Date(Date.now() - 36 * 60 * 60 * 1000) },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
 // --- Documents ---
 export async function listUnfiledDocuments() {
   await verifySession();
@@ -91,7 +124,7 @@ export async function listGoals() {
 // --- Chat threads ---
 export async function listThreads() {
   await verifySession();
-  return prisma.jarvisThread.findMany({ orderBy: { updatedAt: "desc" } });
+  return retryOnce(() => prisma.jarvisThread.findMany({ orderBy: { updatedAt: "desc" } }));
 }
 
 export async function getThread(id: string) {

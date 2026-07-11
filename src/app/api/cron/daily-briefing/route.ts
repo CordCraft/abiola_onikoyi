@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import webpush from "web-push";
 import { prisma } from "@/lib/prisma";
 import { buildContext } from "@/lib/jarvis/context";
+import { getUpcomingEvents, formatEvents } from "@/lib/jarvis/calendar";
 import { profile } from "@/content/profile";
 
 export const runtime = "nodejs";
@@ -34,14 +35,55 @@ export async function POST(req: Request) {
   }
 
   try {
-    // Write the briefing from the live workspace snapshot.
-    const context = await buildContext();
+    // Live workspace snapshot + calendar + preferences + resurfaced memories.
+    const [context, events, prefs, feedback, oldNotes, oldDecisions] = await Promise.all([
+      buildContext(),
+      getUpcomingEvents(1),
+      prisma.jarvisSetting.findUnique({ where: { key: "briefing_prefs" } }),
+      prisma.jarvisSetting.findUnique({ where: { key: "briefing_feedback" } }),
+      prisma.jarvisNote.findMany({
+        where: { createdAt: { lt: new Date(Date.now() - 21 * 864e5) } },
+        orderBy: { createdAt: "desc" },
+        take: 30,
+        include: { project: { select: { name: true } } },
+      }),
+      prisma.jarvisDecision.findMany({
+        where: { createdAt: { lt: new Date(Date.now() - 21 * 864e5) } },
+        orderBy: { createdAt: "desc" },
+        take: 30,
+        include: { project: { select: { name: true } } },
+      }),
+    ]);
+
+    // Resurface up to two old items (age-weighted random) so past knowledge
+    // keeps circulating instead of rotting.
+    const pool = [
+      ...oldNotes.map((n) => `note${n.project ? ` on ${n.project.name}` : ""}: ${n.body.slice(0, 180)}`),
+      ...oldDecisions.map((d) => `decision${d.project ? ` on ${d.project.name}` : ""}: ${d.title} (${d.rationale.slice(0, 120)})`),
+    ];
+    const resurfaced: string[] = [];
+    for (let i = 0; i < 2 && pool.length; i++) {
+      const idx = Math.floor(Math.random() * pool.length);
+      resurfaced.push(pool.splice(idx, 1)[0]);
+    }
+
+    const extras = [
+      events?.length ? `## Today's calendar\n${formatEvents(events)}` : "",
+      prefs?.value ? `## The user's standing briefing preferences (follow these)\n${prefs.value}` : "",
+      feedback?.value ? `## Recent briefing feedback (+1 good, -1 bad)\n${feedback.value}` : "",
+      resurfaced.length
+        ? `## From the archives (optionally weave ONE in if relevant today)\n${resurfaced.map((r) => `- ${r}`).join("\n")}`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
     const client = new Anthropic();
     const response = await client.messages.create({
       model: MODEL,
       max_tokens: 4000,
       thinking: { type: "adaptive" },
-      system: `You are Jarvis, ${profile.name}'s chief of staff. Write today's morning briefing from the workspace snapshot below. Rules: 3 to 6 short lines, most important first. Cover: anything overdue or due soon, stalled projects that need a push, and the single highest-leverage action for today. Plain text only, no markdown, no preamble, no sign-off, no em dashes. If there is genuinely nothing actionable, say so in one line.\n\n${context}`,
+      system: `You are Jarvis, ${profile.name}'s chief of staff. Write today's morning briefing from the workspace snapshot below. Rules: 3 to 6 short lines, most important first. Cover: today's meetings if any, anything overdue or due soon, stalled projects that need a push, and the single highest-leverage action for today. Plain text only, no markdown, no preamble, no sign-off, no em dashes. If there is genuinely nothing actionable, say so in one line.\n\n${extras}\n\n${context}`,
       messages: [{ role: "user", content: "Write today's briefing." }],
     });
 

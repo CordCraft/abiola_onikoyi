@@ -22,6 +22,12 @@ export function GET() {
         { src: "/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
         { src: "/icon-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
       ],
+      // Android: share text/links from any app straight into the Jarvis inbox
+      share_target: {
+        action: "/jarvis/capture",
+        method: "GET",
+        params: { title: "title", text: "text", url: "url" },
+      },
     },
     { headers: { "Content-Type": "application/manifest+json" } },
   );

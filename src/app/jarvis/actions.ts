@@ -76,13 +76,127 @@ export async function undoRecord(kind: string, id: string): Promise<FormResult> 
         return { error: "This change cannot be undone automatically." };
     }
   } catch (e) {
+    // Already gone (e.g. deleted elsewhere): treat as undone.
+    const msg = e instanceof Error ? e.message : "";
+    if (msg.includes("does not exist") || msg.includes("No record") || msg.includes("not found")) {
+      revalidateJarvis();
+      return { ok: true };
+    }
     return { error: e instanceof Error ? e.message : "Undo failed." };
   }
   revalidateJarvis();
   return { ok: true };
 }
 
+// --- Quick capture (inbox) ---
+export async function quickCapture(_p: FormResult, f: FormData): Promise<FormResult> {
+  await verifySession();
+  const body = s(f.get("body"));
+  if (!body) return { error: "Nothing to capture." };
+  await prisma.jarvisNote.create({
+    data: { body: body.slice(0, 4000), source: "capture" },
+  });
+  revalidatePath("/jarvis");
+  return { ok: true };
+}
+
+export async function captureText(body: string): Promise<{ ok?: boolean; error?: string }> {
+  await verifySession();
+  const text = body.trim();
+  if (!text) return { error: "Nothing to capture." };
+  await prisma.jarvisNote.create({
+    data: { body: text.slice(0, 4000), source: "capture" },
+  });
+  revalidatePath("/jarvis");
+  return { ok: true };
+}
+
+// --- Meeting transcripts (from the in-chat recorder) ---
+export async function saveMeetingTranscript(
+  transcript: string,
+): Promise<{ id?: string; name?: string; error?: string }> {
+  await verifySession();
+  const text = transcript.trim();
+  if (!text) return { error: "The transcript is empty." };
+  const name = `Meeting ${new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Riyadh",
+  }).format(new Date())}`;
+  const doc = await prisma.jarvisDocument.create({
+    data: { name, content: text.slice(0, 400_000) },
+  });
+  revalidateJarvis();
+  return { id: doc.id, name };
+}
+
+// --- Notes & decisions (delete affordances for the Memory page) ---
+export async function deleteNote(f: FormData) {
+  await verifySession();
+  const id = s(f.get("id"));
+  if (id) await prisma.jarvisNote.delete({ where: { id } }).catch(() => {});
+  revalidateJarvis();
+  revalidatePath("/jarvis/memory");
+}
+export async function deleteDecision(f: FormData) {
+  await verifySession();
+  const id = s(f.get("id"));
+  if (id) await prisma.jarvisDecision.delete({ where: { id } }).catch(() => {});
+  revalidateJarvis();
+  revalidatePath("/jarvis/memory");
+}
+
+// --- Settings (Memory page) ---
+const ALLOWED_SETTINGS = new Set(["calendar_ics_url", "briefing_prefs"]);
+export async function saveSetting(_p: FormResult, f: FormData): Promise<FormResult> {
+  await verifySession();
+  const key = s(f.get("key"));
+  const value = s(f.get("value"));
+  if (!ALLOWED_SETTINGS.has(key)) return { error: "Unknown setting." };
+  if (key === "calendar_ics_url" && value && !/^https:\/\//.test(value)) {
+    return { error: "The calendar address must be an https URL." };
+  }
+  await prisma.jarvisSetting.upsert({
+    where: { key },
+    create: { key, value: value.slice(0, 4000) },
+    update: { value: value.slice(0, 4000) },
+  });
+  revalidatePath("/jarvis/memory");
+  return { ok: true };
+}
+
+// Thumbs feedback on the latest briefing; the generator reads this back.
+export async function briefingFeedback(f: FormData) {
+  await verifySession();
+  const vote = s(f.get("vote")) === "up" ? "+1" : "-1";
+  const date = new Date().toISOString().slice(0, 10);
+  const existing = await prisma.jarvisSetting.findUnique({
+    where: { key: "briefing_feedback" },
+  });
+  const lines = (existing?.value ?? "").split("\n").filter(Boolean).slice(-19);
+  lines.push(`${date}: ${vote}`);
+  await prisma.jarvisSetting.upsert({
+    where: { key: "briefing_feedback" },
+    create: { key: "briefing_feedback", value: lines.join("\n") },
+    update: { value: lines.join("\n") },
+  });
+  revalidatePath("/jarvis");
+}
+
 // --- Chat threads ---
+export async function renameThread(f: FormData) {
+  await verifySession();
+  const id = s(f.get("id"));
+  const title = s(f.get("title")).slice(0, 60);
+  if (id && title) {
+    await prisma.jarvisThread.update({ where: { id }, data: { title } }).catch(() => {});
+  }
+  revalidatePath("/jarvis/chat");
+}
+
 export async function deleteThread(f: FormData) {
   await verifySession();
   const id = s(f.get("id"));

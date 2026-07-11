@@ -6,7 +6,7 @@ import { formatDate } from "@/lib/format";
 // Assembles a compact snapshot of the structured memory for Claude. Called each
 // chat turn (after the route has verified the session).
 export async function buildContext(): Promise<string> {
-  const [ventures, projects, tasks, goals, notes, decisions, documents] = await Promise.all([
+  const [ventures, projects, tasks, goals, notes, decisions, documents, inboxNotes] = await Promise.all([
     prisma.jarvisVenture.findMany({ orderBy: { name: "asc" } }),
     prisma.jarvisProject.findMany({
       where: { status: { not: "done" } },
@@ -46,6 +46,11 @@ export async function buildContext(): Promise<string> {
         project: { select: { name: true } },
       },
     }),
+    prisma.jarvisNote.findMany({
+      where: { source: "capture", projectId: null },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+    }),
   ]);
 
   const lines: string[] = ["# Jarvis memory snapshot (live)"];
@@ -82,6 +87,12 @@ export async function buildContext(): Promise<string> {
     for (const m of g.milestones) {
       lines.push(`  [${m.done ? "x" : " "}] ${m.title}`);
     }
+  }
+
+  lines.push("\n## Inbox (quick captures awaiting filing; use file_note to attach to a project)");
+  if (inboxNotes.length === 0) lines.push("(empty)");
+  for (const n of inboxNotes) {
+    lines.push(`- (${daysSince(n.createdAt)}d ago) ${n.body.slice(0, 200)} [note:${n.id}]`);
   }
 
   lines.push("\n## Recent notes");
