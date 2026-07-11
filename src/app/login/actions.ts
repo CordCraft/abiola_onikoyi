@@ -52,6 +52,15 @@ export async function login(
   }
 
   await createSession(expectedUser);
+
+  // Honor a same-site ?from= deep link (e.g. /jarvis/chat), never an external
+  // URL. Backslashes are rejected because browsers normalize them to slashes,
+  // which would turn "/\evil.com" into a protocol-relative external redirect.
+  const from = String(formData.get("from") ?? "");
+  const destination =
+    from.startsWith("/") && !from.startsWith("//") && !from.includes("\\")
+      ? from
+      : "/dashboard";
   // redirect() must be called outside any try/catch (it throws internally).
-  redirect("/dashboard");
+  redirect(destination);
 }

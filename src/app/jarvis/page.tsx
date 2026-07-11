@@ -1,6 +1,7 @@
 import Link from "next/link";
-import { getOverview, isStalled, isPast, daysSince } from "@/lib/jarvis/queries";
+import { getOverview, listUnfiledDocuments, isStalled, isPast, daysSince } from "@/lib/jarvis/queries";
 import { formatDate } from "@/lib/format";
+import { PushToggle } from "@/components/jarvis/PushToggle";
 
 const priorityBadge: Record<string, string> = {
   high: "bg-red-50 text-red-700 ring-1 ring-red-200",
@@ -20,7 +21,10 @@ function SectionLabel({ children, accent }: { children: React.ReactNode; accent?
 }
 
 export default async function JarvisOverview() {
-  const { projects, tasks, goals } = await getOverview();
+  const [{ projects, tasks, goals }, unfiledDocs] = await Promise.all([
+    getOverview(),
+    listUnfiledDocuments(),
+  ]);
   const stalled = projects.filter((p) => isStalled(p));
   const active = projects.filter((p) => !isStalled(p));
 
@@ -40,7 +44,7 @@ export default async function JarvisOverview() {
               Your ventures at a glance. Ask Jarvis to capture documents, log decisions, and move things forward.
             </p>
           </div>
-          <div className="flex gap-2.5">
+          <div className="flex flex-wrap gap-2.5">
             <Link
               href="/jarvis/chat"
               className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-zinc-900 shadow-sm transition-transform hover:-translate-y-0.5"
@@ -53,6 +57,7 @@ export default async function JarvisOverview() {
             >
               + Project
             </Link>
+            <PushToggle />
           </div>
         </div>
 
@@ -160,6 +165,28 @@ export default async function JarvisOverview() {
           </ul>
         )}
       </section>
+
+      {unfiledDocs.length > 0 ? (
+        <section>
+          <SectionLabel accent="text-amber-600">Unfiled documents ({unfiledDocs.length})</SectionLabel>
+          <p className="mt-1 text-xs text-zinc-500">
+            Captured from chat but not attached to a project yet. Ask Jarvis to file them.
+          </p>
+          <ul className={`mt-3 divide-y divide-zinc-100 overflow-hidden ${cardBase}`}>
+            {unfiledDocs.map((doc) => (
+              <li key={doc.id} className="flex items-center justify-between gap-3 px-4 py-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-zinc-900">{doc.name}</p>
+                  {doc.summary ? (
+                    <p className="truncate text-xs text-zinc-500">{doc.summary}</p>
+                  ) : null}
+                </div>
+                <span className="shrink-0 text-xs text-zinc-400">{formatDate(doc.createdAt)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <section>
         <div className="flex items-center justify-between">

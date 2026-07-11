@@ -43,6 +43,71 @@ export async function logout() {
   redirect("/login");
 }
 
+// --- Undo for records saved directly by Jarvis chat ---
+export async function undoRecord(kind: string, id: string): Promise<FormResult> {
+  await verifySession();
+  try {
+    switch (kind) {
+      case "project":
+        await prisma.jarvisProject.delete({ where: { id } });
+        break;
+      case "task":
+        await prisma.jarvisTask.delete({ where: { id } });
+        break;
+      case "task_done":
+        await prisma.jarvisTask.update({
+          where: { id },
+          data: { status: "todo", completedAt: null },
+        });
+        break;
+      case "note":
+        await prisma.jarvisNote.delete({ where: { id } });
+        break;
+      case "decision":
+        await prisma.jarvisDecision.delete({ where: { id } });
+        break;
+      case "goal":
+        await prisma.jarvisGoal.delete({ where: { id } });
+        break;
+      case "document":
+        await prisma.jarvisDocument.delete({ where: { id } });
+        break;
+      default:
+        return { error: "This change cannot be undone automatically." };
+    }
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Undo failed." };
+  }
+  revalidateJarvis();
+  return { ok: true };
+}
+
+// --- Chat threads ---
+export async function deleteThread(f: FormData) {
+  await verifySession();
+  const id = s(f.get("id"));
+  if (id) {
+    await prisma.jarvisThread.delete({ where: { id } }).catch(() => {});
+  }
+  revalidatePath("/jarvis/chat");
+  redirect("/jarvis/chat");
+}
+
+// --- Documents ---
+export async function deleteDocument(f: FormData) {
+  await verifySession();
+  const id = s(f.get("id"));
+  if (id) {
+    const doc = await prisma.jarvisDocument.findUnique({ where: { id } });
+    if (doc) {
+      // Tolerate a concurrent delete (e.g. an Undo in chat on the same row).
+      await prisma.jarvisDocument.delete({ where: { id } }).catch(() => {});
+      if (doc.projectId) revalidatePath(`/jarvis/projects/${doc.projectId}`);
+    }
+  }
+  revalidateJarvis();
+}
+
 // --- Proposals (from chat) ---
 export async function applyProposal(id: string): Promise<FormResult> {
   await verifySession();

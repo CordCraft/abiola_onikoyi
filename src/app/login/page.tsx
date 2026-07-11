@@ -1,9 +1,18 @@
 "use client";
 
-import { useActionState } from "react";
+import { Suspense, useActionState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { login, type LoginState } from "./actions";
 import { profile } from "@/content/profile";
+
+// Carries the ?from= destination through the login form so a deep link (for
+// example /jarvis/chat on a phone) lands where the user was headed.
+function FromField() {
+  const searchParams = useSearchParams();
+  const from = searchParams.get("from") ?? "";
+  return <input type="hidden" name="from" value={from} />;
+}
 
 export default function LoginPage() {
   const [state, action, pending] = useActionState<LoginState, FormData>(
@@ -31,6 +40,9 @@ export default function LoginPage() {
           </p>
 
           <form action={action} className="mt-6 space-y-4">
+            <Suspense fallback={null}>
+              <FromField />
+            </Suspense>
             <div>
               <label
                 htmlFor="username"

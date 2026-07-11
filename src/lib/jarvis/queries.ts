@@ -63,7 +63,19 @@ export async function getProject(id: string) {
       tasks: { orderBy: [{ status: "asc" }, { dueDate: "asc" }] },
       notes: { orderBy: { createdAt: "desc" } },
       decisions: { orderBy: { createdAt: "desc" } },
+      documents: { orderBy: { createdAt: "desc" } },
     },
+  });
+}
+
+// --- Documents ---
+export async function listUnfiledDocuments() {
+  await verifySession();
+  return prisma.jarvisDocument.findMany({
+    where: { projectId: null },
+    orderBy: { createdAt: "desc" },
+    take: 20,
+    select: { id: true, name: true, summary: true, createdAt: true },
   });
 }
 

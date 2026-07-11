@@ -11,3 +11,11 @@
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
+
+# The service worker must never be cached, or push/update changes take days to
+# reach installed devices.
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Content-Type = "application/javascript; charset=utf-8"
+    Cache-Control = "no-cache, no-store, must-revalidate"

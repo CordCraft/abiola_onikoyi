@@ -6,11 +6,12 @@ import { formatDate } from "@/lib/format";
 // Assembles a compact snapshot of the structured memory for Claude. Called each
 // chat turn (after the route has verified the session).
 export async function buildContext(): Promise<string> {
-  const [ventures, projects, tasks, goals, notes, decisions] = await Promise.all([
+  const [ventures, projects, tasks, goals, notes, decisions, documents] = await Promise.all([
     prisma.jarvisVenture.findMany({ orderBy: { name: "asc" } }),
     prisma.jarvisProject.findMany({
       where: { status: { not: "done" } },
       orderBy: { lastActivityAt: "asc" },
+      take: 40,
       include: { venture: { select: { name: true } } },
     }),
     prisma.jarvisTask.findMany({
@@ -21,6 +22,7 @@ export async function buildContext(): Promise<string> {
     }),
     prisma.jarvisGoal.findMany({
       where: { status: "active" },
+      take: 20,
       include: { milestones: true },
     }),
     prisma.jarvisNote.findMany({
@@ -32,6 +34,17 @@ export async function buildContext(): Promise<string> {
       orderBy: { createdAt: "desc" },
       take: 15,
       include: { project: { select: { name: true } } },
+    }),
+    prisma.jarvisDocument.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 25,
+      select: {
+        id: true,
+        name: true,
+        summary: true,
+        createdAt: true,
+        project: { select: { name: true } },
+      },
     }),
   ]);
 
@@ -83,6 +96,14 @@ export async function buildContext(): Promise<string> {
   for (const d of decisions) {
     const proj = d.project ? `${d.project.name}: ` : "";
     lines.push(`- ${proj}${d.title}: because ${d.rationale.slice(0, 200)}`);
+  }
+
+  lines.push("\n## Document library (use read_document / search_documents for full text)");
+  if (documents.length === 0) lines.push("(none)");
+  for (const doc of documents) {
+    const proj = doc.project ? `${doc.project.name} — ` : "unfiled — ";
+    const summary = doc.summary ? ` ${doc.summary.slice(0, 180)}` : " (no summary yet)";
+    lines.push(`- ${proj}${doc.name} (${daysSince(doc.createdAt)}d ago) [doc:${doc.id}]${summary}`);
   }
 
   return lines.join("\n");
