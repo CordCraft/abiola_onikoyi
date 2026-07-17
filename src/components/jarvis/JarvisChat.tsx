@@ -36,6 +36,7 @@ export type ChatItem =
 export type Attachment =
   | { kind: "text"; name: string; text: string }
   | { kind: "image"; name: string; mimeType: string; base64: string }
+  | { kind: "pdf-scan"; name: string; pages: { mimeType: string; base64: string }[] }
   | { kind: "error"; name: string; message: string };
 
 const ACCEPTED =
@@ -141,6 +142,7 @@ async function processFile(file: File): Promise<Attachment> {
       const loadingTask = pdfjsLib.getDocument({ data: await file.arrayBuffer() });
       const pdf = await loadingTask.promise;
       const pageTexts: string[] = [];
+      let extractedChars = 0;
       for (let p = 1; p <= pdf.numPages; p++) {
         const page = await pdf.getPage(p);
         const content = await page.getTextContent();
@@ -150,8 +152,34 @@ async function processFile(file: File): Promise<Attachment> {
             return (t.str ?? "") + (t.hasEOL ? "\n" : "");
           })
           .join("");
+        extractedChars += lineText.trim().length;
         pageTexts.push(`[Page ${p}]\n${lineText.trim()}`);
       }
+
+      // Scanned PDF: essentially no text layer. Render pages to images so
+      // Jarvis can read them with vision and transcribe into a document.
+      if (extractedChars < Math.max(120, pdf.numPages * 25)) {
+        const pages: { mimeType: string; base64: string }[] = [];
+        const maxPages = Math.min(pdf.numPages, 12);
+        for (let p = 1; p <= maxPages; p++) {
+          const page = await pdf.getPage(p);
+          const base = page.getViewport({ scale: 1 });
+          const scale = Math.min(1.8, 1200 / base.width);
+          const viewport = page.getViewport({ scale });
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.ceil(viewport.width);
+          canvas.height = Math.ceil(viewport.height);
+          const ctx = canvas.getContext("2d");
+          if (!ctx) continue;
+          await page.render({ canvas, canvasContext: ctx, viewport }).promise;
+          const dataUrl = canvas.toDataURL("image/jpeg", 0.78);
+          pages.push({ mimeType: "image/jpeg", base64: dataUrl.split(",")[1] ?? "" });
+        }
+        if (pages.length) {
+          return { kind: "pdf-scan", name, pages };
+        }
+      }
+
       return capText(name, pageTexts.join("\n\n"));
     }
 

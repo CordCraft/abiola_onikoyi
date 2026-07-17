@@ -24,7 +24,7 @@ export async function POST(req: Request) {
   const weekAgo = new Date(Date.now() - 7 * 864e5);
 
   try {
-    const [completedTasks, newNotes, newDecisions, newDocs, context] = await Promise.all([
+    const [completedTasks, newNotes, newDecisions, newDocs, context, goals] = await Promise.all([
       prisma.jarvisTask.findMany({
         where: { status: "done", completedAt: { gt: weekAgo } },
         include: { project: { select: { name: true } } },
@@ -38,7 +38,18 @@ export async function POST(req: Request) {
       }),
       prisma.jarvisDocument.count({ where: { createdAt: { gt: weekAgo } } }),
       buildContext(),
+      prisma.jarvisGoal.findMany({
+        where: { status: "active" },
+        include: { milestones: true },
+      }),
     ]);
+
+    const goalLines = goals.map((g) => {
+      const done = g.milestones.filter((m) => m.done).length;
+      const open = g.milestones.filter((m) => !m.done);
+      const overdue = open.filter((m) => m.dueDate && m.dueDate.getTime() < Date.now()).length;
+      return `- ${g.title}: ${done}/${g.milestones.length} milestones done${overdue ? `, ${overdue} overdue` : ""}${open.length === 0 ? " (NO open milestone: needs a next step or closure)" : ""}`;
+    });
 
     const weekSummary = [
       `Completed tasks this week (${completedTasks.length}):`,
@@ -46,6 +57,8 @@ export async function POST(req: Request) {
       `Decisions made this week (${newDecisions.length}):`,
       ...newDecisions.map((d) => `- ${d.title}${d.project ? ` (${d.project.name})` : ""}`),
       `Notes captured: ${newNotes}. Documents added: ${newDocs}.`,
+      `Goal progress:`,
+      ...(goalLines.length ? goalLines : ["- (no active goals)"]),
     ].join("\n");
 
     const client = new Anthropic();
@@ -53,7 +66,7 @@ export async function POST(req: Request) {
       model: MODEL,
       max_tokens: 4000,
       thinking: { type: "adaptive" },
-      system: `You are Jarvis, ${profile.name}'s chief of staff, opening the Sunday weekly review. Using the week's activity and the live snapshot, write: (1) a short reflection on the week, 4-6 lines: what moved, what stalled, what was decided; (2) exactly three sharp questions to plan next week, each on its own line starting "Q1:", "Q2:", "Q3:". Conversational, plain text, no markdown headings, no em dashes.\n\n## This week's activity\n${weekSummary}\n\n${context}`,
+      system: `You are Jarvis, ${profile.name}'s chief of staff, opening the Sunday weekly review. Using the week's activity and the live snapshot, write: (1) a short reflection on the week, 4-6 lines: what moved, what stalled, what was decided; (2) one line on goal progress, calling out any goal with no open milestone or overdue milestones and suggesting the next milestone; (3) exactly three sharp questions to plan next week, each on its own line starting "Q1:", "Q2:", "Q3:". Conversational, plain text, no markdown headings, no em dashes.\n\n## This week's activity\n${weekSummary}\n\n${context}`,
       messages: [{ role: "user", content: "Open my weekly review." }],
     });
 

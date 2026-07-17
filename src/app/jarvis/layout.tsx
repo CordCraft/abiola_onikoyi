@@ -89,7 +89,7 @@ export default async function JarvisLayout({
               <span className="text-[15px] font-semibold tracking-tight text-zinc-900">Jarvis</span>
             </Link>
             <nav className="hidden items-center gap-1 text-sm font-medium md:flex">
-              {NAV.map((item) => (
+              {[...NAV, { href: "/jarvis/timeline", label: "Timeline" }, { href: "/jarvis/graph", label: "Graph" }].map((item) => (
                 <Link
                   key={item.href}
                   href={item.href}

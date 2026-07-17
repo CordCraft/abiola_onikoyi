@@ -11,8 +11,10 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.106.0",
+    "@netlify/blobs": "^10.7.9",
     "@prisma/client": "^6.19.3",
     "bcryptjs": "^3.0.3",
+    "d3-force": "^3.0.0",
     "gsap": "^3.15.0",
     "jose": "^6.2.3",
     "jszip": "^3.10.1",
@@ -31,6 +33,7 @@
     "@netlify/functions": "^5.3.0",
     "@tailwindcss/postcss": "^4",
     "@types/bcryptjs": "^2.4.6",
+    "@types/d3-force": "^3.0.10",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

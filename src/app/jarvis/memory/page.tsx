@@ -44,12 +44,26 @@ export default async function MemoryPage() {
             Everything in the knowledge base, in one place. Delete anything; Jarvis forgets it immediately.
           </p>
         </div>
-        <a
-          href="/jarvis/api/export"
-          className="rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50"
-        >
-          Download everything (JSON)
-        </a>
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href="/jarvis/timeline"
+            className="rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50"
+          >
+            Timeline
+          </Link>
+          <Link
+            href="/jarvis/graph"
+            className="rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50"
+          >
+            Knowledge graph
+          </Link>
+          <a
+            href="/jarvis/api/export"
+            className="rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50"
+          >
+            Download everything (JSON)
+          </a>
+        </div>
       </div>
 
       {/* Settings */}

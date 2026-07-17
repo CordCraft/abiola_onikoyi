@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { indexRecord } from "@/lib/jarvis/embeddings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,11 +33,13 @@ export async function POST(req: Request) {
     const doc = await prisma.jarvisDocument.create({
       data: { name: name.slice(0, 200), content: text.slice(0, 400_000) },
     });
+    void indexRecord("document", doc.id, doc.content, doc.name);
     return NextResponse.json({ ok: true, kind: "document", id: doc.id });
   }
 
   const note = await prisma.jarvisNote.create({
     data: { body: text.slice(0, 4000), source: "capture" },
   });
+  void indexRecord("note", note.id, note.body);
   return NextResponse.json({ ok: true, kind: "capture", id: note.id });
 }

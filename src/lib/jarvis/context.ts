@@ -85,7 +85,7 @@ export async function buildContext(): Promise<string> {
     const horizon = g.horizon ? ` (${g.horizon})` : "";
     lines.push(`- ${g.title}${horizon}${target} [goal:${g.id}]`);
     for (const m of g.milestones) {
-      lines.push(`  [${m.done ? "x" : " "}] ${m.title}`);
+      lines.push(`  [${m.done ? "x" : " "}] ${m.title} [ms:${m.id}]`);
     }
   }
 

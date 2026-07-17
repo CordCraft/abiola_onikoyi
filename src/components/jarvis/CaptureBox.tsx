@@ -4,8 +4,8 @@ import { useRef, useState } from "react";
 import { captureText } from "@/app/jarvis/actions";
 
 // Ten-second capture: thought in, saved to the Inbox, zero filing decisions.
-// Jarvis files inbox items into projects when asked (or during the briefing).
-export function CaptureBox() {
+// Jarvis files inbox items into projects when asked (or overnight).
+export function CaptureBox({ autoFocus }: { autoFocus?: boolean }) {
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
@@ -92,6 +92,7 @@ export function CaptureBox() {
               void save();
             }
           }}
+          autoFocus={autoFocus}
           rows={1}
           placeholder={listening ? "Listening..." : "Capture a thought... (saved to your inbox)"}
           className="min-h-[42px] min-w-0 flex-1 resize-none rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/30"

@@ -22,7 +22,11 @@ export async function getOverview() {
     prisma.jarvisProject.findMany({
       where: { status: { in: ["active", "stalled"] } },
       orderBy: { lastActivityAt: "asc" },
-      include: { venture: true, _count: { select: { tasks: true } } },
+      include: {
+        venture: true,
+        _count: { select: { tasks: true } },
+        tasks: { select: { status: true, dueDate: true } },
+      },
     }),
     prisma.jarvisTask.findMany({
       where: { status: { not: "done" }, dueDate: { not: null } },

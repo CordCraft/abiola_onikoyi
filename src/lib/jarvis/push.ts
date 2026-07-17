@@ -7,6 +7,10 @@ export type PushPayload = {
   body: string;
   url: string;
   tag?: string;
+  // Notification action buttons (Chrome/Android; iOS ignores them)
+  actions?: { action: string; title: string }[];
+  // Arbitrary data the service worker needs to execute an action
+  taskId?: string;
 };
 
 // Send a notification to every subscribed device. Prunes dead subscriptions,

@@ -106,6 +106,8 @@ model JarvisTask {
   priority    String         @default("medium")
   dueDate     DateTime?
   completedAt DateTime?
+  // "daily" | "weekly" | "monthly": completing the task spawns the next occurrence
+  recurrence  String?
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 

@@ -9,9 +9,41 @@ import {
   daysSince,
 } from "@/lib/jarvis/queries";
 import { formatDate } from "@/lib/format";
+import { projectHealth, healthTone } from "@/lib/jarvis/health";
 import { PushToggle } from "@/components/jarvis/PushToggle";
 import { CaptureBox } from "@/components/jarvis/CaptureBox";
+import { SpeakButton } from "@/components/jarvis/SpeakButton";
+import { BadgeUpdater } from "@/components/jarvis/BadgeUpdater";
 import { briefingFeedback, deleteNote } from "@/app/jarvis/actions";
+
+const toneColors: Record<string, string> = {
+  good: "stroke-emerald-500",
+  warn: "stroke-amber-500",
+  bad: "stroke-red-500",
+};
+
+function HealthRing({ score }: { score: number }) {
+  const r = 14;
+  const c = 2 * Math.PI * r;
+  return (
+    <span className="relative inline-grid h-9 w-9 shrink-0 place-items-center" title={`Health ${score}/100`}>
+      <svg viewBox="0 0 36 36" className="h-9 w-9 -rotate-90">
+        <circle cx="18" cy="18" r={r} fill="none" strokeWidth="3.5" className="stroke-zinc-200/80" />
+        <circle
+          cx="18"
+          cy="18"
+          r={r}
+          fill="none"
+          strokeWidth="3.5"
+          strokeLinecap="round"
+          strokeDasharray={`${(score / 100) * c} ${c}`}
+          className={toneColors[healthTone(score)]}
+        />
+      </svg>
+      <span className="absolute text-[9px] font-bold text-zinc-600">{score}</span>
+    </span>
+  );
+}
 
 const priorityBadge: Record<string, string> = {
   high: "bg-red-50 text-red-700 ring-1 ring-red-200",
@@ -30,7 +62,12 @@ function SectionLabel({ children, accent }: { children: React.ReactNode; accent?
   );
 }
 
-export default async function JarvisOverview() {
+export default async function JarvisOverview({
+  searchParams,
+}: {
+  searchParams: Promise<{ focus?: string }>;
+}) {
+  const { focus } = await searchParams;
   const [{ projects, tasks, goals }, unfiledDocs, inbox, briefing] = await Promise.all([
     getOverview(),
     listUnfiledDocuments(),
@@ -89,8 +126,10 @@ export default async function JarvisOverview() {
         </div>
       </div>
 
+      <BadgeUpdater count={inbox.length} />
+
       {/* Quick capture */}
-      <CaptureBox />
+      <CaptureBox autoFocus={focus === "capture"} />
 
       {/* Morning briefing */}
       {briefing ? (
@@ -98,6 +137,7 @@ export default async function JarvisOverview() {
           <div className="flex items-center justify-between gap-3">
             <SectionLabel accent="text-indigo-600">Today&apos;s briefing</SectionLabel>
             <div className="flex items-center gap-1">
+              <SpeakButton text={briefing.body.replace(/^Morning briefing:\s*/, "")} />
               <form action={briefingFeedback}>
                 <input type="hidden" name="vote" value="up" />
                 <button type="submit" title="More like this" className="grid h-7 w-7 place-items-center rounded-md text-zinc-400 hover:bg-emerald-50 hover:text-emerald-600">
@@ -198,9 +238,12 @@ export default async function JarvisOverview() {
                   className={`group block ${cardBase} p-4 transition-all hover:-translate-y-0.5 hover:shadow-[0_1px_3px_rgba(0,0,0,0.04),0_18px_40px_-16px_rgba(30,27,75,0.28)]`}
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <span className="font-semibold text-zinc-900 transition-colors group-hover:text-indigo-700">
-                      {p.name}
-                    </span>
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <HealthRing score={projectHealth(p)} />
+                      <span className="truncate font-semibold text-zinc-900 transition-colors group-hover:text-indigo-700">
+                        {p.name}
+                      </span>
+                    </div>
                     <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${priorityBadge[p.priority] ?? priorityBadge.low}`}>
                       {p.priority}
                     </span>

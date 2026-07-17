@@ -43,21 +43,47 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, skipped: "Nothing needs a nudge today" });
   }
 
-  const lines: string[] = [];
-  for (const t of dueTasks) {
+  const day = now.toISOString().slice(0, 10);
+  const results = [];
+
+  // Up to 3 individual task notifications with Mark done / Snooze buttons.
+  const individual = dueTasks.slice(0, 3);
+  for (const t of individual) {
     const overdue = t.dueDate && t.dueDate.getTime() < now.getTime();
-    lines.push(`${overdue ? "Overdue" : "Due soon"}: ${t.title}${t.project ? ` (${t.project.name})` : ""}`);
+    results.push(
+      await sendPushToAll({
+        title: overdue ? "Overdue task" : "Due soon",
+        body: `${t.title}${t.project ? ` (${t.project.name})` : ""}`,
+        url: t.projectId ? `/jarvis/projects/${t.projectId}` : "/jarvis",
+        tag: `jarvis-task-${t.id}-${day}`,
+        taskId: t.id,
+        actions: [
+          { action: "done", title: "Mark done" },
+          { action: "snooze", title: "Snooze 1 day" },
+        ],
+      }),
+    );
+  }
+
+  // Everything else rolls into one summary.
+  const rest: string[] = [];
+  for (const t of dueTasks.slice(3)) {
+    rest.push(`Due: ${t.title}`);
   }
   for (const p of newlyStalled) {
-    lines.push(`Stalled: ${p.name} has had no activity for ${STALE_DAYS} days`);
+    rest.push(`Stalled: ${p.name} (${STALE_DAYS} days quiet)`);
+  }
+  if (rest.length) {
+    results.push(
+      await sendPushToAll({
+        title: `Jarvis: ${rest.length} more need attention`,
+        body: rest.slice(0, 4).join("\n").slice(0, 240),
+        url: "/jarvis",
+        tag: `jarvis-nudge-${day}`,
+      }),
+    );
   }
 
-  const result = await sendPushToAll({
-    title: lines.length === 1 ? "Jarvis nudge" : `Jarvis: ${lines.length} things need attention`,
-    body: lines.slice(0, 4).join("\n").slice(0, 240),
-    url: "/jarvis",
-    tag: `jarvis-nudge-${now.toISOString().slice(0, 10)}`,
-  });
-
-  return NextResponse.json({ ok: true, items: lines.length, ...result });
+  const sent = results.reduce((a, r) => a + r.sent, 0);
+  return NextResponse.json({ ok: true, notifications: results.length, sent });
 }

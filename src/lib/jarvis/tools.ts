@@ -2,6 +2,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/format";
 import { getUpcomingEvents, formatEvents } from "@/lib/jarvis/calendar";
+import { indexRecord, semanticSearch } from "@/lib/jarvis/embeddings";
 
 // Jarvis tool surface. Read tools run live queries. Write tools apply
 // IMMEDIATELY (no confirmation step) and report a receipt the UI shows with an
@@ -136,7 +137,7 @@ export const jarvisTools = [
   {
     name: "create_task",
     description:
-      "Create a task, optionally under a project, with an optional due date (YYYY-MM-DD). Applies immediately.",
+      "Create a task, optionally under a project, with an optional due date (YYYY-MM-DD). Applies immediately. If a very similar open task exists, nothing is created and you are told; pass allowDuplicate true only when it is genuinely a different task.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -145,8 +146,62 @@ export const jarvisTools = [
         projectId: { type: "string" },
         priority: { type: "string" },
         dueDate: { type: "string", description: "ISO date YYYY-MM-DD" },
+        recurrence: { type: "string", description: "daily|weekly|monthly - completing the task spawns the next occurrence" },
+        allowDuplicate: { type: "boolean" },
       },
       required: ["title"],
+    },
+  },
+  {
+    name: "create_tasks_bulk",
+    description:
+      "Create several tasks at once under one project (e.g. instantiating a playbook or a meeting's action items). Applies immediately.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        projectId: { type: "string" },
+        projectName: { type: "string" },
+        tasks: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string" },
+              dueInDays: { type: "number", description: "Days from today" },
+              dueDate: { type: "string", description: "ISO date YYYY-MM-DD" },
+              priority: { type: "string" },
+              recurrence: { type: "string" },
+            },
+            required: ["title"],
+          },
+        },
+      },
+      required: ["tasks"],
+    },
+  },
+  {
+    name: "add_milestone",
+    description: "Add a milestone to a goal. Provide goalId ([goal:<id>] in the snapshot) or goalTitle.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        goalId: { type: "string" },
+        goalTitle: { type: "string" },
+        title: { type: "string" },
+        dueDate: { type: "string", description: "ISO date YYYY-MM-DD" },
+      },
+      required: ["title"],
+    },
+  },
+  {
+    name: "complete_milestone",
+    description: "Mark a goal milestone done. Provide milestoneId ([ms:<id>] in the snapshot) or its title.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        milestoneId: { type: "string" },
+        title: { type: "string" },
+      },
     },
   },
   {
@@ -293,6 +348,60 @@ async function bump(projectId: string | null | undefined) {
   }
 }
 
+const RECURRENCES = new Set(["daily", "weekly", "monthly"]);
+
+export function nextOccurrence(from: Date, recurrence: string): Date {
+  const d = new Date(from);
+  if (recurrence === "daily") d.setDate(d.getDate() + 1);
+  else if (recurrence === "weekly") d.setDate(d.getDate() + 7);
+  else d.setMonth(d.getMonth() + 1);
+  return d;
+}
+
+// Spawn the next occurrence of a recurring task; shared with server actions.
+export async function respawnRecurringTask(task: {
+  title: string;
+  projectId: string | null;
+  priority: string;
+  dueDate: Date | null;
+  recurrence: string | null;
+}): Promise<Date | null> {
+  if (!task.recurrence || !RECURRENCES.has(task.recurrence)) return null;
+  const base = task.dueDate ?? new Date();
+  const nextDue = nextOccurrence(base, task.recurrence);
+  await prisma.jarvisTask.create({
+    data: {
+      title: task.title,
+      projectId: task.projectId,
+      priority: task.priority,
+      dueDate: nextDue,
+      recurrence: task.recurrence,
+    },
+  });
+  return nextDue;
+}
+
+// Near-duplicate open task by trigram similarity; ILIKE fallback.
+async function findDuplicateTask(
+  title: string,
+): Promise<{ id: string; title: string; projectName: string | null } | null> {
+  try {
+    const rows = await prisma.$queryRaw<{ id: string; title: string; projectName: string | null }[]>`
+      SELECT t.id, t.title, p.name AS "projectName"
+      FROM "JarvisTask" t LEFT JOIN "JarvisProject" p ON p.id = t."projectId"
+      WHERE t.status <> 'done' AND similarity(t.title, ${title}) > 0.55
+      ORDER BY similarity(t.title, ${title}) DESC LIMIT 1`;
+    if (rows[0]) return rows[0];
+  } catch {
+    const t = await prisma.jarvisTask.findFirst({
+      where: { title: { equals: title, mode: "insensitive" }, status: { not: "done" } },
+      include: { project: { select: { name: true } } },
+    });
+    if (t) return { id: t.id, title: t.title, projectName: t.project?.name ?? null };
+  }
+  return null;
+}
+
 const MAX_DOC_READ = 60_000; // chars returned to the model per read_document
 
 export async function executeTool(
@@ -399,8 +508,20 @@ export async function executeTool(
         });
         rows = ns.map((n) => ({ id: n.id, body: n.body, projectName: n.project?.name ?? null }));
       }
+      // Semantic layer: meaning-based matches the keyword pass missed.
+      const semantic = await semanticSearch(q, ["note"], 6);
+      const seen = new Set(rows.map((r) => r.id));
+      for (const hit of semantic) {
+        if (seen.has(hit.recordId)) continue;
+        const n = await prisma.jarvisNote.findUnique({
+          where: { id: hit.recordId },
+          include: { project: { select: { name: true } } },
+        });
+        if (n) rows.push({ id: n.id, body: n.body, projectName: n.project?.name ?? null });
+      }
       if (!rows.length) return "(no matching notes)";
       return rows
+        .slice(0, 12)
         .map((n) => `- ${n.projectName ? `(${n.projectName}) ` : ""}${n.body.slice(0, 220)}`)
         .join("\n");
     }
@@ -445,8 +566,27 @@ export async function executeTool(
           return { id: d.id, name: d.name, projectName: d.project?.name ?? null, snippet };
         });
       }
+      // Semantic layer: meaning-based matches ("financing" finds "capex").
+      const semantic = await semanticSearch(q, ["document"], 6);
+      const seen = new Set(rows.map((r) => r.id));
+      for (const hit of semantic) {
+        if (seen.has(hit.recordId)) continue;
+        const d = await prisma.jarvisDocument.findUnique({
+          where: { id: hit.recordId },
+          include: { project: { select: { name: true } } },
+        });
+        if (d) {
+          rows.push({
+            id: d.id,
+            name: d.name,
+            projectName: d.project?.name ?? null,
+            snippet: hit.content.slice(0, 220),
+          });
+        }
+      }
       if (!rows.length) return "(no matching documents)";
       return rows
+        .slice(0, 10)
         .map(
           (d) =>
             `- ${d.name}${d.projectName ? ` (${d.projectName})` : ""} [doc:${d.id}]\n  ...${d.snippet.replace(/\s+/g, " ")}...`,
@@ -479,6 +619,13 @@ export async function executeTool(
     case "create_project": {
       const name = str(input.name);
       if (!name) return "A project name is required.";
+      const existing = await prisma.jarvisProject.findFirst({
+        where: { name: { contains: name, mode: "insensitive" }, status: { not: "done" } },
+        select: { id: true, name: true },
+      });
+      if (existing) {
+        return `DUPLICATE GUARD: project "${existing.name}" (id:${existing.id}) already exists. Nothing was created. Use update_project or attach records to it instead.`;
+      }
       let ventureId: string | null = null;
       const vname = str(input.ventureName);
       if (vname) {
@@ -531,24 +678,67 @@ export async function executeTool(
     case "create_task": {
       const title = str(input.title);
       if (!title) return "A task title is required.";
+      if (input.allowDuplicate !== true) {
+        const dup = await findDuplicateTask(title);
+        if (dup) {
+          return `DUPLICATE GUARD: an open task "${dup.title}"${dup.projectName ? ` on ${dup.projectName}` : ""} (id:${dup.id}) already exists. Nothing was created. Update or complete that task instead, or call create_task again with allowDuplicate: true if this is genuinely a different task.`;
+        }
+      }
       const ref = await resolveProject(input);
+      const recurrence = str(input.recurrence)?.toLowerCase();
       const t = await prisma.jarvisTask.create({
         data: {
           title,
           projectId: ref?.id ?? null,
           priority: str(input.priority) ?? "medium",
           dueDate: parseDate(input.dueDate),
+          recurrence: recurrence && RECURRENCES.has(recurrence) ? recurrence : null,
         },
       });
       await bump(ref?.id);
       const due = t.dueDate ? ` (due ${formatDate(t.dueDate)})` : "";
+      const rec = t.recurrence ? ` [repeats ${t.recurrence}]` : "";
       saved({
         kind: "task",
         id: t.id,
-        summary: `Task "${title}"${ref ? ` on ${ref.name}` : ""}${due}`,
+        summary: `Task "${title}"${ref ? ` on ${ref.name}` : ""}${due}${rec}`,
         undoable: true,
       });
-      return `SAVED task "${title}"${ref ? ` under ${ref.name}` : ""}${due} id:${t.id}.`;
+      return `SAVED task "${title}"${ref ? ` under ${ref.name}` : ""}${due}${rec} id:${t.id}.`;
+    }
+    case "create_tasks_bulk": {
+      const items = Array.isArray(input.tasks) ? (input.tasks as Record<string, unknown>[]) : [];
+      if (!items.length) return "tasks array is required.";
+      const ref = await resolveProject(input);
+      const made: string[] = [];
+      for (const item of items.slice(0, 25)) {
+        const title = str(item.title);
+        if (!title) continue;
+        let dueDate = parseDate(item.dueDate);
+        const dueInDays = Number(item.dueInDays);
+        if (!dueDate && Number.isFinite(dueInDays)) {
+          dueDate = new Date(Date.now() + dueInDays * 864e5);
+        }
+        const recurrence = str(item.recurrence)?.toLowerCase();
+        const t = await prisma.jarvisTask.create({
+          data: {
+            title,
+            projectId: ref?.id ?? null,
+            priority: str(item.priority) ?? "medium",
+            dueDate,
+            recurrence: recurrence && RECURRENCES.has(recurrence) ? recurrence : null,
+          },
+        });
+        made.push(title);
+        saved({
+          kind: "task",
+          id: t.id,
+          summary: `Task "${title}"${ref ? ` on ${ref.name}` : ""}${dueDate ? ` (due ${formatDate(dueDate)})` : ""}`,
+          undoable: true,
+        });
+      }
+      await bump(ref?.id);
+      return `SAVED ${made.length} tasks${ref ? ` under ${ref.name}` : ""}: ${made.join("; ")}.`;
     }
     case "complete_task": {
       const id = str(input.taskId);
@@ -569,13 +759,14 @@ export async function executeTool(
         data: { status: "done", completedAt: new Date() },
       });
       await bump(task.projectId);
+      const nextDue = await respawnRecurringTask(task);
       saved({
         kind: "task_done",
         id: task.id,
-        summary: `Completed "${task.title}"`,
+        summary: `Completed "${task.title}"${nextDue ? ` (next: ${formatDate(nextDue)})` : ""}`,
         undoable: true,
       });
-      return `SAVED: task "${task.title}" marked done.`;
+      return `SAVED: task "${task.title}" marked done.${nextDue ? ` It repeats ${task.recurrence}; the next occurrence is due ${formatDate(nextDue)}.` : ""}`;
     }
     case "log_note": {
       const body = str(input.body);
@@ -585,6 +776,7 @@ export async function executeTool(
         data: { body, projectId: ref?.id ?? null },
       });
       await bump(ref?.id);
+      void indexRecord("note", n.id, body);
       saved({
         kind: "note",
         id: n.id,
@@ -660,6 +852,7 @@ export async function executeTool(
         },
       });
       await bump(ref?.id);
+      void indexRecord("document", d.id, d.content, d.name);
       saved({
         kind: "document",
         id: d.id,
@@ -667,6 +860,56 @@ export async function executeTool(
         undoable: true,
       });
       return `SAVED document "${docName}" [doc:${d.id}]${ref ? ` under ${ref.name}` : ""}.`;
+    }
+    case "add_milestone": {
+      const title = str(input.title);
+      if (!title) return "A milestone title is required.";
+      const gid = str(input.goalId);
+      let goal = gid ? await prisma.jarvisGoal.findUnique({ where: { id: gid } }) : null;
+      if (!goal) {
+        const gtitle = str(input.goalTitle);
+        if (gtitle) {
+          goal = await prisma.jarvisGoal.findFirst({
+            where: { title: { contains: gtitle, mode: "insensitive" } },
+          });
+        }
+      }
+      if (!goal) return "No matching goal found. Provide goalId or goalTitle.";
+      const m = await prisma.jarvisMilestone.create({
+        data: { goalId: goal.id, title, dueDate: parseDate(input.dueDate) },
+      });
+      saved({
+        kind: "goal",
+        id: m.id,
+        summary: `Milestone "${title}" added to goal "${goal.title}"`,
+        undoable: false,
+      });
+      return `SAVED milestone "${title}" on goal "${goal.title}" [ms:${m.id}].`;
+    }
+    case "complete_milestone": {
+      const mid = str(input.milestoneId);
+      let ms = mid ? await prisma.jarvisMilestone.findUnique({ where: { id: mid }, include: { goal: true } }) : null;
+      if (!ms) {
+        const title = str(input.title);
+        if (title) {
+          ms = await prisma.jarvisMilestone.findFirst({
+            where: { title: { contains: title, mode: "insensitive" }, done: false },
+            include: { goal: true },
+          });
+        }
+      }
+      if (!ms) return "No matching open milestone found.";
+      await prisma.jarvisMilestone.update({ where: { id: ms.id }, data: { done: true } });
+      const remaining = await prisma.jarvisMilestone.count({
+        where: { goalId: ms.goalId, done: false },
+      });
+      saved({
+        kind: "goal",
+        id: ms.id,
+        summary: `Milestone done: "${ms.title}" (${ms.goal.title})`,
+        undoable: false,
+      });
+      return `SAVED: milestone "${ms.title}" done on goal "${ms.goal.title}". ${remaining === 0 ? "That was the last open milestone: suggest the next one or ask if the goal is achieved." : `${remaining} milestone(s) remain.`}`;
     }
     case "file_note": {
       const noteId = str(input.noteId);

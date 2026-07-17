@@ -23,7 +23,9 @@ self.addEventListener("push", (event) => {
       body: data.body,
       icon: "/icon-192.png",
       badge: "/icon-192.png",
-      data: { url: data.url || "/jarvis" },
+      data: { url: data.url || "/jarvis", taskId: data.taskId || null },
+      // Action buttons (Mark done / Snooze on task nudges); iOS ignores these.
+      actions: Array.isArray(data.actions) ? data.actions.slice(0, 2) : [],
       // Distinct tag per push (sender provides it) so a new notification never
       // silently replaces an unread one; renotify re-alerts where supported.
       tag: data.tag || "jarvis-" + Date.now(),
@@ -34,7 +36,32 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const url = (event.notification.data && event.notification.data.url) || "/jarvis";
+  const data = event.notification.data || {};
+  const url = data.url || "/jarvis";
+
+  // Action buttons execute without opening the app.
+  if (event.action && data.taskId) {
+    event.waitUntil(
+      fetch("/jarvis/api/task-action", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskId: data.taskId, action: event.action }),
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error("action failed");
+          return self.registration.showNotification(
+            event.action === "done" ? "Task marked done" : "Snoozed until tomorrow",
+            { icon: "/icon-192.png", badge: "/icon-192.png", tag: "jarvis-action-ack" }
+          );
+        })
+        .catch(() =>
+          // Session expired or offline: open the app instead.
+          self.clients.openWindow(url)
+        )
+    );
+    return;
+  }
   event.waitUntil(
     self.clients
       .matchAll({ type: "window", includeUncontrolled: true })

@@ -5,6 +5,8 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { verifySession } from "@/lib/dal";
 import { deleteSession } from "@/lib/session";
+import { indexRecord } from "@/lib/jarvis/embeddings";
+import { respawnRecurringTask } from "@/lib/jarvis/tools";
 
 export type FormResult = { error?: string; ok?: boolean } | undefined;
 
@@ -93,9 +95,10 @@ export async function quickCapture(_p: FormResult, f: FormData): Promise<FormRes
   await verifySession();
   const body = s(f.get("body"));
   if (!body) return { error: "Nothing to capture." };
-  await prisma.jarvisNote.create({
+  const n = await prisma.jarvisNote.create({
     data: { body: body.slice(0, 4000), source: "capture" },
   });
+  void indexRecord("note", n.id, n.body);
   revalidatePath("/jarvis");
   return { ok: true };
 }
@@ -104,9 +107,10 @@ export async function captureText(body: string): Promise<{ ok?: boolean; error?:
   await verifySession();
   const text = body.trim();
   if (!text) return { error: "Nothing to capture." };
-  await prisma.jarvisNote.create({
+  const n = await prisma.jarvisNote.create({
     data: { body: text.slice(0, 4000), source: "capture" },
   });
+  void indexRecord("note", n.id, n.body);
   revalidatePath("/jarvis");
   return { ok: true };
 }
@@ -129,6 +133,7 @@ export async function saveMeetingTranscript(
   const doc = await prisma.jarvisDocument.create({
     data: { name, content: text.slice(0, 400_000) },
   });
+  void indexRecord("document", doc.id, doc.content, doc.name);
   revalidateJarvis();
   return { id: doc.id, name };
 }
@@ -427,6 +432,7 @@ export async function cycleTask(f: FormData) {
       where: { id },
       data: { status: next, completedAt: next === "done" ? new Date() : null },
     });
+    if (next === "done") await respawnRecurringTask(t);
     await bump(t.projectId);
     if (t.projectId) revalidatePath(`/jarvis/projects/${t.projectId}`);
   }
@@ -449,7 +455,8 @@ export async function createNote(f: FormData) {
   const body = s(f.get("body"));
   const projectId = opt(f.get("projectId"));
   if (body) {
-    await prisma.jarvisNote.create({ data: { body, projectId } });
+    const n = await prisma.jarvisNote.create({ data: { body, projectId } });
+    void indexRecord("note", n.id, n.body);
     await bump(projectId);
     if (projectId) revalidatePath(`/jarvis/projects/${projectId}`);
   }

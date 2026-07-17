@@ -28,6 +28,24 @@ export function GET() {
         method: "GET",
         params: { title: "title", text: "text", url: "url" },
       },
+      // Long-press the app icon
+      shortcuts: [
+        {
+          name: "New capture",
+          url: "/jarvis?focus=capture",
+          icons: [{ src: "/icon-192.png", sizes: "192x192" }],
+        },
+        {
+          name: "Chat",
+          url: "/jarvis/chat",
+          icons: [{ src: "/icon-192.png", sizes: "192x192" }],
+        },
+        {
+          name: "Record meeting",
+          url: "/jarvis/chat",
+          icons: [{ src: "/icon-192.png", sizes: "192x192" }],
+        },
+      ],
     },
     { headers: { "Content-Type": "application/manifest+json" } },
   );
