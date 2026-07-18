@@ -304,6 +304,11 @@ ${context}`;
       // Documents were already stored; surface those receipts immediately.
       for (const r of savedRecords) send({ type: "saved", record: r });
 
+      // Keep-alive: research/thinking phases can run for minutes with no text
+      // deltas, and Netlify terminates a streamed response that goes silent.
+      // A small ping every few seconds keeps bytes flowing.
+      const keepAlive = setInterval(() => send({ type: "ping" }), 6000);
+
       const onSaved = (record: SavedRecord) => {
         savedRecords.push(record);
         send({ type: "saved", record });
@@ -314,28 +319,40 @@ ${context}`;
       const textParts: string[] = [];
       let usedWriteTool = false;
       let nudged = false;
-      let forceNextPass = false;
       const wantsWrite =
         savedDocs.length > 0 ||
-        /\b(add|save|record|log|capture|store|remember)\b/i.test(message);
+        /\b(add|save|record|log|capture|store|remember|research)\b/i.test(message);
 
       try {
         for (let i = 0; i < MAX_TOOL_LOOPS; i++) {
-          const forceThisPass = forceNextPass;
-          forceNextPass = false;
-
           const messageStream = client.messages.stream({
             model: MODEL,
             max_tokens: 32000,
             system,
             tools: [...jarvisTools, ...serverTools],
             thinking: { type: "adaptive" as const },
-            ...(forceThisPass ? { tool_choice: { type: "any" as const } } : {}),
             messages,
           });
 
           messageStream.on("text", (delta) => {
             send({ type: "delta", text: delta });
+          });
+
+          // Live status so long silent phases read as activity, not a freeze.
+          messageStream.on("streamEvent", (event) => {
+            if (event.type === "content_block_start") {
+              const b = (event as { content_block?: { type?: string; name?: string } }).content_block;
+              if (b?.type === "server_tool_use") {
+                send({
+                  type: "status",
+                  text: b.name === "web_search" ? "Searching the web..." : "Reading a page...",
+                });
+              } else if (b?.type === "tool_use") {
+                send({ type: "status", text: "Updating the knowledge base..." });
+              } else if (b?.type === "thinking") {
+                send({ type: "status", text: "Thinking..." });
+              }
+            }
           });
 
           const response = await messageStream.finalMessage();
@@ -385,17 +402,16 @@ ${context}`;
             continue;
           }
 
-          // Model ended its turn without tools. If it clearly should have
-          // written something and has not, nudge once, forcing exactly one
-          // tool pass; after that the model is free to finish normally.
+          // Model ended its turn having only narrated. Nudge once (plain
+          // message, no forced tool_choice: forcing is incompatible with
+          // thinking + server tools and can kill the turn).
           if (wantsWrite && !usedWriteTool && !nudged) {
             nudged = true;
-            forceNextPass = true;
             messages.push({ role: "assistant", content: response.content });
             messages.push({
               role: "user",
               content:
-                "You described records instead of saving them. Now emit the write tool calls (create_task / log_note / log_decision / update_project / file_document etc.) for everything you just described. Call the tools directly. If nothing actually needs saving, call the most relevant read tool instead and then answer.",
+                "You announced work instead of doing it. Do it NOW in this turn: call the tools (web_search for research, then save_document / log_note / create_task / update_project / file_document for anything worth keeping). Do not reply with another announcement.",
             });
             continue;
           }
@@ -404,13 +420,31 @@ ${context}`;
         }
       } catch (err) {
         console.error("jarvis/chat: model loop failed", err);
+        clearInterval(keepAlive);
+        // Never lose partial work: persist whatever text and receipts exist.
+        const partial = textParts.join("\n\n").trim();
+        if (partial || savedRecords.length) {
+          await prisma.jarvisMessage
+            .create({
+              data: {
+                threadId: resolvedThreadId,
+                role: "assistant",
+                content: partial ? partial + "\n\n[reply interrupted by an error]" : "[reply interrupted by an error]",
+                receipts: savedRecords.length ? (savedRecords as unknown as object) : undefined,
+              },
+            })
+            .catch(() => {});
+        }
         send({
           type: "error",
-          error: "Jarvis hit a problem generating the reply. Please try again.",
+          error: "Jarvis hit a problem generating the reply. Anything already saved is safe. Please try again.",
         });
-        controller.close();
+        try {
+          controller.close();
+        } catch { /* already closed */ }
         return;
       }
+      clearInterval(keepAlive);
 
       let finalText = textParts.join("\n\n").trim();
       if (!finalText) finalText = "(no response)";

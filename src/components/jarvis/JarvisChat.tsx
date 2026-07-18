@@ -273,6 +273,7 @@ export function JarvisChat({
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [processing, setProcessing] = useState(false);
   const [sending, setSending] = useState(false);
+  const [workStatus, setWorkStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Dictation (push-to-talk into the textarea)
@@ -820,6 +821,8 @@ export function JarvisChat({
     let streamedText = "";
     let finalReply = "";
     let gotResponse = false;
+    let gotDone = false;
+    let gotError = false;
 
     const handleEvent = (evt: {
       type: string;
@@ -863,7 +866,12 @@ export function JarvisChat({
           }
           return copy;
         });
+      } else if (evt.type === "status" && evt.text) {
+        setWorkStatus(evt.text);
+      } else if (evt.type === "delta") {
+        setWorkStatus(null);
       } else if (evt.type === "done") {
+        gotDone = true;
         finalReply = evt.reply ?? streamedText;
         setItems((it) => {
           const copy = [...it];
@@ -875,8 +883,10 @@ export function JarvisChat({
           return copy;
         });
       } else if (evt.type === "error") {
+        gotError = true;
         setError(evt.error ?? "Something went wrong.");
       }
+      // "ping" and unknown events: keep-alive only, nothing to do
     };
 
     try {
@@ -921,6 +931,12 @@ export function JarvisChat({
       if (buffer.trim()) {
         try { handleEvent(JSON.parse(buffer.trim())); } catch { /* ignore */ }
       }
+      // Stream closed without a terminal event: the server was cut off.
+      if (!gotDone && !gotError) {
+        setError(
+          "The connection dropped mid-reply. Anything Jarvis saved is safe; reload the page to see it, then try again.",
+        );
+      }
     } catch (e) {
       if ((e as Error)?.name !== "AbortError") {
         // If the request never reached the server, queue text-only messages
@@ -936,6 +952,7 @@ export function JarvisChat({
     } finally {
       sendingRef.current = false;
       setSending(false);
+      setWorkStatus(null);
       if (isVoice && voiceModeRef.current) {
         if (finalReply) {
           setPhase("speaking");
@@ -1063,8 +1080,9 @@ export function JarvisChat({
           </div>
         ) : sending ? (
           <div>
-            <span className="inline-block rounded-2xl bg-zinc-50 px-4 py-2 text-sm text-zinc-400 ring-1 ring-zinc-200">
-              Thinking...
+            <span className="inline-flex items-center gap-2 rounded-2xl bg-zinc-50 px-4 py-2 text-sm text-zinc-400 ring-1 ring-zinc-200">
+              <span className="h-3 w-3 animate-spin rounded-full border-2 border-zinc-300 border-t-indigo-500" />
+              {workStatus ?? "Thinking..."}
             </span>
           </div>
         ) : null}
