@@ -205,6 +205,18 @@ model JarvisDocument {
   @@index([projectId, createdAt])
 }
 
+// Checkpoint of an in-flight chat turn. Long research turns outlive a single
+// Netlify invocation; the route checkpoints here and the client immediately
+// resumes in a fresh invocation. Rows are consumed on resume.
+model JarvisTurnState {
+  id        String   @id @default(cuid())
+  threadId  String
+  state     Json
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
 // Web Push subscription for one browser/device (proactive briefings + nudges).
 model JarvisPushSubscription {
   id        String   @id @default(cuid())

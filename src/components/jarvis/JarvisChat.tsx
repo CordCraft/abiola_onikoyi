@@ -823,6 +823,9 @@ export function JarvisChat({
     let gotResponse = false;
     let gotDone = false;
     let gotError = false;
+    // Long turns checkpoint server-side and hand back a resume token; the
+    // turn continues seamlessly in a fresh request.
+    let pendingResume: string | null = null;
 
     const handleEvent = (evt: {
       type: string;
@@ -831,6 +834,7 @@ export function JarvisChat({
       reply?: string;
       record?: SavedRecord;
       saved?: SavedRecord[];
+      stateId?: string;
       error?: string;
     }) => {
       if (evt.type === "meta") {
@@ -882,6 +886,8 @@ export function JarvisChat({
           }
           return copy;
         });
+      } else if (evt.type === "resume" && evt.stateId) {
+        pendingResume = evt.stateId;
       } else if (evt.type === "error") {
         gotError = true;
         setError(evt.error ?? "Something went wrong.");
@@ -890,47 +896,63 @@ export function JarvisChat({
     };
 
     try {
-      const res = await fetch("/jarvis/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ threadId: threadIdRef.current, message: text, attachments, voice: isVoice }),
-        signal: controller.signal,
-      });
-      gotResponse = true;
+      let resumeToken: string | null = null;
+      let rounds = 0;
 
-      if (!res.ok) {
-        let msg = `Server error (HTTP ${res.status})`;
-        try {
-          const errData = await res.json();
-          msg = errData.error || errData.message || msg;
-        } catch { /* keep default */ }
-        setError(msg);
-        return;
-      }
-      if (!res.body) {
-        setError("No response stream from server.");
-        return;
-      }
+      do {
+        pendingResume = null;
+        const res = await fetch("/jarvis/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            resumeToken
+              ? { threadId: threadIdRef.current, resumeStateId: resumeToken }
+              : { threadId: threadIdRef.current, message: text, attachments, voice: isVoice },
+          ),
+          signal: controller.signal,
+        });
+        gotResponse = true;
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let nl: number;
-        while ((nl = buffer.indexOf("\n")) !== -1) {
-          const line = buffer.slice(0, nl).trim();
-          buffer = buffer.slice(nl + 1);
-          if (line) {
-            try { handleEvent(JSON.parse(line)); } catch { /* partial line */ }
+        if (!res.ok) {
+          let msg = `Server error (HTTP ${res.status})`;
+          try {
+            const errData = await res.json();
+            msg = errData.error || errData.message || msg;
+          } catch { /* keep default */ }
+          setError(msg);
+          return;
+        }
+        if (!res.body) {
+          setError("No response stream from server.");
+          return;
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let nl: number;
+          while ((nl = buffer.indexOf("\n")) !== -1) {
+            const line = buffer.slice(0, nl).trim();
+            buffer = buffer.slice(nl + 1);
+            if (line) {
+              try { handleEvent(JSON.parse(line)); } catch { /* partial line */ }
+            }
           }
         }
-      }
-      if (buffer.trim()) {
-        try { handleEvent(JSON.parse(buffer.trim())); } catch { /* ignore */ }
-      }
+        if (buffer.trim()) {
+          try { handleEvent(JSON.parse(buffer.trim())); } catch { /* ignore */ }
+        }
+
+        // Server checkpointed a long turn: continue it in a fresh request.
+        resumeToken = pendingResume;
+        if (resumeToken) setWorkStatus("Still working...");
+        rounds += 1;
+      } while (resumeToken && !gotError && rounds < 12);
+
       // Stream closed without a terminal event: the server was cut off.
       if (!gotDone && !gotError) {
         setError(
