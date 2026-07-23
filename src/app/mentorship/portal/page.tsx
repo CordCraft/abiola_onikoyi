@@ -14,9 +14,10 @@ import {
   CardTitle,
   EmptyState,
   Pill,
-  ProgressBar,
   Stat,
 } from "@/components/mentorship/ui";
+import { ProgressRing } from "@/components/mentorship/ProgressRing";
+import { WeekStrip } from "@/components/mentorship/WeekStrip";
 
 export default async function PortalOverviewPage() {
   const mentee = await verifyMentee();
@@ -35,6 +36,7 @@ export default async function PortalOverviewPage() {
     unreadFromMentor,
     cohortSize,
     cohortCheckinsThisWeek,
+    myCheckinWeeks,
   ] = await Promise.all([
     prisma.mentorshipTask.count({
       where: { menteeId: mentee.id, status: "todo" },
@@ -68,6 +70,10 @@ export default async function PortalOverviewPage() {
           where: { week },
         })
       : Promise.resolve([]),
+    prisma.mentorshipCheckin.findMany({
+      where: { menteeId: mentee.id },
+      select: { week: true },
+    }),
   ]);
 
   const completedGoals = goals.filter((g) => g.status === "completed").length;
@@ -93,15 +99,31 @@ export default async function PortalOverviewPage() {
         </p>
       </div>
 
-      <Card>
-        <div className="flex items-center justify-between gap-4">
-          <p className="text-sm font-medium text-zinc-300">Programme progress</p>
-          <p className="text-sm font-semibold text-white">{programProgressPct()}%</p>
+      <Card className="overflow-hidden">
+        <div className="grid items-center gap-8 md:grid-cols-[auto_1fr]">
+          <div className="mx-auto">
+            <ProgressRing pct={programProgressPct()} label="of the journey" />
+          </div>
+          <div className="min-w-0">
+            <div className="mb-5 flex items-baseline justify-between gap-4">
+              <p className="text-sm font-semibold uppercase tracking-[0.2em] text-accent">
+                Your journey
+              </p>
+              {inProgram ? (
+                <p className="text-xs text-zinc-500">
+                  Week {week} of {PROGRAM_WEEKS}
+                </p>
+              ) : null}
+            </div>
+            <WeekStrip
+              currentWeek={week}
+              checkedWeeks={myCheckinWeeks.map((c) => c.week)}
+            />
+            <p className="mt-5 text-sm leading-relaxed text-zinc-400">
+              {theme.blurb}
+            </p>
+          </div>
         </div>
-        <div className="mt-3">
-          <ProgressBar pct={programProgressPct()} />
-        </div>
-        <p className="mt-3 text-sm text-zinc-500">{theme.blurb}</p>
       </Card>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

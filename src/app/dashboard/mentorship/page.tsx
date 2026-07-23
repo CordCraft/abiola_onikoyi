@@ -84,19 +84,34 @@ export default async function MentorshipAdminPage() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <div className="rounded-2xl border border-zinc-200 bg-white p-5">
+        <div className="relative overflow-hidden rounded-2xl border border-zinc-200 bg-white p-5">
+          <span className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-teal-400 to-indigo-400" />
           <p className="text-sm text-zinc-500">Check-ins this week</p>
           <p className="mt-1 text-2xl font-semibold text-zinc-900">
             {inProgram ? `${checkinsThisWeek} / ${activeCount}` : "n/a"}
           </p>
         </div>
-        <div className="rounded-2xl border border-zinc-200 bg-white p-5">
+        <div className="relative overflow-hidden rounded-2xl border border-zinc-200 bg-white p-5">
+          <span
+            className={`absolute inset-x-0 top-0 h-1 ${
+              pendingCheckins.length > 0
+                ? "bg-gradient-to-r from-amber-400 to-orange-400"
+                : "bg-gradient-to-r from-teal-400 to-indigo-400"
+            }`}
+          />
           <p className="text-sm text-zinc-500">Check-ins awaiting your reply</p>
           <p className="mt-1 text-2xl font-semibold text-zinc-900">
             {pendingCheckins.length}
           </p>
         </div>
-        <div className="rounded-2xl border border-zinc-200 bg-white p-5">
+        <div className="relative overflow-hidden rounded-2xl border border-zinc-200 bg-white p-5">
+          <span
+            className={`absolute inset-x-0 top-0 h-1 ${
+              totalUnread > 0
+                ? "bg-gradient-to-r from-indigo-400 to-violet-400"
+                : "bg-gradient-to-r from-teal-400 to-indigo-400"
+            }`}
+          />
           <p className="text-sm text-zinc-500">Unread messages</p>
           <p className="mt-1 text-2xl font-semibold text-zinc-900">{totalUnread}</p>
         </div>
@@ -156,20 +171,35 @@ export default async function MentorshipAdminPage() {
                 const unread = unreadByMentee.get(m.id) ?? 0;
                 const lastCheckin = m.checkins[0];
                 return (
-                  <tr key={m.id} className={m.active ? "" : "opacity-50"}>
+                  <tr
+                    key={m.id}
+                    className={`transition-colors hover:bg-zinc-50 ${m.active ? "" : "opacity-50"}`}
+                  >
                     <td className="px-5 py-3">
-                      <Link
-                        href={`/dashboard/mentorship/${m.id}`}
-                        className="font-medium text-zinc-900 underline-offset-2 hover:underline"
-                      >
-                        {m.name}
-                      </Link>
-                      {!m.active ? (
-                        <span className="ml-2 rounded-full bg-zinc-200 px-2 py-0.5 text-xs text-zinc-600">
-                          inactive
+                      <div className="flex items-center gap-3">
+                        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-gradient-to-br from-teal-400 to-indigo-500 text-xs font-bold text-white">
+                          {m.name
+                            .split(" ")
+                            .filter(Boolean)
+                            .slice(0, 2)
+                            .map((p) => p[0]?.toUpperCase())
+                            .join("")}
                         </span>
-                      ) : null}
-                      <p className="text-xs text-zinc-500">{m.email}</p>
+                        <div>
+                          <Link
+                            href={`/dashboard/mentorship/${m.id}`}
+                            className="font-medium text-zinc-900 underline-offset-2 hover:underline"
+                          >
+                            {m.name}
+                          </Link>
+                          {!m.active ? (
+                            <span className="ml-2 rounded-full bg-zinc-200 px-2 py-0.5 text-xs text-zinc-600">
+                              inactive
+                            </span>
+                          ) : null}
+                          <p className="text-xs text-zinc-500">{m.email}</p>
+                        </div>
+                      </div>
                     </td>
                     <td className="hidden px-5 py-3 text-zinc-600 sm:table-cell">
                       {m.focusArea ?? "·"}

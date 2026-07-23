@@ -11,11 +11,7 @@ export function Card({
   className?: string;
 }) {
   return (
-    <div
-      className={`rounded-2xl border border-white/10 bg-white/[0.03] p-6 ${className}`}
-    >
-      {children}
-    </div>
+    <div className={`glass rounded-2xl p-6 ${className}`}>{children}</div>
   );
 }
 
@@ -53,7 +49,7 @@ export function Stat({
   hint?: string;
 }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+    <div className="glass glow-card rounded-2xl p-5">
       <p className="text-sm text-zinc-400">{label}</p>
       <p className="mt-1 text-2xl font-semibold tracking-tight text-white">
         {value}

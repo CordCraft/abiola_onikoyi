@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { verifyMentee } from "@/lib/mentorship/dal";
 import { profile } from "@/content/profile";
+import { PortalNav } from "@/components/mentorship/PortalNav";
 import {
   COHORT_LABEL,
   PROGRAM_WEEKS,
@@ -13,15 +14,6 @@ export const metadata: Metadata = {
   robots: { index: false },
 };
 
-const links = [
-  { label: "Overview", href: "/mentorship/portal" },
-  { label: "Goals & Tasks", href: "/mentorship/portal/goals" },
-  { label: "Check-ins", href: "/mentorship/portal/checkins" },
-  { label: "Messages", href: "/mentorship/portal/messages" },
-  { label: "Sessions", href: "/mentorship/portal/sessions" },
-  { label: "Resources", href: "/mentorship/portal/resources" },
-];
-
 export default async function PortalLayout({
   children,
 }: {
@@ -31,8 +23,19 @@ export default async function PortalLayout({
   const week = programWeek();
 
   return (
-    <div className="min-h-screen">
-      <header className="border-b hairline bg-background/80 backdrop-blur-md">
+    <div className="relative min-h-screen">
+      {/* Ambient art layer behind everything */}
+      <div aria-hidden className="pointer-events-none fixed inset-0 -z-10">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/mentorship/portal-ambient.jpg"
+          alt=""
+          className="ambient-drift h-full w-full object-cover opacity-60"
+        />
+        <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-background/80 to-background" />
+      </div>
+
+      <header className="sticky top-0 z-40 border-b hairline bg-background/60 backdrop-blur-xl">
         <div className="mx-auto max-w-5xl px-6">
           <div className="flex h-16 items-center justify-between">
             <Link href="/mentorship/portal" className="flex items-center gap-2.5">
@@ -64,17 +67,7 @@ export default async function PortalLayout({
               </a>
             </div>
           </div>
-          <nav className="-mb-px flex gap-1 overflow-x-auto pb-2">
-            {links.map((l) => (
-              <Link
-                key={l.href}
-                href={l.href}
-                className="whitespace-nowrap rounded-full px-3.5 py-1.5 text-sm font-medium text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-white"
-              >
-                {l.label}
-              </Link>
-            ))}
-          </nav>
+          <PortalNav />
         </div>
       </header>
 
