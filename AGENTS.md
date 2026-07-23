@@ -14,7 +14,17 @@ Site copy must never contain em dashes (owner requirement).
 
 - `/` public portfolio (Three.js background, GSAP). `/blog` auto-generated weekly.
 - `/dashboard` private admin (projects + blog editor with AI chat via server action).
+- `/mentorship` the mentorship programme (public page + mentee portal + admin). See below.
 - `/jarvis` the second brain. Everything below is about it.
+
+## Mentorship programme
+
+Three-month cohort mentorship for NSChE UNILAG chemical engineering students (Cohort 1 kicked off 25 Jul 2026; config in `src/lib/mentorship/constants.ts`).
+
+- **Public**: `/mentorship` programme page. **Mentee portal**: `/mentorship/portal` (overview, goals+tasks, weekly check-ins, 1:1 messages, sessions, resources). **Admin**: `/dashboard/mentorship` (mentee roster + access codes, per-mentee detail with check-in replies and message thread, `/programme` for sessions/resources/announcements).
+- **Auth**: mentees sign in at `/mentorship/login` with email + access code (generated per mentee, stored plaintext, regenerable). Separate jose cookie `mentee_session` (payload `{menteeId, name, expiresAt}`, signed with the same `SESSION_SECRET`; `decryptMenteeSession` rejects admin tokens and vice versa). Optimistic redirects live in `src/proxy.ts`; the authoritative check is `verifyMentee()` in `src/lib/mentorship/dal.ts`, which redirects stale sessions through the `/mentorship/logout` route handler (cookies cannot be mutated during page render).
+- **Tables**: created lazily by `ensureMentorshipTables()` (`src/lib/mentorship/setup.ts`), idempotent raw DDL run from the admin pages and mentee login, because deploys never run `prisma db push`. Keep the DDL in sync with the `Mentorship*` Prisma models.
+- Session times are entered and displayed in West Africa Time (`formatDateTime` pins `Africa/Lagos`).
 
 ## Jarvis architecture
 

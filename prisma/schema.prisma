@@ -36,29 +36,29 @@ model Update {
 }
 
 model Post {
-  id          String    @id @default(cuid())
-  slug        String    @unique
-  title       String
-  excerpt     String
-  body        String // markdown
+  id              String    @id @default(cuid())
+  slug            String    @unique
+  title           String
+  excerpt         String
+  body            String // markdown
   // One of the "What I bring" themes, e.g. "Reservoir & Production"
-  category    String
+  category        String
   // "news" | "insight"
-  kind        String    @default("insight")
+  kind            String    @default("insight")
   // SEO
   metaDescription String?
   keywords        String? // comma-separated
   // Article image (sourced from Openverse)
-  imageUrl       String?
-  imageAlt       String?
-  imageCredit    String?
-  imageCreditUrl String?
-  sourceUrl   String?
-  sourceName  String?
-  published   Boolean   @default(false)
-  publishedAt DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  imageUrl        String?
+  imageAlt        String?
+  imageCredit     String?
+  imageCreditUrl  String?
+  sourceUrl       String?
+  sourceName      String?
+  published       Boolean   @default(false)
+  publishedAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   @@index([published, publishedAt])
 }
@@ -239,4 +239,138 @@ model JarvisProposal {
   appliedAt DateTime?
 
   @@index([status, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Mentorship programme (public /mentorship + mentee portal + admin area)
+// Tables are created in production by ensureMentorshipTables() in
+// src/lib/mentorship/setup.ts (idempotent raw DDL), since deploys never run
+// `prisma db push` automatically. Keep that DDL in sync with these models.
+// ---------------------------------------------------------------------------
+
+model MentorshipMentee {
+  id          String              @id @default(cuid())
+  name        String
+  email       String              @unique // stored lowercase
+  accessCode  String              @unique // invite code the mentor shares privately
+  headline    String? // e.g. "500-level Chemical Engineering, UNILAG"
+  focusArea   String? // e.g. "Process safety and tech"
+  cohort      String              @default("2026-C1")
+  active      Boolean             @default(true)
+  lastLoginAt DateTime?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  goals       MentorshipGoal[]
+  tasks       MentorshipTask[]
+  checkins    MentorshipCheckin[]
+  messages    MentorshipMessage[]
+  sessions    MentorshipSession[]
+}
+
+model MentorshipGoal {
+  id          String           @id @default(cuid())
+  mentee      MentorshipMentee @relation(fields: [menteeId], references: [id], onDelete: Cascade)
+  menteeId    String
+  title       String
+  detail      String?
+  // "active" | "completed" | "dropped" (validated in app code)
+  status      String           @default("active")
+  // Programme month the goal targets: 1, 2 or 3
+  targetMonth Int?
+  completedAt DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  tasks       MentorshipTask[]
+
+  @@index([menteeId, status])
+}
+
+model MentorshipTask {
+  id          String           @id @default(cuid())
+  mentee      MentorshipMentee @relation(fields: [menteeId], references: [id], onDelete: Cascade)
+  menteeId    String
+  goal        MentorshipGoal?  @relation(fields: [goalId], references: [id], onDelete: SetNull)
+  goalId      String?
+  title       String
+  notes       String?
+  // "mentor" | "mentee": who created the task
+  createdBy   String           @default("mentor")
+  dueDate     DateTime?
+  // "todo" | "done"
+  status      String           @default("todo")
+  completedAt DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([menteeId, status])
+}
+
+model MentorshipCheckin {
+  id          String           @id @default(cuid())
+  mentee      MentorshipMentee @relation(fields: [menteeId], references: [id], onDelete: Cascade)
+  menteeId    String
+  // Programme week number (1..13)
+  week        Int
+  wins        String
+  blockers    String?
+  nextFocus   String?
+  // Self-rated confidence for the week, 1..5
+  confidence  Int?
+  mentorReply String?
+  repliedAt   DateTime?
+  createdAt   DateTime         @default(now())
+
+  @@index([menteeId, week])
+  @@index([createdAt])
+}
+
+model MentorshipMessage {
+  id        String           @id @default(cuid())
+  mentee    MentorshipMentee @relation(fields: [menteeId], references: [id], onDelete: Cascade)
+  menteeId  String
+  // "mentor" | "mentee"
+  sender    String
+  body      String
+  createdAt DateTime         @default(now())
+  readAt    DateTime?
+
+  @@index([menteeId, createdAt])
+}
+
+model MentorshipSession {
+  id          String            @id @default(cuid())
+  title       String
+  // "group" | "one_on_one"
+  kind        String            @default("group")
+  // Null for group sessions (whole cohort)
+  mentee      MentorshipMentee? @relation(fields: [menteeId], references: [id], onDelete: Cascade)
+  menteeId    String?
+  scheduledAt DateTime
+  link        String? // Google Meet or similar
+  agenda      String?
+  notes       String? // mentor's post-session notes, visible to attendees
+  // "upcoming" | "completed" | "cancelled"
+  status      String            @default("upcoming")
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@index([scheduledAt])
+}
+
+model MentorshipResource {
+  id        String   @id @default(cuid())
+  title     String
+  url       String?
+  note      String?
+  // "reading" | "video" | "course" | "tool" | "other"
+  category  String   @default("reading")
+  pinned    Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model MentorshipAnnouncement {
+  id        String   @id @default(cuid())
+  title     String
+  body      String
+  createdAt DateTime @default(now())
 }

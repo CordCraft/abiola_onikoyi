@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { decryptSession } from "@/lib/jwt";
+import { decryptMenteeSession } from "@/lib/mentorship/jwt";
 
 // Next.js 16 renamed `middleware` to `proxy` (Node.js runtime). This performs an
 // optimistic auth check: it reads the signed session cookie and redirects
@@ -19,6 +20,24 @@ export async function proxy(req: NextRequest) {
     path === "/jarvis" ||
     path.startsWith("/jarvis/");
   const isLogin = path === "/login";
+
+  // Mentee portal: a separate cookie and JWT shape from the admin session.
+  // The authoritative check (mentee exists and is active) happens in
+  // verifyMentee(); this is only the optimistic redirect.
+  const isMenteeArea =
+    path === "/mentorship/portal" || path.startsWith("/mentorship/portal/");
+  const isMenteeLogin = path === "/mentorship/login";
+  if (isMenteeArea || isMenteeLogin) {
+    const menteeToken = req.cookies.get("mentee_session")?.value;
+    const menteeSession = await decryptMenteeSession(menteeToken);
+    if (isMenteeArea && !menteeSession) {
+      return NextResponse.redirect(new URL("/mentorship/login", req.nextUrl));
+    }
+    if (isMenteeLogin && menteeSession) {
+      return NextResponse.redirect(new URL("/mentorship/portal", req.nextUrl));
+    }
+    return NextResponse.next();
+  }
 
   const token = req.cookies.get("session")?.value;
   const session = await decryptSession(token);
@@ -48,5 +67,8 @@ export const config = {
     "/jarvis",
     "/jarvis/:path*",
     "/login",
+    "/mentorship/portal",
+    "/mentorship/portal/:path*",
+    "/mentorship/login",
   ],
 };
