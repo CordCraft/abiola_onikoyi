@@ -130,6 +130,20 @@ export async function regenerateAccessCode(formData: FormData): Promise<void> {
   revalidateMentee(id);
 }
 
+// Recovery: clears the password so the mentee can register again on the Join
+// page with the same email. Their profile, goals, and history are preserved.
+export async function resetMenteePassword(formData: FormData): Promise<void> {
+  await verifySession();
+  const id = String(formData.get("id") ?? "");
+  if (!id) return;
+
+  await prisma.mentorshipMentee.update({
+    where: { id },
+    data: { passwordHash: null },
+  });
+  revalidateMentee(id);
+}
+
 export async function adminAddGoal(
   _prev: AdminFormResult,
   formData: FormData,

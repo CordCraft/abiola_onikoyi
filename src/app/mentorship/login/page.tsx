@@ -6,6 +6,9 @@ import { menteeLogin, type MenteeLoginState } from "./actions";
 import { profile } from "@/content/profile";
 import { COHORT_LABEL } from "@/lib/mentorship/constants";
 
+const inputClass =
+  "mt-1.5 w-full rounded-lg border border-white/10 bg-white/[0.05] px-3 py-2 text-white placeholder-zinc-500 outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/30";
+
 export default function MenteeLoginPage() {
   const [state, action, pending] = useActionState<MenteeLoginState, FormData>(
     menteeLogin,
@@ -46,19 +49,14 @@ export default function MenteeLoginPage() {
             <p className="mt-8 text-xs font-semibold uppercase tracking-[0.25em] gradient-text">
               {COHORT_LABEL}
             </p>
-            <h1 className="mt-2 text-2xl font-semibold text-white">
-              Welcome back
-            </h1>
+            <h1 className="mt-2 text-2xl font-semibold text-white">Welcome back</h1>
             <p className="mt-1 text-sm text-zinc-400">
-              Use the access code your mentor shared with you.
+              Sign in with your email and password.
             </p>
 
-            <form action={action} className="mt-7 space-y-4">
+            <form action={action} className="mt-6 space-y-4">
               <div>
-                <label
-                  htmlFor="email"
-                  className="block text-sm font-medium text-zinc-300"
-                >
+                <label htmlFor="email" className="block text-sm font-medium text-zinc-300">
                   Email
                 </label>
                 <input
@@ -68,27 +66,29 @@ export default function MenteeLoginPage() {
                   autoComplete="email"
                   required
                   placeholder="you@example.com"
-                  className="mt-1.5 w-full rounded-lg border border-white/10 bg-white/[0.05] px-3 py-2 text-white placeholder-zinc-500 outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/30"
+                  className={inputClass}
                 />
               </div>
 
               <div>
                 <label
-                  htmlFor="code"
+                  htmlFor="password"
                   className="block text-sm font-medium text-zinc-300"
                 >
-                  Access code
+                  Password
                 </label>
                 <input
-                  id="code"
-                  name="code"
-                  type="text"
-                  autoComplete="off"
-                  autoCapitalize="characters"
+                  id="password"
+                  name="password"
+                  type="password"
+                  autoComplete="current-password"
                   required
-                  placeholder="ABCD-EFGH"
-                  className="mt-1.5 w-full rounded-lg border border-white/10 bg-white/[0.05] px-3 py-2 font-mono uppercase tracking-widest text-white placeholder-zinc-600 outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/30"
+                  className={inputClass}
                 />
+                <p className="mt-1.5 text-xs text-zinc-500">
+                  Forgot it? Ask your mentor for a reset, then register again on
+                  the Join page. Your profile is kept.
+                </p>
               </div>
 
               {state?.error ? (
@@ -109,9 +109,22 @@ export default function MenteeLoginPage() {
               </button>
             </form>
 
+            <div className="mt-6 rounded-xl border border-accent/20 bg-accent/[0.06] p-4">
+              <p className="text-sm font-medium text-white">New mentee?</p>
+              <p className="mt-0.5 text-xs text-zinc-400">
+                Create your account and build your profile in one go.
+              </p>
+              <Link
+                href="/mentorship/join"
+                className="mt-3 inline-block rounded-full border border-accent/40 px-4 py-1.5 text-sm font-semibold text-accent transition-colors hover:bg-accent/10"
+              >
+                Join the programme →
+              </Link>
+            </div>
+
             <Link
               href="/mentorship"
-              className="mt-8 block text-sm text-zinc-400 transition-colors hover:text-white"
+              className="mt-6 block text-sm text-zinc-400 transition-colors hover:text-white"
             >
               ← About the programme
             </Link>

@@ -177,14 +177,23 @@ export default async function MentorshipAdminPage() {
                   >
                     <td className="px-5 py-3">
                       <div className="flex items-center gap-3">
-                        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-gradient-to-br from-teal-400 to-indigo-500 text-xs font-bold text-white">
-                          {m.name
-                            .split(" ")
-                            .filter(Boolean)
-                            .slice(0, 2)
-                            .map((p) => p[0]?.toUpperCase())
-                            .join("")}
-                        </span>
+                        {m.photoData ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={m.photoData}
+                            alt=""
+                            className="h-9 w-9 shrink-0 rounded-full border border-zinc-200 object-cover"
+                          />
+                        ) : (
+                          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-gradient-to-br from-teal-400 to-indigo-500 text-xs font-bold text-white">
+                            {m.name
+                              .split(" ")
+                              .filter(Boolean)
+                              .slice(0, 2)
+                              .map((p) => p[0]?.toUpperCase())
+                              .join("")}
+                          </span>
+                        )}
                         <div>
                           <Link
                             href={`/dashboard/mentorship/${m.id}`}

@@ -93,8 +93,14 @@ export default function MentorshipPage() {
               </p>
               <div className="mt-9 flex flex-wrap items-center gap-4">
                 <Link
-                  href="/mentorship/login"
+                  href="/mentorship/join"
                   className="rounded-full bg-gradient-to-r from-accent to-accent-2 px-7 py-3 text-sm font-semibold text-zinc-950 shadow-[0_8px_30px_-6px] shadow-accent/50 transition-all hover:shadow-[0_12px_40px_-6px] hover:shadow-accent/60 hover:brightness-110"
+                >
+                  Join the programme
+                </Link>
+                <Link
+                  href="/mentorship/login"
+                  className="rounded-full border border-white/20 px-7 py-3 text-sm font-semibold text-white backdrop-blur transition-colors hover:bg-white/10"
                 >
                   Mentee sign in
                 </Link>

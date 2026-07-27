@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { verifyMentee } from "@/lib/mentorship/dal";
 import { profile } from "@/content/profile";
@@ -20,6 +21,11 @@ export default async function PortalLayout({
   children: React.ReactNode;
 }) {
   const mentee = await verifyMentee();
+  // Profile-first: signup always sets onboardedAt, so a session without it is
+  // a stale account state. Clear the session rather than risking a loop.
+  if (!mentee.onboardedAt) {
+    redirect("/mentorship/logout");
+  }
   const week = programWeek();
 
   return (
@@ -58,7 +64,20 @@ export default async function PortalLayout({
                   ? ` · Week ${week} of ${PROGRAM_WEEKS}`
                   : null}
               </span>
-              <span className="font-medium text-zinc-300">{mentee.name.split(" ")[0]}</span>
+              <Link
+                href="/mentorship/portal/profile"
+                className="flex items-center gap-2 font-medium text-zinc-300 transition-colors hover:text-white"
+              >
+                {mentee.photoData ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={mentee.photoData}
+                    alt=""
+                    className="h-7 w-7 rounded-full border border-white/20 object-cover"
+                  />
+                ) : null}
+                {mentee.name.split(" ")[0]}
+              </Link>
               <a
                 href="/mentorship/logout"
                 className="rounded-full border border-white/15 px-3 py-1 font-medium text-zinc-300 transition-colors hover:bg-white/10"

@@ -131,6 +131,37 @@ const DDL: string[] = [
   )`,
 ];
 
+// Columns added after the initial launch. CREATE TABLE IF NOT EXISTS skips
+// existing tables, so later additions must arrive as ALTERs. Postgres supports
+// ADD COLUMN IF NOT EXISTS; each statement is tried independently and failures
+// are swallowed (local SQLite dev gets its columns from `prisma db push`).
+const MENTEE_PROFILE_COLUMNS = [
+  "passwordHash",
+  "onboardedAt",
+  "photoData",
+  "phone",
+  "linkedin",
+  "level",
+  "gradYear",
+  "interests",
+  "backgroundStory",
+  "skills",
+  "dreamRoles",
+  "aspirations",
+  "longTermVision",
+  "expectations",
+  "challenges",
+  "availability",
+  "commsPref",
+];
+
+const ALTERS: string[] = MENTEE_PROFILE_COLUMNS.map(
+  (col) =>
+    `ALTER TABLE "MentorshipMentee" ADD COLUMN IF NOT EXISTS "${col}" ${
+      col === "onboardedAt" ? "TIMESTAMP(3)" : "TEXT"
+    }`,
+);
+
 // One run per serverless instance is enough; IF NOT EXISTS keeps reruns cheap
 // and concurrent cold starts safe.
 let ensured: Promise<void> | null = null;
@@ -140,6 +171,13 @@ export function ensureMentorshipTables(): Promise<void> {
     ensured = (async () => {
       for (const stmt of DDL) {
         await prisma.$executeRawUnsafe(stmt);
+      }
+      for (const stmt of ALTERS) {
+        try {
+          await prisma.$executeRawUnsafe(stmt);
+        } catch {
+          // Non-Postgres local dev: columns come from `prisma db push`.
+        }
       }
     })().catch((err) => {
       // Allow a retry on the next request rather than caching the failure.

@@ -1,15 +1,15 @@
 "use server";
 
+import bcrypt from "bcryptjs";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { createMenteeSession } from "@/lib/mentorship/session";
-import { normalizeAccessCode } from "@/lib/mentorship/codes";
 import { ensureMentorshipTables } from "@/lib/mentorship/setup";
 
 export type MenteeLoginState = { error?: string } | undefined;
 
 // Best-effort in-memory throttle, same trade-off as the admin login: resets
-// per serverless instance, adequate for a six-person cohort behind HTTPS.
+// per serverless instance, adequate for a small cohort behind HTTPS.
 const attempts = new Map<string, { count: number; first: number }>();
 const WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_ATTEMPTS = 10;
@@ -25,6 +25,9 @@ function rateLimited(key: string): boolean {
   return rec.count > MAX_ATTEMPTS;
 }
 
+// Everyday sign-in: email + password. First-time mentees register at
+// /mentorship/join. Recovery: the mentor resets the password from the admin
+// area, after which the mentee registers again (profile is preserved).
 export async function menteeLogin(
   _prev: MenteeLoginState,
   formData: FormData,
@@ -32,24 +35,30 @@ export async function menteeLogin(
   const email = String(formData.get("email") ?? "")
     .trim()
     .toLowerCase();
-  const code = normalizeAccessCode(String(formData.get("code") ?? ""));
+  const password = String(formData.get("password") ?? "");
 
-  if (!email || !code) {
-    return { error: "Enter both your email and your access code." };
+  if (!email || !password) {
+    return { error: "Enter both your email and your password." };
   }
   if (rateLimited(email)) {
     return { error: "Too many attempts. Please wait a few minutes and try again." };
   }
 
   await ensureMentorshipTables();
-
   const mentee = await prisma.mentorshipMentee.findUnique({ where: { email } });
 
-  if (!mentee || !mentee.active || mentee.accessCode !== code) {
+  if (!mentee || !mentee.active) {
+    return { error: "That email and password combination was not recognized." };
+  }
+  if (!mentee.passwordHash) {
     return {
       error:
-        "That email and access code combination was not recognized. Codes look like ABCD-EFGH; ask your mentor if you have misplaced yours.",
+        "This account has no password yet. Use the Join page to finish your registration.",
     };
+  }
+  const ok = await bcrypt.compare(password, mentee.passwordHash);
+  if (!ok) {
+    return { error: "That email and password combination was not recognized." };
   }
 
   await prisma.mentorshipMentee.update({

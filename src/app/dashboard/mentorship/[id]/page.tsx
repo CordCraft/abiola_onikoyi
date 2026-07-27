@@ -16,7 +16,7 @@ import {
   adminDeleteTask,
   adminSetGoalStatus,
   adminToggleTask,
-  regenerateAccessCode,
+  resetMenteePassword,
   setMenteeActive,
 } from "@/app/dashboard/mentorship/actions";
 
@@ -59,18 +59,26 @@ export default async function MenteeDetailPage({
   const inviteText = [
     `Hello ${mentee.name.split(" ")[0]},`,
     "",
-    "Here is your access to the mentorship portal:",
-    `Portal: https://abiolaonikoyi.com/mentorship/login`,
-    `Email: ${mentee.email}`,
-    `Access code: ${mentee.accessCode}`,
+    "Welcome to the mentorship programme. Register here:",
+    `https://abiolaonikoyi.com/mentorship/join`,
+    `Use this email: ${mentee.email}`,
     "",
-    "Sign in, review your goals, and do your first weekly check-in. See you there.",
+    "You will choose your own password, upload a photo (have a nice headshot ready), and share your story. The portal drafts your starter goals from it, and we refine them together. See you inside.",
   ].join("\n");
 
   return (
     <div className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
+        <div className="flex items-start gap-4">
+          {mentee.photoData ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={mentee.photoData}
+              alt={mentee.name}
+              className="mt-1 h-20 w-20 rounded-2xl border border-zinc-200 object-cover shadow-sm"
+            />
+          ) : null}
+          <div>
           <Link
             href="/dashboard/mentorship"
             className="text-sm text-zinc-500 hover:text-zinc-900"
@@ -88,7 +96,12 @@ export default async function MenteeDetailPage({
             {mentee.lastLoginAt
               ? `Last signed in ${formatDateTime(mentee.lastLoginAt)}`
               : "Has not signed in yet"}
+            {" · "}
+            {mentee.onboardedAt
+              ? `Onboarded ${formatDate(mentee.onboardedAt)}`
+              : "Not onboarded yet"}
           </p>
+          </div>
         </div>
         <form action={setMenteeActive}>
           <input type="hidden" name="id" value={mentee.id} />
@@ -102,25 +115,117 @@ export default async function MenteeDetailPage({
       <div className="rounded-2xl border border-zinc-200 bg-white p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-sm font-semibold text-zinc-900">Access code</h2>
-            <p className="mt-1 font-mono text-lg tracking-widest text-zinc-900">
-              {mentee.accessCode}
+            <h2 className="text-sm font-semibold text-zinc-900">
+              Invite & account
+            </h2>
+            <p className="mt-1 text-sm text-zinc-500">
+              {mentee.passwordHash
+                ? "Registered with a password."
+                : "Not registered yet. Share the invite below."}
             </p>
           </div>
           <div className="flex items-center gap-2">
             <CopyButton text={inviteText} label="Copy invite message" />
-            <form action={regenerateAccessCode}>
-              <input type="hidden" name="id" value={mentee.id} />
-              <button type="submit" className={smallButton}>
-                Regenerate
-              </button>
-            </form>
+            {mentee.passwordHash ? (
+              <form action={resetMenteePassword}>
+                <input type="hidden" name="id" value={mentee.id} />
+                <button type="submit" className={smallButton}>
+                  Reset password
+                </button>
+              </form>
+            ) : null}
           </div>
         </div>
         <pre className="mt-4 overflow-x-auto whitespace-pre-wrap rounded-xl bg-zinc-50 p-4 text-xs leading-relaxed text-zinc-600">
           {inviteText}
         </pre>
+        {mentee.passwordHash ? (
+          <p className="mt-2 text-xs text-zinc-400">
+            Reset password clears their password so they can register again at
+            the Join page with the same email. Profile, goals, and history are
+            kept.
+          </p>
+        ) : null}
       </div>
+
+      {mentee.onboardedAt ? (
+        <section className="rounded-2xl border border-zinc-200 bg-white p-6">
+          <h2 className="text-lg font-semibold text-zinc-900">Mentee dossier</h2>
+          <p className="mt-1 text-xs text-zinc-400">
+            Self-reported at onboarding. Use it to shape goals and open doors.
+          </p>
+          <dl className="mt-4 grid gap-x-8 gap-y-4 text-sm sm:grid-cols-2">
+            {(
+              [
+                ["Phone / WhatsApp", mentee.phone],
+                [
+                  "LinkedIn",
+                  mentee.linkedin ? (
+                    <a
+                      key="li"
+                      href={mentee.linkedin}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-indigo-600 underline-offset-2 hover:underline"
+                    >
+                      {mentee.linkedin.replace(/^https?:\/\//, "")}
+                    </a>
+                  ) : null,
+                ],
+                ["Level", mentee.level],
+                ["Expected graduation", mentee.gradYear],
+                ["Interests", mentee.interests],
+                ["Skills and tools", mentee.skills],
+                ["Dream roles", mentee.dreamRoles],
+                ["Availability", mentee.availability],
+                [
+                  "Preferred channel",
+                  mentee.commsPref === "whatsapp"
+                    ? "WhatsApp"
+                    : mentee.commsPref === "email"
+                      ? "Email"
+                      : mentee.commsPref === "portal"
+                        ? "Portal messages"
+                        : mentee.commsPref === "call"
+                          ? "Phone call"
+                          : null,
+                ],
+              ] as [string, React.ReactNode][]
+            )
+              .filter(([, v]) => v)
+              .map(([k, v]) => (
+                <div key={k}>
+                  <dt className="font-medium text-zinc-500">{k}</dt>
+                  <dd className="mt-0.5 text-zinc-800">{v}</dd>
+                </div>
+              ))}
+          </dl>
+          {(
+            [
+              ["Their story", mentee.backgroundStory],
+              ["2-year vision", mentee.aspirations],
+              ["5-year vision", mentee.longTermVision],
+              ["Wants from the mentorship", mentee.expectations],
+              ["Biggest challenge", mentee.challenges],
+            ] as [string, string | null][]
+          )
+            .filter(([, v]) => v)
+            .map(([k, v]) => (
+              <div key={k} className="mt-4 rounded-xl border border-zinc-100 bg-zinc-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                  {k}
+                </p>
+                <p className="mt-1 whitespace-pre-line text-sm text-zinc-700">{v}</p>
+              </div>
+            ))}
+        </section>
+      ) : (
+        <p className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800">
+          This mentee has not completed onboarding yet. Once they activate with
+          their access code, their full profile (photo, contact, aspirations,
+          expectations) appears here.
+        </p>
+      )}
 
       <details className="rounded-2xl border border-zinc-200 bg-white p-6">
         <summary className="cursor-pointer text-sm font-semibold text-zinc-900">

@@ -26,14 +26,15 @@ export async function proxy(req: NextRequest) {
   // verifyMentee(); this is only the optimistic redirect.
   const isMenteeArea =
     path === "/mentorship/portal" || path.startsWith("/mentorship/portal/");
-  const isMenteeLogin = path === "/mentorship/login";
-  if (isMenteeArea || isMenteeLogin) {
+  // Login and join are for signed-out visitors; signed-in mentees skip ahead.
+  const isMenteeEntry = path === "/mentorship/login" || path === "/mentorship/join";
+  if (isMenteeArea || isMenteeEntry) {
     const menteeToken = req.cookies.get("mentee_session")?.value;
     const menteeSession = await decryptMenteeSession(menteeToken);
     if (isMenteeArea && !menteeSession) {
       return NextResponse.redirect(new URL("/mentorship/login", req.nextUrl));
     }
-    if (isMenteeLogin && menteeSession) {
+    if (isMenteeEntry && menteeSession) {
       return NextResponse.redirect(new URL("/mentorship/portal", req.nextUrl));
     }
     return NextResponse.next();
@@ -69,6 +70,7 @@ export const config = {
     "/login",
     "/mentorship/portal",
     "/mentorship/portal/:path*",
+    "/mentorship/join",
     "/mentorship/login",
   ],
 };

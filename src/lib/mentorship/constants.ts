@@ -62,6 +62,36 @@ export const RESOURCE_CATEGORY_LABELS: Record<ResourceCategory, string> = {
   other: "Other",
 };
 
+// Profile vocabulary used by onboarding and the profile page.
+export const INTEREST_OPTIONS = [
+  "Process Safety",
+  "Reservoir Engineering",
+  "Production Operations",
+  "Clean Energy & Transition",
+  "Data & Digital",
+  "Project Management",
+  "Research & Academia",
+  "Entrepreneurship",
+  "Commercial & Trading",
+  "HSE & Sustainability",
+] as const;
+
+export const LEVEL_OPTIONS = [
+  "100 Level",
+  "200 Level",
+  "300 Level",
+  "400 Level",
+  "500 Level",
+  "Recent graduate",
+] as const;
+
+export const COMMS_OPTIONS = [
+  { value: "whatsapp", label: "WhatsApp" },
+  { value: "email", label: "Email" },
+  { value: "portal", label: "Portal messages" },
+  { value: "call", label: "Phone call" },
+] as const;
+
 // Programme week for a given date: 0 before kickoff, 1..PROGRAM_WEEKS during,
 // PROGRAM_WEEKS + 1 once the cohort has wrapped.
 export function programWeek(now: Date = new Date()): number {

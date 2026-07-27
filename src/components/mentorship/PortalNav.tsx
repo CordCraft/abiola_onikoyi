@@ -10,6 +10,7 @@ const links = [
   { label: "Messages", href: "/mentorship/portal/messages" },
   { label: "Sessions", href: "/mentorship/portal/sessions" },
   { label: "Resources", href: "/mentorship/portal/resources" },
+  { label: "Profile", href: "/mentorship/portal/profile" },
 ];
 
 export function PortalNav() {

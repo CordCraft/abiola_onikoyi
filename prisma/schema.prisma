@@ -249,22 +249,43 @@ model JarvisProposal {
 // ---------------------------------------------------------------------------
 
 model MentorshipMentee {
-  id          String              @id @default(cuid())
+  id          String    @id @default(cuid())
   name        String
-  email       String              @unique // stored lowercase
-  accessCode  String              @unique // invite code the mentor shares privately
+  email       String    @unique // stored lowercase
+  accessCode  String    @unique // invite code the mentor shares privately
   headline    String? // e.g. "500-level Chemical Engineering, UNILAG"
   focusArea   String? // e.g. "Process safety and tech"
-  cohort      String              @default("2026-C1")
-  active      Boolean             @default(true)
+  cohort      String    @default("2026-C1")
+  active      Boolean   @default(true)
   lastLoginAt DateTime?
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
-  goals       MentorshipGoal[]
-  tasks       MentorshipTask[]
-  checkins    MentorshipCheckin[]
-  messages    MentorshipMessage[]
-  sessions    MentorshipSession[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Account + onboarding profile (collected by the first-login wizard).
+  // passwordHash is bcrypt; photoData is a browser-compressed jpeg data URL.
+  passwordHash    String?
+  onboardedAt     DateTime?
+  photoData       String?
+  phone           String? // WhatsApp preferred
+  linkedin        String?
+  level           String? // e.g. "500 Level"
+  gradYear        String? // expected graduation year
+  interests       String? // comma-separated focus areas
+  backgroundStory String? // their story in their own words
+  skills          String? // technical skills, software, tools
+  dreamRoles      String? // target roles or companies
+  aspirations     String? // 2-year vision
+  longTermVision  String? // 5-year vision
+  expectations    String? // what they want from the mentorship
+  challenges      String? // biggest current challenge
+  availability    String? // preferred meeting windows
+  commsPref       String? // whatsapp | email | portal | call
+
+  goals    MentorshipGoal[]
+  tasks    MentorshipTask[]
+  checkins MentorshipCheckin[]
+  messages MentorshipMessage[]
+  sessions MentorshipSession[]
 }
 
 model MentorshipGoal {
