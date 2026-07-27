@@ -16,6 +16,7 @@ import {
   adminDeleteTask,
   adminSetGoalStatus,
   adminToggleTask,
+  deleteMentee,
   resetMenteePassword,
   setMenteeActive,
 } from "@/app/dashboard/mentorship/actions";
@@ -472,6 +473,27 @@ export default async function MenteeDetailPage({
           <AdminMessageForm menteeId={mentee.id} />
         </div>
       </section>
+
+      <details className="rounded-2xl border border-red-200 bg-red-50/50 p-6">
+        <summary className="cursor-pointer text-sm font-semibold text-red-800">
+          Danger zone
+        </summary>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-red-700">
+            Permanently delete this mentee and all of their goals, tasks,
+            check-ins, and messages. Use deactivate instead for real mentees.
+          </p>
+          <form action={deleteMentee}>
+            <input type="hidden" name="id" value={mentee.id} />
+            <button
+              type="submit"
+              className="rounded-full bg-red-600 px-4 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-red-700"
+            >
+              Delete mentee permanently
+            </button>
+          </form>
+        </div>
+      </details>
 
       {mentee.sessions.length > 0 ? (
         <section className="rounded-2xl border border-zinc-200 bg-white p-6">

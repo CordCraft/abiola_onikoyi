@@ -130,6 +130,19 @@ export async function regenerateAccessCode(formData: FormData): Promise<void> {
   revalidateMentee(id);
 }
 
+// Permanently removes a mentee and, via cascade, their goals, tasks,
+// check-ins, messages, and one-on-one sessions. Meant for test accounts and
+// mistakes; deactivation is the right tool for real mentees.
+export async function deleteMentee(formData: FormData): Promise<void> {
+  await verifySession();
+  const id = String(formData.get("id") ?? "");
+  if (!id) return;
+
+  await prisma.mentorshipMentee.delete({ where: { id } }).catch(() => null);
+  revalidatePath("/dashboard/mentorship");
+  redirect("/dashboard/mentorship");
+}
+
 // Recovery: clears the password so the mentee can register again on the Join
 // page with the same email. Their profile, goals, and history are preserved.
 export async function resetMenteePassword(formData: FormData): Promise<void> {

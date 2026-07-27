@@ -155,12 +155,24 @@ const MENTEE_PROFILE_COLUMNS = [
   "commsPref",
 ];
 
-const ALTERS: string[] = MENTEE_PROFILE_COLUMNS.map(
-  (col) =>
-    `ALTER TABLE "MentorshipMentee" ADD COLUMN IF NOT EXISTS "${col}" ${
-      col === "onboardedAt" ? "TIMESTAMP(3)" : "TEXT"
-    }`,
-);
+// Applies only the ALTERs that are actually needed (Postgres). Returns true
+// when any column was added. Throws on SQLite (no information_schema), which
+// the caller treats as "columns come from prisma db push".
+async function applyColumnMigrations(): Promise<boolean> {
+  const rows = await prisma.$queryRawUnsafe<{ column_name: string }[]>(
+    `SELECT column_name FROM information_schema.columns WHERE table_name = 'MentorshipMentee'`,
+  );
+  const existing = new Set(rows.map((r) => r.column_name));
+  const missing = MENTEE_PROFILE_COLUMNS.filter((c) => !existing.has(c));
+  for (const col of missing) {
+    await prisma.$executeRawUnsafe(
+      `ALTER TABLE "MentorshipMentee" ADD COLUMN IF NOT EXISTS "${col}" ${
+        col === "onboardedAt" ? "TIMESTAMP(3)" : "TEXT"
+      }`,
+    );
+  }
+  return missing.length > 0;
+}
 
 // One run per serverless instance is enough; IF NOT EXISTS keeps reruns cheap
 // and concurrent cold starts safe.
@@ -172,12 +184,17 @@ export function ensureMentorshipTables(): Promise<void> {
       for (const stmt of DDL) {
         await prisma.$executeRawUnsafe(stmt);
       }
-      for (const stmt of ALTERS) {
-        try {
-          await prisma.$executeRawUnsafe(stmt);
-        } catch {
-          // Non-Postgres local dev: columns come from `prisma db push`.
-        }
+      let altered = false;
+      try {
+        altered = await applyColumnMigrations();
+      } catch {
+        // Non-Postgres local dev: columns come from `prisma db push`.
+      }
+      if (altered) {
+        // Pooled Postgres connections cache prepared statements; after an
+        // ALTER they can fail with "cached plan must not change result type".
+        // Dropping the pool forces fresh connections with correct plans.
+        await prisma.$disconnect().catch(() => {});
       }
     })().catch((err) => {
       // Allow a retry on the next request rather than caching the failure.

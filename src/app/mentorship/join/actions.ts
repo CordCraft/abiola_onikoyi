@@ -2,6 +2,7 @@
 
 import bcrypt from "bcryptjs";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { createMenteeSession } from "@/lib/mentorship/session";
@@ -103,7 +104,10 @@ export async function signUp(
       });
 
   // Personalized starter goals, drafted from their story (never throws).
-  await draftInitialGoals(mentee.id);
+  // Runs after the response is sent so signup stays fast and can never hit
+  // the serverless time cap waiting on the model; the goals appear on the
+  // portal moments later.
+  after(() => draftInitialGoals(mentee.id));
 
   await createMenteeSession(mentee.id, mentee.name);
   revalidatePath("/dashboard/mentorship");
