@@ -5,6 +5,8 @@ import Link from "next/link";
 import { menteeLogin, type MenteeLoginState } from "./actions";
 import { profile } from "@/content/profile";
 import { COHORT_LABEL } from "@/lib/mentorship/constants";
+import { PasswordInput } from "@/components/mentorship/PasswordInput";
+import { Spinner } from "@/components/mentorship/Spinner";
 
 const inputClass =
   "mt-1.5 w-full rounded-lg border border-white/10 bg-white/[0.05] px-3 py-2 text-white placeholder-zinc-500 outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/30";
@@ -77,14 +79,14 @@ export default function MenteeLoginPage() {
                 >
                   Password
                 </label>
-                <input
-                  id="password"
-                  name="password"
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                  className={inputClass}
-                />
+                <div className="mt-1.5">
+                  <PasswordInput
+                    id="password"
+                    name="password"
+                    autoComplete="current-password"
+                    className={inputClass.replace("mt-1.5 ", "")}
+                  />
+                </div>
                 <p className="mt-1.5 text-xs text-zinc-500">
                   Forgot it? Ask your mentor for a reset, then register again on
                   the Join page. Your profile is kept.
@@ -103,8 +105,9 @@ export default function MenteeLoginPage() {
               <button
                 type="submit"
                 disabled={pending}
-                className="w-full rounded-lg bg-gradient-to-r from-accent to-accent-2 px-4 py-2.5 text-sm font-semibold text-zinc-950 shadow-[0_8px_30px_-8px] shadow-accent/50 transition-all hover:brightness-110 disabled:opacity-60"
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-accent to-accent-2 px-4 py-2.5 text-sm font-semibold text-zinc-950 shadow-[0_8px_30px_-8px] shadow-accent/50 transition-all hover:brightness-110 disabled:opacity-60"
               >
+                {pending ? <Spinner className="h-4 w-4" /> : null}
                 {pending ? "Signing in…" : "Enter the portal"}
               </button>
             </form>
