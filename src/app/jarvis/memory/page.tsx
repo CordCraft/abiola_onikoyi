@@ -1,3 +1,4 @@
+import { SubmitButton } from "@/components/SubmitButton";
 import Link from "next/link";
 import { verifySession } from "@/lib/dal";
 import { prisma } from "@/lib/prisma";
@@ -124,7 +125,7 @@ export default async function MemoryPage() {
               </div>
               <form action={deleteDecision}>
                 <input type="hidden" name="id" value={d.id} />
-                <button type="submit" aria-label="Forget decision" className="text-xs text-zinc-300 hover:text-red-600">×</button>
+                <SubmitButton aria-label="Forget decision" className="text-xs text-zinc-300 hover:text-red-600">×</SubmitButton>
               </form>
             </li>
           ))}
@@ -148,7 +149,7 @@ export default async function MemoryPage() {
               </div>
               <form action={deleteNote}>
                 <input type="hidden" name="id" value={n.id} />
-                <button type="submit" aria-label="Forget note" className="text-xs text-zinc-300 hover:text-red-600">×</button>
+                <SubmitButton aria-label="Forget note" className="text-xs text-zinc-300 hover:text-red-600">×</SubmitButton>
               </form>
             </li>
           ))}
@@ -174,7 +175,7 @@ export default async function MemoryPage() {
               </div>
               <form action={deleteDocument}>
                 <input type="hidden" name="id" value={d.id} />
-                <button type="submit" aria-label="Delete document" className="text-xs text-zinc-300 hover:text-red-600">×</button>
+                <SubmitButton aria-label="Delete document" className="text-xs text-zinc-300 hover:text-red-600">×</SubmitButton>
               </form>
             </li>
           ))}

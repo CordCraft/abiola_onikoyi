@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { verifyMentee } from "@/lib/mentorship/dal";
 import { setGoalStatus, toggleTask } from "@/app/mentorship/portal/actions";
 import { GoalForm, TaskForm } from "@/components/mentorship/forms";
+import { SubmitButton } from "@/components/SubmitButton";
 import { Card, CardTitle, EmptyState, Pill } from "@/components/mentorship/ui";
 import { formatDate } from "@/lib/format";
 import type { MentorshipTask } from "@prisma/client";
@@ -12,13 +13,14 @@ function TaskRow({ task }: { task: MentorshipTask }) {
     <li className="flex items-start gap-3 py-2">
       <form action={toggleTask}>
         <input type="hidden" name="id" value={task.id} />
-        <button
-          type="submit"
+        <SubmitButton
+          iconOnly
+          spinnerClassName="h-3 w-3"
           aria-label={done ? "Mark as not done" : "Mark as done"}
           className={`mt-0.5 grid h-5 w-5 place-items-center rounded-md border transition-colors ${
             done
               ? "border-accent bg-accent text-zinc-950"
-              : "border-white/25 hover:border-accent"
+              : "border-white/25 text-zinc-300 hover:border-accent"
           }`}
         >
           {done ? (
@@ -26,7 +28,7 @@ function TaskRow({ task }: { task: MentorshipTask }) {
               <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           ) : null}
-        </button>
+        </SubmitButton>
       </form>
       <div className="min-w-0 flex-1">
         <p className={`text-sm ${done ? "text-zinc-500 line-through" : "text-zinc-200"}`}>
@@ -107,12 +109,9 @@ export default async function GoalsPage() {
                       name="status"
                       value={completed ? "active" : "completed"}
                     />
-                    <button
-                      type="submit"
-                      className="rounded-full border border-white/15 px-3 py-1 text-xs font-medium text-zinc-300 transition-colors hover:bg-white/10"
-                    >
+                    <SubmitButton className="rounded-full border border-white/15 px-3 py-1 text-xs font-medium text-zinc-300 transition-colors hover:bg-white/10 disabled:opacity-60">
                       {completed ? "Reopen" : "Mark completed"}
-                    </button>
+                    </SubmitButton>
                   </form>
                 </div>
                 {goalTasks.length > 0 ? (

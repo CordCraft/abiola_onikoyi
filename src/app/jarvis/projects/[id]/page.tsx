@@ -1,3 +1,4 @@
+import { SubmitButton } from "@/components/SubmitButton";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getProject, listVentures, PRIORITIES } from "@/lib/jarvis/queries";
@@ -53,9 +54,9 @@ export default async function ProjectDetailPage({
               <div className="flex items-center gap-3">
                 <form action={cycleTask}>
                   <input type="hidden" name="id" value={t.id} />
-                  <button type="submit" className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusBadge[t.status] ?? statusBadge.todo}`}>
+                  <SubmitButton className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusBadge[t.status] ?? statusBadge.todo}`}>
                     {t.status}
-                  </button>
+                  </SubmitButton>
                 </form>
                 <span className={`text-sm ${t.status === "done" ? "text-zinc-400 line-through" : "text-zinc-800"}`}>{t.title}</span>
               </div>
@@ -76,7 +77,7 @@ export default async function ProjectDetailPage({
             {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
           </select>
           <input name="dueDate" type="date" className="rounded-lg border border-zinc-300 bg-white px-2 py-2 text-sm text-zinc-600" />
-          <button type="submit" className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-700">Add</button>
+          <SubmitButton className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-700">Add</SubmitButton>
         </form>
       </section>
 
@@ -86,7 +87,7 @@ export default async function ProjectDetailPage({
         <form action={createNote} className="mt-3 space-y-2">
           <input type="hidden" name="projectId" value={project.id} />
           <textarea name="body" rows={2} required placeholder="Add a note…" className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-indigo-400" />
-          <button type="submit" className="rounded-lg border border-zinc-300 px-4 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50">Add note</button>
+          <SubmitButton className="rounded-lg border border-zinc-300 px-4 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50">Add note</SubmitButton>
         </form>
         <ul className="mt-4 space-y-3">
           {project.notes.map((n) => (
@@ -106,7 +107,7 @@ export default async function ProjectDetailPage({
           <input type="hidden" name="projectId" value={project.id} />
           <input name="title" required placeholder="Decision" className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-indigo-400" />
           <textarea name="rationale" rows={2} required placeholder="Why?" className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-indigo-400" />
-          <button type="submit" className="rounded-lg border border-zinc-300 px-4 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50">Log decision</button>
+          <SubmitButton className="rounded-lg border border-zinc-300 px-4 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50">Log decision</SubmitButton>
         </form>
         <ul className="mt-4 space-y-3">
           {project.decisions.map((d) => (

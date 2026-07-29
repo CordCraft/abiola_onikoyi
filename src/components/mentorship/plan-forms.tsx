@@ -9,6 +9,7 @@ import {
   togglePlanTask,
 } from "@/app/mentorship/portal/actions";
 import { PLAN_KIND_LABELS, type PlanTaskKind } from "@/lib/mentorship/constants";
+import { Spinner } from "@/components/mentorship/Spinner";
 
 // Client forms for the daily programme: task completion (with optional
 // evidence), day close-out (reflection + confidence), and AI tool requests.
@@ -80,7 +81,9 @@ export function PlanTaskItem({
                 : "border-white/25 hover:border-accent"
             }`}
           >
-            {done ? (
+            {pending ? (
+              <Spinner className="h-3.5 w-3.5" />
+            ) : done ? (
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5">
                 <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
@@ -138,7 +141,13 @@ export function PlanTaskItem({
                 disabled={pending}
                 className="rounded-full bg-gradient-to-r from-accent to-accent-2 px-4 py-1.5 text-xs font-semibold text-zinc-950 transition-opacity hover:opacity-90 disabled:opacity-60"
               >
-                {pending ? "Saving…" : "Submit evidence & complete"}
+                {pending ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Spinner className="h-3 w-3" /> Saving…
+                  </span>
+                ) : (
+                  "Submit evidence & complete"
+                )}
               </button>
             </form>
           ) : null}
@@ -209,7 +218,13 @@ export function CloseDayForm({ dayId }: { dayId: string }) {
           disabled={pending}
           className="rounded-full bg-gradient-to-r from-accent to-accent-2 px-5 py-2 text-sm font-semibold text-zinc-950 transition-opacity hover:opacity-90 disabled:opacity-60"
         >
-          {pending ? "Closing out…" : "Close out the day"}
+          {pending ? (
+            <span className="inline-flex items-center gap-1.5">
+              <Spinner className="h-3.5 w-3.5" /> Closing out…
+            </span>
+          ) : (
+            "Close out the day"
+          )}
         </button>
       </div>
       {state?.error ? (
@@ -316,7 +331,13 @@ export function RequestToolForm({
         disabled={pending}
         className="rounded-full bg-white px-4 py-1.5 text-sm font-semibold text-zinc-950 transition-colors hover:bg-zinc-200 disabled:opacity-60"
       >
-        {pending ? "Requesting…" : "Request access"}
+        {pending ? (
+          <span className="inline-flex items-center gap-1.5">
+            <Spinner className="h-3.5 w-3.5" /> Requesting…
+          </span>
+        ) : (
+          "Request access"
+        )}
       </button>
       {state?.error ? (
         <p role="alert" className="rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-300">

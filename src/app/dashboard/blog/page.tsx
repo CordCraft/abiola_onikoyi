@@ -3,6 +3,7 @@ import { getAllPosts, POST_KIND_LABELS, type PostKind } from "@/lib/blog";
 import { formatDate } from "@/lib/format";
 import { GenerateButton } from "@/components/dashboard/GenerateButton";
 import { ConfirmSubmit } from "@/components/dashboard/ConfirmSubmit";
+import { SubmitButton } from "@/components/SubmitButton";
 import { togglePublish, deletePost } from "./actions";
 
 export default async function BlogAdminPage() {
@@ -74,12 +75,12 @@ export default async function BlogAdminPage() {
                 <div className="flex items-center gap-2">
                   <form action={togglePublish}>
                     <input type="hidden" name="id" value={p.id} />
-                    <button
-                      type="submit"
-                      className="rounded-md border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-100"
+                    <SubmitButton
+                      spinnerClassName="h-3 w-3"
+                      className="rounded-md border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-100 disabled:opacity-60"
                     >
                       {p.published ? "Unpublish" : "Publish"}
-                    </button>
+                    </SubmitButton>
                   </form>
                   <Link
                     href={`/dashboard/blog/${p.id}`}

@@ -1,3 +1,4 @@
+import { SubmitButton } from "@/components/SubmitButton";
 import Link from "next/link";
 import {
   getOverview,
@@ -140,19 +141,19 @@ export default async function JarvisOverview({
               <SpeakButton text={briefing.body.replace(/^Morning briefing:\s*/, "")} />
               <form action={briefingFeedback}>
                 <input type="hidden" name="vote" value="up" />
-                <button type="submit" title="More like this" className="grid h-7 w-7 place-items-center rounded-md text-zinc-400 hover:bg-emerald-50 hover:text-emerald-600">
+                <SubmitButton title="More like this" className="grid h-7 w-7 place-items-center rounded-md text-zinc-400 hover:bg-emerald-50 hover:text-emerald-600">
                   <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6.633 10.25c.806 0 1.533-.446 2.031-1.08a9.041 9.041 0 012.861-2.4c.723-.384 1.35-.956 1.653-1.715a4.498 4.498 0 00.322-1.672V2.75a.75.75 0 01.75-.75 2.25 2.25 0 012.25 2.25c0 1.152-.26 2.243-.723 3.218-.266.558.107 1.282.725 1.282h3.126c1.026 0 1.945.694 2.054 1.715.045.422.068.85.068 1.285a11.95 11.95 0 01-2.649 7.521c-.388.482-.987.729-1.605.729H13.48c-.483 0-.964-.078-1.423-.23l-3.114-1.04a4.501 4.501 0 00-1.423-.23H5.904" />
                   </svg>
-                </button>
+                </SubmitButton>
               </form>
               <form action={briefingFeedback}>
                 <input type="hidden" name="vote" value="down" />
-                <button type="submit" title="Less like this" className="grid h-7 w-7 place-items-center rounded-md text-zinc-400 hover:bg-red-50 hover:text-red-600">
+                <SubmitButton title="Less like this" className="grid h-7 w-7 place-items-center rounded-md text-zinc-400 hover:bg-red-50 hover:text-red-600">
                   <svg className="h-4 w-4 rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6.633 10.25c.806 0 1.533-.446 2.031-1.08a9.041 9.041 0 012.861-2.4c.723-.384 1.35-.956 1.653-1.715a4.498 4.498 0 00.322-1.672V2.75a.75.75 0 01.75-.75 2.25 2.25 0 012.25 2.25c0 1.152-.26 2.243-.723 3.218-.266.558.107 1.282.725 1.282h3.126c1.026 0 1.945.694 2.054 1.715.045.422.068.85.068 1.285a11.95 11.95 0 01-2.649 7.521c-.388.482-.987.729-1.605.729H13.48c-.483 0-.964-.078-1.423-.23l-3.114-1.04a4.501 4.501 0 00-1.423-.23H5.904" />
                   </svg>
-                </button>
+                </SubmitButton>
               </form>
             </div>
           </div>
@@ -184,9 +185,9 @@ export default async function JarvisOverview({
                   <span className="text-xs text-zinc-400">{daysSince(n.createdAt)}d</span>
                   <form action={deleteNote}>
                     <input type="hidden" name="id" value={n.id} />
-                    <button type="submit" aria-label="Delete capture" className="text-xs text-zinc-300 hover:text-red-600">
+                    <SubmitButton aria-label="Delete capture" className="text-xs text-zinc-300 hover:text-red-600">
                       ×
-                    </button>
+                    </SubmitButton>
                   </form>
                 </div>
               </li>

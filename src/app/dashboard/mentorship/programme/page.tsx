@@ -1,3 +1,4 @@
+import { SubmitButton } from "@/components/SubmitButton";
 import Link from "next/link";
 import { verifySession } from "@/lib/dal";
 import { prisma } from "@/lib/prisma";
@@ -99,27 +100,27 @@ export default async function ProgrammeAdminPage() {
                       <form action={updateMentorshipSession}>
                         <input type="hidden" name="id" value={s.id} />
                         <input type="hidden" name="status" value="completed" />
-                        <button type="submit" className={smallButton}>
+                        <SubmitButton className={`${smallButton} disabled:opacity-60`}>
                           Mark held
-                        </button>
+                        </SubmitButton>
                       </form>
                       <form action={updateMentorshipSession}>
                         <input type="hidden" name="id" value={s.id} />
                         <input type="hidden" name="status" value="cancelled" />
-                        <button type="submit" className={smallButton}>
+                        <SubmitButton className={`${smallButton} disabled:opacity-60`}>
                           Cancel
-                        </button>
+                        </SubmitButton>
                       </form>
                     </>
                   ) : null}
                   <form action={deleteMentorshipSession}>
                     <input type="hidden" name="id" value={s.id} />
-                    <button
-                      type="submit"
-                      className="text-xs text-zinc-400 transition-colors hover:text-red-600"
+                    <SubmitButton
+                      spinnerClassName="h-3 w-3"
+                      className="text-xs text-zinc-400 transition-colors hover:text-red-600 disabled:opacity-60"
                     >
                       Delete
-                    </button>
+                    </SubmitButton>
                   </form>
                 </div>
                 {s.status === "completed" && !s.notes ? (
@@ -133,9 +134,9 @@ export default async function ProgrammeAdminPage() {
                       placeholder="Add session notes for attendees…"
                       className="flex-1 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm outline-none focus:border-indigo-500"
                     />
-                    <button type="submit" className={smallButton}>
+                    <SubmitButton className={`${smallButton} disabled:opacity-60`}>
                       Save notes
-                    </button>
+                    </SubmitButton>
                   </form>
                 ) : null}
               </li>
@@ -174,12 +175,12 @@ export default async function ProgrammeAdminPage() {
                 </div>
                 <form action={deleteResource}>
                   <input type="hidden" name="id" value={r.id} />
-                  <button
-                    type="submit"
-                    className="text-xs text-zinc-400 transition-colors hover:text-red-600"
+                  <SubmitButton
+                    spinnerClassName="h-3 w-3"
+                    className="text-xs text-zinc-400 transition-colors hover:text-red-600 disabled:opacity-60"
                   >
                     Delete
-                  </button>
+                  </SubmitButton>
                 </form>
               </li>
             ))}
@@ -204,12 +205,12 @@ export default async function ProgrammeAdminPage() {
                     </span>
                     <form action={deleteAnnouncement}>
                       <input type="hidden" name="id" value={a.id} />
-                      <button
-                        type="submit"
-                        className="text-xs text-zinc-400 transition-colors hover:text-red-600"
+                      <SubmitButton
+                        spinnerClassName="h-3 w-3"
+                        className="text-xs text-zinc-400 transition-colors hover:text-red-600 disabled:opacity-60"
                       >
                         Delete
-                      </button>
+                      </SubmitButton>
                     </form>
                   </div>
                 </div>

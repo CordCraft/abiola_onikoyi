@@ -1,5 +1,6 @@
 "use client";
 
+import { Spinner } from "@/components/mentorship/Spinner";
 import { useActionState, useEffect, useRef, useState } from "react";
 import type { PortalFormResult } from "@/app/mentorship/portal/actions";
 import {
@@ -62,7 +63,13 @@ export function GoalForm() {
           disabled={pending}
           className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-zinc-200 disabled:opacity-60"
         >
-          {pending ? "Adding…" : "Propose goal"}
+          {pending ? (
+          <span className="inline-flex items-center gap-1.5">
+            <Spinner className="h-3.5 w-3.5" /> Adding…
+          </span>
+        ) : (
+          "Propose goal"
+        )}
         </button>
       </div>
       <ErrorNote state={state} />
@@ -101,7 +108,13 @@ export function TaskForm({
         disabled={pending}
         className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-zinc-200 disabled:opacity-60"
       >
-        {pending ? "Adding…" : "Add"}
+        {pending ? (
+          <span className="inline-flex items-center gap-1.5">
+            <Spinner className="h-3.5 w-3.5" /> Adding…
+          </span>
+        ) : (
+          "Add"
+        )}
       </button>
       <ErrorNote state={state} />
     </form>
@@ -190,7 +203,13 @@ export function CheckinForm({ week }: { week: number }) {
         disabled={pending}
         className="rounded-full bg-gradient-to-r from-accent to-accent-2 px-5 py-2 text-sm font-semibold text-zinc-950 transition-opacity hover:opacity-90 disabled:opacity-60"
       >
-        {pending ? "Submitting…" : `Submit week ${week} check-in`}
+        {pending ? (
+          <span className="inline-flex items-center gap-1.5">
+            <Spinner className="h-3.5 w-3.5" /> Submitting…
+          </span>
+        ) : (
+          `Submit week ${week} check-in`
+        )}
       </button>
     </form>
   );
@@ -229,7 +248,13 @@ export function MessageForm({
           disabled={pending}
           className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-zinc-200 disabled:opacity-60"
         >
-          {pending ? "Sending…" : "Send"}
+          {pending ? (
+          <span className="inline-flex items-center gap-1.5">
+            <Spinner className="h-3.5 w-3.5" /> Sending…
+          </span>
+        ) : (
+          "Send"
+        )}
         </button>
       </div>
       <ErrorNote state={state} />

@@ -1,5 +1,6 @@
 "use client";
 
+import { Spinner } from "@/components/mentorship/Spinner";
 import { useActionState, useEffect, useRef, useState } from "react";
 import type { AdminFormResult } from "@/app/dashboard/mentorship/actions";
 import {
@@ -155,7 +156,13 @@ export function AdminGoalForm({ menteeId }: { menteeId: string }) {
           <option value="3">Month 3 · Deliver</option>
         </select>
         <button type="submit" disabled={pending} className={buttonClass}>
-          {pending ? "Adding…" : "Add goal"}
+          {pending ? (
+          <span className="inline-flex items-center gap-1.5">
+            <Spinner className="h-3.5 w-3.5" /> Adding…
+          </span>
+        ) : (
+          "Add goal"
+        )}
         </button>
       </div>
       <Feedback state={state} />
@@ -199,7 +206,13 @@ export function AdminTaskForm({
           <input name="dueDate" type="date" className={`${inputClass} w-auto`} />
         </label>
         <button type="submit" disabled={pending} className={buttonClass}>
-          {pending ? "Assigning…" : "Assign task"}
+          {pending ? (
+          <span className="inline-flex items-center gap-1.5">
+            <Spinner className="h-3.5 w-3.5" /> Assigning…
+          </span>
+        ) : (
+          "Assign task"
+        )}
         </button>
       </div>
       <Feedback state={state} />
@@ -222,7 +235,13 @@ export function CheckinReplyForm({ checkinId }: { checkinId: string }) {
       />
       <Feedback state={state} />
       <button type="submit" disabled={pending} className={buttonClass}>
-        {pending ? "Sending…" : "Send reply"}
+        {pending ? (
+          <span className="inline-flex items-center gap-1.5">
+            <Spinner className="h-3.5 w-3.5" /> Sending…
+          </span>
+        ) : (
+          "Send reply"
+        )}
       </button>
     </form>
   );
@@ -244,7 +263,13 @@ export function AdminMessageForm({ menteeId }: { menteeId: string }) {
           className={`${inputClass} flex-1`}
         />
         <button type="submit" disabled={pending} className={buttonClass}>
-          {pending ? "Sending…" : "Send"}
+          {pending ? (
+          <span className="inline-flex items-center gap-1.5">
+            <Spinner className="h-3.5 w-3.5" /> Sending…
+          </span>
+        ) : (
+          "Send"
+        )}
         </button>
       </div>
       <Feedback state={state} />
@@ -315,7 +340,13 @@ export function SessionForm({
       />
       <Feedback state={state} />
       <button type="submit" disabled={pending} className={buttonClass}>
-        {pending ? "Scheduling…" : "Schedule session"}
+        {pending ? (
+          <span className="inline-flex items-center gap-1.5">
+            <Spinner className="h-3.5 w-3.5" /> Scheduling…
+          </span>
+        ) : (
+          "Schedule session"
+        )}
       </button>
     </form>
   );
@@ -347,7 +378,13 @@ export function ResourceForm() {
           Pin to top
         </label>
         <button type="submit" disabled={pending} className={buttonClass}>
-          {pending ? "Sharing…" : "Share resource"}
+          {pending ? (
+          <span className="inline-flex items-center gap-1.5">
+            <Spinner className="h-3.5 w-3.5" /> Sharing…
+          </span>
+        ) : (
+          "Share resource"
+        )}
         </button>
       </div>
       <Feedback state={state} />
@@ -371,7 +408,13 @@ export function AnnouncementForm() {
       />
       <Feedback state={state} />
       <button type="submit" disabled={pending} className={buttonClass}>
-        {pending ? "Posting…" : "Post announcement"}
+        {pending ? (
+          <span className="inline-flex items-center gap-1.5">
+            <Spinner className="h-3.5 w-3.5" /> Posting…
+          </span>
+        ) : (
+          "Post announcement"
+        )}
       </button>
     </form>
   );

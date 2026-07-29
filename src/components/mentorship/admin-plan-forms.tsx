@@ -1,5 +1,6 @@
 "use client";
 
+import { Spinner } from "@/components/mentorship/Spinner";
 import { useActionState } from "react";
 import type { AdminFormResult } from "@/app/dashboard/mentorship/actions";
 import {
@@ -40,7 +41,13 @@ export function PlanDayCommentForm({ dayId }: { dayId: string }) {
         disabled={pending}
         className="rounded-full bg-zinc-900 px-4 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-zinc-700 disabled:opacity-60"
       >
-        {pending ? "Sending…" : "Reply"}
+        {pending ? (
+          <span className="inline-flex items-center gap-1.5">
+            <Spinner className="h-3.5 w-3.5" /> Sending…
+          </span>
+        ) : (
+          "Reply"
+        )}
       </button>
       <Error state={state} />
     </form>
@@ -64,7 +71,13 @@ export function PlanTaskCommentForm({ taskId }: { taskId: string }) {
         disabled={pending}
         className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100 disabled:opacity-60"
       >
-        {pending ? "…" : "Comment"}
+        {pending ? (
+          <span className="inline-flex items-center gap-1.5">
+            <Spinner className="h-3.5 w-3.5" /> …
+          </span>
+        ) : (
+          "Comment"
+        )}
       </button>
       <Error state={state} />
     </form>
@@ -105,7 +118,13 @@ export function GrantToolForm({
         disabled={pending}
         className="rounded-full bg-zinc-900 px-4 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-zinc-700 disabled:opacity-60"
       >
-        {pending ? "Granting…" : "Grant"}
+        {pending ? (
+          <span className="inline-flex items-center gap-1.5">
+            <Spinner className="h-3.5 w-3.5" /> Granting…
+          </span>
+        ) : (
+          "Grant"
+        )}
       </button>
       <Error state={state} />
     </form>

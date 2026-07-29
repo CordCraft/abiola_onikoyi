@@ -1,3 +1,4 @@
+import { SubmitButton } from "@/components/SubmitButton";
 import { listGoals } from "@/lib/jarvis/queries";
 import { GoalForm } from "@/components/jarvis/GoalForm";
 import { deleteGoal, addMilestone, toggleMilestone } from "@/app/jarvis/actions";
@@ -42,9 +43,9 @@ export default async function GoalsPage() {
                       <li key={m.id} className="flex items-center gap-2">
                         <form action={toggleMilestone}>
                           <input type="hidden" name="id" value={m.id} />
-                          <button type="submit" className={`grid h-5 w-5 place-items-center rounded border ${m.done ? "border-emerald-500 bg-emerald-500 text-white" : "border-zinc-300"}`}>
+                          <SubmitButton className={`grid h-5 w-5 place-items-center rounded border ${m.done ? "border-emerald-500 bg-emerald-500 text-white" : "border-zinc-300"}`}>
                             {m.done ? "✓" : ""}
-                          </button>
+                          </SubmitButton>
                         </form>
                         <span className={`text-sm ${m.done ? "text-zinc-400 line-through" : "text-zinc-700"}`}>
                           {m.title}
@@ -58,7 +59,7 @@ export default async function GoalsPage() {
                     <input type="hidden" name="goalId" value={g.id} />
                     <input name="title" required placeholder="Add milestone" className="flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 outline-none focus:border-indigo-400" />
                     <input name="dueDate" type="date" className="rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-sm text-zinc-600" />
-                    <button type="submit" className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50">Add</button>
+                    <SubmitButton className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50">Add</SubmitButton>
                   </form>
                 </li>
               );

@@ -26,6 +26,7 @@ import {
   PlanDayCommentForm,
   PlanTaskCommentForm,
 } from "@/components/mentorship/admin-plan-forms";
+import { SubmitButton } from "@/components/SubmitButton";
 import { computeStreak } from "@/lib/mentorship/plan";
 import { PLAN_KIND_LABELS, planDayIndex, type PlanTaskKind } from "@/lib/mentorship/constants";
 
@@ -134,9 +135,9 @@ export default async function MenteeDetailPage({
         <form action={setMenteeActive}>
           <input type="hidden" name="id" value={mentee.id} />
           <input type="hidden" name="active" value={mentee.active ? "false" : "true"} />
-          <button type="submit" className={smallButton}>
+          <SubmitButton className={`${smallButton} disabled:opacity-60`}>
             {mentee.active ? "Deactivate access" : "Reactivate access"}
-          </button>
+          </SubmitButton>
         </form>
       </div>
 
@@ -157,9 +158,9 @@ export default async function MenteeDetailPage({
             {mentee.passwordHash ? (
               <form action={resetMenteePassword}>
                 <input type="hidden" name="id" value={mentee.id} />
-                <button type="submit" className={smallButton}>
+                <SubmitButton className={`${smallButton} disabled:opacity-60`}>
                   Reset password
-                </button>
+                </SubmitButton>
               </form>
             ) : null}
           </div>
@@ -445,9 +446,9 @@ export default async function MenteeDetailPage({
                   {row?.status === "granted" ? (
                     <form action={adminRevokeAiTool}>
                       <input type="hidden" name="id" value={row.id} />
-                      <button type="submit" className={smallButton}>
+                      <SubmitButton className={`${smallButton} disabled:opacity-60`}>
                         Revoke
-                      </button>
+                      </SubmitButton>
                     </form>
                   ) : null}
                 </div>
@@ -513,26 +514,26 @@ export default async function MenteeDetailPage({
                     <form action={adminSetGoalStatus}>
                       <input type="hidden" name="id" value={g.id} />
                       <input type="hidden" name="status" value="completed" />
-                      <button type="submit" className={smallButton}>
+                      <SubmitButton className={`${smallButton} disabled:opacity-60`}>
                         Complete
-                      </button>
+                      </SubmitButton>
                     </form>
                   ) : (
                     <form action={adminSetGoalStatus}>
                       <input type="hidden" name="id" value={g.id} />
                       <input type="hidden" name="status" value="active" />
-                      <button type="submit" className={smallButton}>
+                      <SubmitButton className={`${smallButton} disabled:opacity-60`}>
                         Reopen
-                      </button>
+                      </SubmitButton>
                     </form>
                   )}
                   {g.status !== "dropped" ? (
                     <form action={adminSetGoalStatus}>
                       <input type="hidden" name="id" value={g.id} />
                       <input type="hidden" name="status" value="dropped" />
-                      <button type="submit" className={smallButton}>
+                      <SubmitButton className={`${smallButton} disabled:opacity-60`}>
                         Drop
-                      </button>
+                      </SubmitButton>
                     </form>
                   ) : null}
                 </div>
@@ -555,13 +556,14 @@ export default async function MenteeDetailPage({
               <li key={t.id} className="flex items-center gap-3 py-2.5">
                 <form action={adminToggleTask}>
                   <input type="hidden" name="id" value={t.id} />
-                  <button
-                    type="submit"
+                  <SubmitButton
+                    iconOnly
+                    spinnerClassName="h-3 w-3"
                     aria-label={t.status === "done" ? "Reopen task" : "Mark done"}
                     className={`grid h-5 w-5 place-items-center rounded-md border transition-colors ${
                       t.status === "done"
                         ? "border-zinc-900 bg-zinc-900 text-white"
-                        : "border-zinc-300 hover:border-zinc-900"
+                        : "border-zinc-300 text-zinc-600 hover:border-zinc-900"
                     }`}
                   >
                     {t.status === "done" ? (
@@ -569,7 +571,7 @@ export default async function MenteeDetailPage({
                         <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
                       </svg>
                     ) : null}
-                  </button>
+                  </SubmitButton>
                 </form>
                 <div className="min-w-0 flex-1">
                   <p
@@ -589,12 +591,12 @@ export default async function MenteeDetailPage({
                 </div>
                 <form action={adminDeleteTask}>
                   <input type="hidden" name="id" value={t.id} />
-                  <button
-                    type="submit"
-                    className="text-xs text-zinc-400 transition-colors hover:text-red-600"
+                  <SubmitButton
+                    spinnerClassName="h-3 w-3"
+                    className="text-xs text-zinc-400 transition-colors hover:text-red-600 disabled:opacity-60"
                   >
                     Delete
-                  </button>
+                  </SubmitButton>
                 </form>
               </li>
             ))}
@@ -712,12 +714,12 @@ export default async function MenteeDetailPage({
           </p>
           <form action={deleteMentee}>
             <input type="hidden" name="id" value={mentee.id} />
-            <button
-              type="submit"
-              className="rounded-full bg-red-600 px-4 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-red-700"
+            <SubmitButton
+              pendingLabel="Deleting…"
+              className="rounded-full bg-red-600 px-4 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-red-700 disabled:opacity-60"
             >
               Delete mentee permanently
-            </button>
+            </SubmitButton>
           </form>
         </div>
       </details>
