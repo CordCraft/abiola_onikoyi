@@ -14,12 +14,20 @@ import {
 import { CopyButton } from "@/components/mentorship/CopyButton";
 import {
   adminDeleteTask,
+  adminRevokeAiTool,
   adminSetGoalStatus,
   adminToggleTask,
   deleteMentee,
   resetMenteePassword,
   setMenteeActive,
 } from "@/app/dashboard/mentorship/actions";
+import {
+  GrantToolForm,
+  PlanDayCommentForm,
+  PlanTaskCommentForm,
+} from "@/components/mentorship/admin-plan-forms";
+import { computeStreak } from "@/lib/mentorship/plan";
+import { PLAN_KIND_LABELS, planDayIndex, type PlanTaskKind } from "@/lib/mentorship/constants";
 
 export const metadata = { title: "Mentee" };
 
@@ -42,9 +50,23 @@ export default async function MenteeDetailPage({
       tasks: { orderBy: [{ status: "desc" }, { createdAt: "desc" }] },
       checkins: { orderBy: { week: "desc" } },
       sessions: { orderBy: { scheduledAt: "desc" } },
+      planDays: {
+        orderBy: { dayIndex: "asc" },
+        include: { tasks: { orderBy: { order: "asc" } } },
+      },
+      aiTools: { orderBy: { tool: "asc" } },
     },
   });
   if (!mentee) notFound();
+
+  const todayIndex = planDayIndex();
+  const planTasks = mentee.planDays.flatMap((d) => d.tasks);
+  const planDone = planTasks.filter((t) => t.status === "done");
+  const planStreak = computeStreak(mentee.planDays, todayIndex);
+  const planWeeks = Array.from(
+    new Set(mentee.planDays.map((d) => d.week)),
+  ).sort((a, b) => a - b);
+  const currentWeek = Math.min(Math.max(1, Math.ceil(Math.max(1, todayIndex) / 7)), 13);
 
   // Opening the thread marks the mentee's messages as read.
   await prisma.mentorshipMessage.updateMany({
@@ -245,6 +267,186 @@ export default async function MenteeDetailPage({
           />
         </div>
       </details>
+
+      {mentee.planDays.length > 0 ? (
+        <section className="rounded-2xl border border-zinc-200 bg-white p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold text-zinc-900">
+              Daily programme
+            </h2>
+            <p className="text-sm text-zinc-500">
+              {planDone.length}/{planTasks.length} tasks ·{" "}
+              {planDone.reduce((s, t) => s + t.points, 0)} pts
+              {planStreak > 0 ? ` · 🔥 ${planStreak}-day streak` : ""}
+              {todayIndex >= 1 && todayIndex <= 91
+                ? ` · Day ${todayIndex}, week ${currentWeek}`
+                : todayIndex === 0
+                  ? " · starts 1 Aug"
+                  : " · wrapped"}
+            </p>
+          </div>
+          <p className="mt-1 text-xs text-zinc-400">
+            Review evidence and leave comments; mentees see them on the day.
+            Weeks unlock for the mentee when they submit the previous
+            week&apos;s check-in, whether or not you have replied.
+          </p>
+          <div className="mt-4 space-y-2">
+            {planWeeks.map((w) => {
+              const days = mentee.planDays.filter((d) => d.week === w);
+              const wTasks = days.flatMap((d) => d.tasks);
+              const wDone = wTasks.filter((t) => t.status === "done").length;
+              return (
+                <details
+                  key={w}
+                  open={w === currentWeek && todayIndex >= 1 && todayIndex <= 91}
+                  className="rounded-xl border border-zinc-100 bg-zinc-50"
+                >
+                  <summary className="flex cursor-pointer items-center justify-between gap-3 p-3 text-sm font-medium text-zinc-800">
+                    <span>Week {w}</span>
+                    <span className="text-xs text-zinc-400">
+                      {wDone}/{wTasks.length} tasks
+                    </span>
+                  </summary>
+                  <div className="space-y-3 px-3 pb-3">
+                    {days.map((day) => (
+                      <div
+                        key={day.id}
+                        className="rounded-lg border border-zinc-200 bg-white p-3"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-sm font-semibold text-zinc-900">
+                            Day {day.dayIndex}: {day.title}
+                            {day.completedAt ? (
+                              <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                                closed out
+                                {day.confidence ? ` · ${day.confidence}/5` : ""}
+                              </span>
+                            ) : null}
+                          </p>
+                          <span className="text-xs text-zinc-400">
+                            {formatDate(day.date)}
+                          </span>
+                        </div>
+                        <ul className="mt-2 space-y-1.5">
+                          {day.tasks.map((t) => (
+                            <li key={t.id} className="text-xs text-zinc-600">
+                              <span
+                                className={`mr-1 inline-block w-3 text-center ${
+                                  t.status === "done"
+                                    ? "text-emerald-600"
+                                    : "text-zinc-300"
+                                }`}
+                              >
+                                {t.status === "done" ? "✓" : "○"}
+                              </span>
+                              <span className="font-medium text-zinc-700">
+                                [{PLAN_KIND_LABELS[t.kind as PlanTaskKind] ?? t.kind}]
+                              </span>{" "}
+                              {t.title}
+                              {t.evidence ? (
+                                <div className="ml-4 mt-1 rounded-md bg-zinc-50 p-2">
+                                  <p className="whitespace-pre-line break-words text-xs text-zinc-600">
+                                    {t.evidence}
+                                  </p>
+                                  {t.mentorComment ? (
+                                    <p className="mt-1 border-t border-zinc-200 pt-1 text-xs text-indigo-700">
+                                      You: {t.mentorComment}
+                                    </p>
+                                  ) : (
+                                    <PlanTaskCommentForm taskId={t.id} />
+                                  )}
+                                </div>
+                              ) : null}
+                            </li>
+                          ))}
+                        </ul>
+                        {day.reflection ? (
+                          <p className="mt-2 rounded-md bg-zinc-50 p-2 text-xs italic text-zinc-600">
+                            “{day.reflection}”
+                          </p>
+                        ) : null}
+                        {day.mentorComment ? (
+                          <p className="mt-2 text-xs text-indigo-700">
+                            You: {day.mentorComment}
+                          </p>
+                        ) : day.completedAt ? (
+                          <div className="mt-2">
+                            <PlanDayCommentForm dayId={day.id} />
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+
+      <section className="rounded-2xl border border-zinc-200 bg-white p-6">
+        <h2 className="text-lg font-semibold text-zinc-900">AI toolkit</h2>
+        <p className="mt-1 text-xs text-zinc-400">
+          Provision API keys the mentee sees in their portal. Grant when their
+          plan calls for it; revoke any time.
+        </p>
+        <div className="mt-4 space-y-3">
+          {(["anthropic", "openai", "fal"] as const).map((tool) => {
+            const row = mentee.aiTools.find((t) => t.tool === tool);
+            const label =
+              tool === "anthropic"
+                ? "Claude API"
+                : tool === "openai"
+                  ? "OpenAI API"
+                  : "fal.ai";
+            return (
+              <div
+                key={tool}
+                className="rounded-xl border border-zinc-100 bg-zinc-50 p-4"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-zinc-900">
+                    {label}
+                    <span
+                      className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                        row?.status === "granted"
+                          ? "bg-emerald-100 text-emerald-700"
+                          : row?.status === "requested"
+                            ? "bg-amber-100 text-amber-700"
+                            : "bg-zinc-200 text-zinc-500"
+                      }`}
+                    >
+                      {row?.status ?? "available"}
+                    </span>
+                  </p>
+                  {row?.status === "granted" ? (
+                    <form action={adminRevokeAiTool}>
+                      <input type="hidden" name="id" value={row.id} />
+                      <button type="submit" className={smallButton}>
+                        Revoke
+                      </button>
+                    </form>
+                  ) : null}
+                </div>
+                {row?.note ? (
+                  <p className="mt-1 text-xs text-zinc-500">
+                    Mentee&apos;s note: {row.note}
+                  </p>
+                ) : null}
+                {row?.status === "granted" && row.apiKey ? (
+                  <p className="mt-2 truncate font-mono text-xs text-zinc-500">
+                    {row.apiKey.slice(0, 14)}…{row.apiKey.slice(-4)}
+                  </p>
+                ) : (
+                  <div className="mt-3">
+                    <GrantToolForm menteeId={mentee.id} tool={tool} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </section>
 
       <section className="rounded-2xl border border-zinc-200 bg-white p-6">
         <h2 className="text-lg font-semibold text-zinc-900">Goals</h2>

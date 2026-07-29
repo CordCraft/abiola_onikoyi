@@ -411,3 +411,93 @@ export async function deleteAnnouncement(formData: FormData): Promise<void> {
   await prisma.mentorshipAnnouncement.delete({ where: { id } }).catch(() => null);
   revalidateCohort();
 }
+
+// ---------------------------------------------------------------------------
+// Daily programme: mentor feedback and AI tool provisioning
+// ---------------------------------------------------------------------------
+
+function revalidateProgram(menteeId: string) {
+  revalidatePath(`/dashboard/mentorship/${menteeId}`);
+  revalidatePath("/mentorship/portal/program");
+  revalidatePath("/mentorship/portal");
+}
+
+export async function adminCommentPlanDay(
+  _prev: AdminFormResult,
+  formData: FormData,
+): Promise<AdminFormResult> {
+  await verifySession();
+
+  const id = String(formData.get("id") ?? "");
+  const comment = String(formData.get("comment") ?? "").trim();
+  if (!id) return { error: "Missing day id." };
+  if (!comment) return { error: "Write a comment first." };
+
+  const day = await prisma.mentorshipPlanDay.update({
+    where: { id },
+    data: { mentorComment: comment, repliedAt: new Date() },
+  });
+  revalidateProgram(day.menteeId);
+  return { ok: true };
+}
+
+export async function adminCommentPlanTask(
+  _prev: AdminFormResult,
+  formData: FormData,
+): Promise<AdminFormResult> {
+  await verifySession();
+
+  const id = String(formData.get("id") ?? "");
+  const comment = String(formData.get("comment") ?? "").trim();
+  if (!id) return { error: "Missing task id." };
+  if (!comment) return { error: "Write a comment first." };
+
+  const task = await prisma.mentorshipPlanTask.update({
+    where: { id },
+    data: { mentorComment: comment },
+  });
+  revalidateProgram(task.menteeId);
+  return { ok: true };
+}
+
+export async function adminGrantAiTool(
+  _prev: AdminFormResult,
+  formData: FormData,
+): Promise<AdminFormResult> {
+  await verifySession();
+  await ensureMentorshipTables();
+
+  const menteeId = String(formData.get("menteeId") ?? "");
+  const tool = String(formData.get("tool") ?? "");
+  const apiKey = String(formData.get("apiKey") ?? "").trim();
+  const note = String(formData.get("note") ?? "").trim() || null;
+
+  if (!menteeId) return { error: "Missing mentee id." };
+  if (!["anthropic", "openai", "fal"].includes(tool)) {
+    return { error: "Unknown tool." };
+  }
+  if (!apiKey) return { error: "Paste the API key to grant." };
+
+  await prisma.mentorshipAiTool.upsert({
+    where: { menteeId_tool: { menteeId, tool } },
+    create: { menteeId, tool, status: "granted", apiKey, note },
+    update: { status: "granted", apiKey, ...(note ? { note } : {}) },
+  });
+
+  revalidatePath(`/dashboard/mentorship/${menteeId}`);
+  revalidatePath("/mentorship/portal/toolkit");
+  return { ok: true };
+}
+
+export async function adminRevokeAiTool(formData: FormData): Promise<void> {
+  await verifySession();
+  const id = String(formData.get("id") ?? "");
+  if (!id) return;
+
+  const row = await prisma.mentorshipAiTool.update({
+    where: { id },
+    data: { status: "available", apiKey: null },
+  });
+  revalidatePath(`/dashboard/mentorship/${row.menteeId}`);
+  revalidatePath("/mentorship/portal/toolkit");
+}

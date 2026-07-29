@@ -2,7 +2,15 @@
 
 import { useState } from "react";
 
-export function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
+export function CopyButton({
+  text,
+  label = "Copy",
+  className,
+}: {
+  text: string;
+  label?: string;
+  className?: string;
+}) {
   const [copied, setCopied] = useState(false);
 
   return (
@@ -18,7 +26,10 @@ export function CopyButton({ text, label = "Copy" }: { text: string; label?: str
           // visible on screen so manual copy still works.
         }
       }}
-      className="rounded-full border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100"
+      className={
+        className ??
+        "rounded-full border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100"
+      }
     >
       {copied ? "Copied!" : label}
     </button>

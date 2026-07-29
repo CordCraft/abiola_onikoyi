@@ -129,6 +129,64 @@ const DDL: string[] = [
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "MentorshipAnnouncement_pkey" PRIMARY KEY ("id")
   )`,
+
+  `CREATE TABLE IF NOT EXISTS "MentorshipPlanDay" (
+    "id" TEXT NOT NULL,
+    "menteeId" TEXT NOT NULL,
+    "dayIndex" INTEGER NOT NULL,
+    "date" TIMESTAMP(3) NOT NULL,
+    "week" INTEGER NOT NULL,
+    "title" TEXT NOT NULL,
+    "mindset" TEXT,
+    "completedAt" TIMESTAMP(3),
+    "reflection" TEXT,
+    "confidence" INTEGER,
+    "mentorComment" TEXT,
+    "repliedAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "MentorshipPlanDay_pkey" PRIMARY KEY ("id"),
+    CONSTRAINT "MentorshipPlanDay_menteeId_fkey" FOREIGN KEY ("menteeId")
+      REFERENCES "MentorshipMentee"("id") ON DELETE CASCADE ON UPDATE CASCADE
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "MentorshipPlanDay_menteeId_dayIndex_key" ON "MentorshipPlanDay"("menteeId", "dayIndex")`,
+  `CREATE INDEX IF NOT EXISTS "MentorshipPlanDay_menteeId_date_idx" ON "MentorshipPlanDay"("menteeId", "date")`,
+
+  `CREATE TABLE IF NOT EXISTS "MentorshipPlanTask" (
+    "id" TEXT NOT NULL,
+    "dayId" TEXT NOT NULL,
+    "menteeId" TEXT NOT NULL,
+    "order" INTEGER NOT NULL DEFAULT 0,
+    "kind" TEXT NOT NULL DEFAULT 'skill',
+    "title" TEXT NOT NULL,
+    "detail" TEXT,
+    "minutes" INTEGER NOT NULL DEFAULT 30,
+    "points" INTEGER NOT NULL DEFAULT 10,
+    "evidenceHint" TEXT,
+    "status" TEXT NOT NULL DEFAULT 'todo',
+    "completedAt" TIMESTAMP(3),
+    "evidence" TEXT,
+    "mentorComment" TEXT,
+    CONSTRAINT "MentorshipPlanTask_pkey" PRIMARY KEY ("id"),
+    CONSTRAINT "MentorshipPlanTask_dayId_fkey" FOREIGN KEY ("dayId")
+      REFERENCES "MentorshipPlanDay"("id") ON DELETE CASCADE ON UPDATE CASCADE
+  )`,
+  `CREATE INDEX IF NOT EXISTS "MentorshipPlanTask_menteeId_status_idx" ON "MentorshipPlanTask"("menteeId", "status")`,
+  `CREATE INDEX IF NOT EXISTS "MentorshipPlanTask_dayId_order_idx" ON "MentorshipPlanTask"("dayId", "order")`,
+
+  `CREATE TABLE IF NOT EXISTS "MentorshipAiTool" (
+    "id" TEXT NOT NULL,
+    "menteeId" TEXT NOT NULL,
+    "tool" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'available',
+    "apiKey" TEXT,
+    "note" TEXT,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "MentorshipAiTool_pkey" PRIMARY KEY ("id"),
+    CONSTRAINT "MentorshipAiTool_menteeId_fkey" FOREIGN KEY ("menteeId")
+      REFERENCES "MentorshipMentee"("id") ON DELETE CASCADE ON UPDATE CASCADE
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "MentorshipAiTool_menteeId_tool_key" ON "MentorshipAiTool"("menteeId", "tool")`,
 ];
 
 // Columns added after the initial launch. CREATE TABLE IF NOT EXISTS skips

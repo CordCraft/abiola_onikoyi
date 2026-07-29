@@ -5,8 +5,10 @@ import { usePathname } from "next/navigation";
 
 const links = [
   { label: "Overview", href: "/mentorship/portal" },
+  { label: "Daily Programme", href: "/mentorship/portal/program" },
   { label: "Goals & Tasks", href: "/mentorship/portal/goals" },
   { label: "Check-ins", href: "/mentorship/portal/checkins" },
+  { label: "AI Toolkit", href: "/mentorship/portal/toolkit" },
   { label: "Messages", href: "/mentorship/portal/messages" },
   { label: "Sessions", href: "/mentorship/portal/sessions" },
   { label: "Resources", href: "/mentorship/portal/resources" },

@@ -3,9 +3,12 @@
 // Safe to import from client and server components (no server-only deps).
 // ---------------------------------------------------------------------------
 
-// Cohort 1 kicked off on Saturday 25 July 2026 with the inaugural Google Meet.
-export const PROGRAM_START_ISO = "2026-07-25T00:00:00.000Z";
+// Cohort 1 kicked off with the inaugural Google Meet on Sat 25 July 2026;
+// the structured daily programme (week 1, day 1) starts Saturday 1 August.
+// Weeks run Saturday to Friday so the heavier work lands on weekends.
+export const PROGRAM_START_ISO = "2026-08-01T00:00:00.000Z";
 export const PROGRAM_WEEKS = 13; // three months
+export const PROGRAM_DAYS = PROGRAM_WEEKS * 7; // 91 daily plan days
 export const COHORT_LABEL = "Cohort 1 · 2026";
 
 export const MONTH_THEMES: Record<number, { title: string; blurb: string }> = {
@@ -114,4 +117,58 @@ export function programProgressPct(now: Date = new Date()): number {
   if (week === 0) return 0;
   if (week > PROGRAM_WEEKS) return 100;
   return Math.round(((week - 1) / PROGRAM_WEEKS) * 100);
+}
+
+// ---------------------------------------------------------------------------
+// Daily plan vocabulary and date arithmetic. Day boundaries follow Lagos time
+// (UTC+1, no DST) so "today's tasks" flip over at midnight for the mentees.
+// ---------------------------------------------------------------------------
+
+export const PLAN_TASK_KINDS = [
+  "mindset",
+  "skill",
+  "project",
+  "career",
+  "checkpoint",
+] as const;
+export type PlanTaskKind = (typeof PLAN_TASK_KINDS)[number];
+
+export const PLAN_KIND_LABELS: Record<PlanTaskKind, string> = {
+  mindset: "Mindset",
+  skill: "Skill",
+  project: "Project",
+  career: "Career",
+  checkpoint: "Checkpoint",
+};
+
+// The calendar date in Lagos for a given instant, at UTC midnight. Plan day
+// dates are stored the same way, so equality comparisons are exact.
+export function lagosDate(now: Date = new Date()): Date {
+  const shifted = new Date(now.getTime() + 60 * 60 * 1000); // UTC+1
+  return new Date(
+    Date.UTC(
+      shifted.getUTCFullYear(),
+      shifted.getUTCMonth(),
+      shifted.getUTCDate(),
+    ),
+  );
+}
+
+// 1-based plan day index for a date; 0 before the programme, PROGRAM_DAYS + 1
+// once it has wrapped.
+export function planDayIndex(now: Date = new Date()): number {
+  const start = new Date(PROGRAM_START_ISO).getTime();
+  const diff = lagosDate(now).getTime() - start;
+  if (diff < 0) return 0;
+  const day = Math.floor(diff / (24 * 60 * 60 * 1000)) + 1;
+  return day > PROGRAM_DAYS ? PROGRAM_DAYS + 1 : day;
+}
+
+export function dateOfPlanDay(dayIndex: number): Date {
+  const start = new Date(PROGRAM_START_ISO).getTime();
+  return new Date(start + (dayIndex - 1) * 24 * 60 * 60 * 1000);
+}
+
+export function weekOfPlanDay(dayIndex: number): number {
+  return Math.ceil(dayIndex / 7);
 }

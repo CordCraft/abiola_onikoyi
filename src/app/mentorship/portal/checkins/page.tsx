@@ -25,7 +25,8 @@ export default async function CheckinsPage() {
         </h1>
         <p className="mt-1 text-zinc-400">
           A few honest minutes each week. Your mentor reads every one and replies
-          right here.
+          right here. Submitting your check-in is also what unlocks the next
+          week of your daily programme; the reply is never required to proceed.
         </p>
       </div>
 

@@ -3,7 +3,17 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { verifyMentee } from "@/lib/mentorship/dal";
-import { programWeek } from "@/lib/mentorship/constants";
+import {
+  PROGRAM_WEEKS,
+  planDayIndex,
+  programWeek,
+  weekOfPlanDay,
+} from "@/lib/mentorship/constants";
+import {
+  canCloseDay,
+  canWorkDay,
+  computeUnlockedWeek,
+} from "@/lib/mentorship/plan";
 
 export type PortalFormResult = { error?: string; ok?: boolean } | undefined;
 
@@ -131,7 +141,146 @@ export async function submitCheckin(
   });
 
   revalidatePath("/mentorship/portal/checkins");
+  revalidatePath("/mentorship/portal/program");
   revalidatePath("/mentorship/portal");
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Daily programme actions
+// ---------------------------------------------------------------------------
+
+async function unlockedWeekFor(menteeId: string): Promise<number> {
+  const todayIndex = planDayIndex();
+  if (todayIndex < 1) return 0;
+  const currentWeek = Math.min(
+    Math.max(1, weekOfPlanDay(Math.max(1, todayIndex))),
+    PROGRAM_WEEKS,
+  );
+  const checkins = await prisma.mentorshipCheckin.findMany({
+    where: { menteeId },
+    select: { week: true },
+  });
+  return computeUnlockedWeek(currentWeek, new Set(checkins.map((c) => c.week)));
+}
+
+function revalidateProgram() {
+  revalidatePath("/mentorship/portal/program");
+  revalidatePath("/mentorship/portal");
+}
+
+export async function togglePlanTask(
+  _prev: PortalFormResult,
+  formData: FormData,
+): Promise<PortalFormResult> {
+  const mentee = await verifyMentee();
+  const id = String(formData.get("id") ?? "");
+  const evidence = String(formData.get("evidence") ?? "").trim();
+  if (!id) return { error: "Missing task." };
+
+  const task = await prisma.mentorshipPlanTask.findFirst({
+    where: { id, menteeId: mentee.id },
+    include: { day: true },
+  });
+  if (!task) return { error: "That task was not found." };
+
+  const unlocked = await unlockedWeekFor(mentee.id);
+  if (!canWorkDay(task.day, unlocked)) {
+    return { error: "This week is still locked. Submit last week's check-in first." };
+  }
+
+  if (task.status === "done") {
+    await prisma.mentorshipPlanTask.update({
+      where: { id: task.id },
+      data: { status: "todo", completedAt: null },
+    });
+    revalidateProgram();
+    return { ok: true };
+  }
+
+  if (task.evidenceHint && !evidence && !task.evidence) {
+    return { error: "This task asks for evidence before it counts. Add it below." };
+  }
+  if (evidence.length > 8000) {
+    return { error: "Keep evidence under 8000 characters (a link plus a summary is perfect)." };
+  }
+
+  await prisma.mentorshipPlanTask.update({
+    where: { id: task.id },
+    data: {
+      status: "done",
+      completedAt: new Date(),
+      ...(evidence ? { evidence } : {}),
+    },
+  });
+  revalidateProgram();
+  return { ok: true };
+}
+
+export async function closePlanDay(
+  _prev: PortalFormResult,
+  formData: FormData,
+): Promise<PortalFormResult> {
+  const mentee = await verifyMentee();
+  const id = String(formData.get("id") ?? "");
+  const reflection = String(formData.get("reflection") ?? "").trim();
+  const confidenceRaw = Number(formData.get("confidence"));
+  const confidence =
+    confidenceRaw >= 1 && confidenceRaw <= 5 ? confidenceRaw : null;
+
+  if (!id) return { error: "Missing day." };
+  if (!reflection) {
+    return { error: "One honest line about the day. That is the whole ask." };
+  }
+
+  const day = await prisma.mentorshipPlanDay.findFirst({
+    where: { id, menteeId: mentee.id },
+    include: { tasks: { select: { status: true } } },
+  });
+  if (!day) return { error: "That day was not found." };
+  if (day.completedAt) return { error: "This day is already closed out. Well done." };
+
+  const unlocked = await unlockedWeekFor(mentee.id);
+  if (!canCloseDay(day, unlocked)) {
+    return { error: "You can close out a day once its date arrives." };
+  }
+  if (!day.tasks.some((t) => t.status === "done")) {
+    return { error: "Complete at least one task before closing out the day." };
+  }
+
+  await prisma.mentorshipPlanDay.update({
+    where: { id: day.id },
+    data: { completedAt: new Date(), reflection, confidence },
+  });
+  revalidateProgram();
+  return { ok: true };
+}
+
+export async function requestAiTool(
+  _prev: PortalFormResult,
+  formData: FormData,
+): Promise<PortalFormResult> {
+  const mentee = await verifyMentee();
+  const tool = String(formData.get("tool") ?? "");
+  const note = String(formData.get("note") ?? "").trim() || null;
+  if (!["anthropic", "openai", "fal"].includes(tool)) {
+    return { error: "Unknown tool." };
+  }
+
+  const existing = await prisma.mentorshipAiTool.findUnique({
+    where: { menteeId_tool: { menteeId: mentee.id, tool } },
+  });
+  if (existing?.status === "granted") {
+    return { error: "You already have access to this tool." };
+  }
+
+  await prisma.mentorshipAiTool.upsert({
+    where: { menteeId_tool: { menteeId: mentee.id, tool } },
+    create: { menteeId: mentee.id, tool, status: "requested", note },
+    update: { status: "requested", ...(note ? { note } : {}) },
+  });
+
+  revalidatePath("/mentorship/portal/toolkit");
   return { ok: true };
 }
 

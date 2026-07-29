@@ -18,9 +18,11 @@ import {
 } from "@/components/mentorship/ui";
 import { ProgressRing } from "@/components/mentorship/ProgressRing";
 import { WeekStrip } from "@/components/mentorship/WeekStrip";
+import { getPlanState } from "@/lib/mentorship/plan";
 
 export default async function PortalOverviewPage() {
   const mentee = await verifyMentee();
+  const plan = await getPlanState(mentee.id);
   const week = programWeek();
   const inProgram = week >= 1 && week <= PROGRAM_WEEKS;
   const month = inProgram ? monthOfWeek(week) : week === 0 ? 1 : 3;
@@ -92,12 +94,64 @@ export default async function PortalOverviewPage() {
               <span className="text-zinc-300">{theme.title}</span>
             </>
           ) : week === 0 ? (
-            "The programme has not kicked off yet. Get ready!"
+            "Kickoff done. Your daily programme starts Saturday 1 August."
           ) : (
             "The programme has wrapped. Your portal remains open."
           )}
         </p>
       </div>
+
+      {plan.hasPlan ? (
+        (() => {
+          const todayDay = plan.days.find(
+            (d) => d.dayIndex === plan.todayIndex,
+          );
+          const doneToday = todayDay
+            ? todayDay.tasks.filter((t) => t.status === "done").length
+            : 0;
+          return (
+            <Card className="border border-accent/20">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-accent">
+                    {todayDay
+                      ? `Today · Day ${todayDay.dayIndex} of 91`
+                      : plan.todayIndex === 0
+                        ? "Your daily programme"
+                        : "Daily programme"}
+                  </p>
+                  <h2 className="mt-1 text-lg font-semibold text-white">
+                    {todayDay
+                      ? todayDay.title
+                      : plan.todayIndex === 0
+                        ? "Day 1 lands Saturday 1 August"
+                        : "The 91 days are complete"}
+                  </h2>
+                  <p className="mt-1 text-sm text-zinc-400">
+                    {todayDay
+                      ? todayDay.completedAt
+                        ? "Closed out. See you tomorrow."
+                        : `${doneToday}/${todayDay.tasks.length} tasks done${
+                            plan.streak > 0 ? ` · 🔥 ${plan.streak}-day streak` : ""
+                          } · ${plan.pointsEarned} pts`
+                      : plan.todayIndex === 0
+                        ? "Personalised micro-tasks, every day, built from your story. Preview week 1 now."
+                        : `Final score: ${plan.pointsEarned} points · ${plan.tasksDone} tasks.`}
+                  </p>
+                </div>
+                <Link
+                  href="/mentorship/portal/program"
+                  className="rounded-full bg-gradient-to-r from-accent to-accent-2 px-5 py-2 text-sm font-semibold text-zinc-950 transition-opacity hover:opacity-90"
+                >
+                  {todayDay && !todayDay.completedAt
+                    ? "Do today's tasks"
+                    : "Open programme"}
+                </Link>
+              </div>
+            </Card>
+          );
+        })()
+      ) : null}
 
       <Card className="overflow-hidden">
         <div className="grid items-center gap-8 md:grid-cols-[auto_1fr]">

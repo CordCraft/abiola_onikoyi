@@ -286,6 +286,8 @@ model MentorshipMentee {
   checkins MentorshipCheckin[]
   messages MentorshipMessage[]
   sessions MentorshipSession[]
+  planDays MentorshipPlanDay[]  @relation("planDays")
+  aiTools  MentorshipAiTool[]   @relation("aiTools")
 }
 
 model MentorshipGoal {
@@ -376,6 +378,87 @@ model MentorshipSession {
   updatedAt   DateTime          @updatedAt
 
   @@index([scheduledAt])
+}
+
+// One dated day of the personalized daily programme. Days are auto-assigned
+// by calendar date (Africa/Lagos); the mentee completes the day by submitting
+// a short reflection and confidence rating, which is their daily check-in.
+model MentorshipPlanDay {
+  id       String           @id @default(cuid())
+  mentee   MentorshipMentee @relation("planDays", fields: [menteeId], references: [id], onDelete: Cascade)
+  menteeId String
+  // 1..91 across the three months
+  dayIndex Int
+  // The Lagos calendar date this day belongs to, stored at UTC midnight
+  date     DateTime
+  // Programme week 1..13
+  week     Int
+  title    String
+  // Morning mindset brief: a short self-esteem / mindset exercise
+  mindset  String?
+
+  // Daily check-in, filled when the mentee closes out the day
+  completedAt DateTime?
+  reflection  String?
+  confidence  Int?
+
+  // Mentor feedback on the day's work
+  mentorComment String?
+  repliedAt     DateTime?
+
+  createdAt DateTime             @default(now())
+  tasks     MentorshipPlanTask[]
+
+  @@unique([menteeId, dayIndex])
+  @@index([menteeId, date])
+}
+
+model MentorshipPlanTask {
+  id       String            @id @default(cuid())
+  day      MentorshipPlanDay @relation(fields: [dayId], references: [id], onDelete: Cascade)
+  dayId    String
+  menteeId String
+  order    Int               @default(0)
+  // "mindset" | "skill" | "project" | "career" | "checkpoint"
+  kind     String            @default("skill")
+  title    String
+  detail   String?
+  // Rough effort estimate shown to the mentee
+  minutes  Int               @default(30)
+  // Points feed the running score and streak display
+  points   Int               @default(10)
+  // When set, the portal shows an evidence box with this hint and the task
+  // needs evidence text (a link, an answer, a summary) to be marked done
+  evidenceHint String?
+
+  // "todo" | "done"
+  status        String    @default("todo")
+  completedAt   DateTime?
+  evidence      String?
+  mentorComment String?
+
+  @@index([menteeId, status])
+  @@index([dayId, order])
+}
+
+// AI tool access the mentor provisions per mentee (OpenAI, Claude, fal.ai).
+// The key is pasted by the mentor in the admin area and shown to the mentee
+// in their AI Toolkit once granted.
+model MentorshipAiTool {
+  id       String           @id @default(cuid())
+  mentee   MentorshipMentee @relation("aiTools", fields: [menteeId], references: [id], onDelete: Cascade)
+  menteeId String
+  // "openai" | "anthropic" | "fal"
+  tool     String
+  // "available" | "requested" | "granted"
+  status   String           @default("available")
+  apiKey   String?
+  // Mentee's note on what they want it for / mentor's guidance
+  note      String?
+  updatedAt DateTime        @updatedAt
+  createdAt DateTime        @default(now())
+
+  @@unique([menteeId, tool])
 }
 
 model MentorshipResource {
