@@ -9,6 +9,7 @@ import { createMenteeSession } from "@/lib/mentorship/session";
 import { ensureMentorshipTables } from "@/lib/mentorship/setup";
 import { generateAccessCode } from "@/lib/mentorship/codes";
 import { draftInitialGoals } from "@/lib/mentorship/goal-draft";
+import { ensureBlueprint, ensureWeekGenerated } from "@/lib/mentorship/program-gen";
 import {
   parseProfileFields,
   validatePhotoData,
@@ -103,11 +104,17 @@ export async function signUp(
         data: { email, accessCode: generateAccessCode(), ...data },
       });
 
-  // Personalized starter goals, drafted from their story (never throws).
+  // Personalized starter goals, then the 91-day programme blueprint and the
+  // first week of daily tasks, all drafted from their story (never throws).
   // Runs after the response is sent so signup stays fast and can never hit
-  // the serverless time cap waiting on the model; the goals appear on the
-  // portal moments later.
-  after(() => draftInitialGoals(mentee.id));
+  // the serverless time cap waiting on the model; everything appears on the
+  // portal moments later, and the programme page can regenerate any missing
+  // piece itself if this background window gets cut short.
+  after(async () => {
+    await draftInitialGoals(mentee.id);
+    await ensureBlueprint(mentee.id);
+    await ensureWeekGenerated(mentee.id, 1).catch(() => {});
+  });
 
   await createMenteeSession(mentee.id, mentee.name);
   revalidatePath("/dashboard/mentorship");

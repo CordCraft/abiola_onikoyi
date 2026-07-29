@@ -29,11 +29,12 @@ export const MONTH_THEMES: Record<number, { title: string; blurb: string }> = {
   },
 };
 
-// Monthly cadence per mentee: 1 one-on-one, 1 group session, 2 async check-ins.
+// Cadence per mentee: daily programme tasks plus the human touchpoints.
 export const CADENCE = [
-  { label: "One-on-one with your mentor", perMonth: 1 },
+  { label: "Daily micro-tasks in your personalised programme", perMonth: 30 },
+  { label: "Weekly check-ins that unlock your next week", perMonth: 4 },
+  { label: "One-on-one review with your mentor", perMonth: 1 },
   { label: "Group session with the cohort", perMonth: 1 },
-  { label: "Async portal check-ins", perMonth: 2 },
 ];
 
 export const GOAL_STATUSES = ["active", "completed", "dropped"] as const;

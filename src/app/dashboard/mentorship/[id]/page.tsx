@@ -115,6 +115,11 @@ export default async function MenteeDetailPage({
             {mentee.headline ?? "No headline"}
             {mentee.focusArea ? ` · ${mentee.focusArea}` : null}
           </p>
+          {mentee.track ? (
+            <p className="mt-1 text-sm font-medium text-indigo-600">
+              {mentee.track}
+            </p>
+          ) : null}
           <p className="mt-1 text-xs text-zinc-400">
             {mentee.lastLoginAt
               ? `Last signed in ${formatDateTime(mentee.lastLoginAt)}`
@@ -290,6 +295,24 @@ export default async function MenteeDetailPage({
             Weeks unlock for the mentee when they submit the previous
             week&apos;s check-in, whether or not you have replied.
           </p>
+          {(() => {
+            try {
+              const bp = mentee.programBlueprint
+                ? (JSON.parse(mentee.programBlueprint) as {
+                    capstoneTitle?: string;
+                    capstoneSummary?: string;
+                  })
+                : null;
+              return bp?.capstoneTitle ? (
+                <p className="mt-2 rounded-lg bg-indigo-50 px-3 py-2 text-xs text-indigo-800">
+                  <span className="font-semibold">Capstone:</span>{" "}
+                  {bp.capstoneTitle}. {bp.capstoneSummary}
+                </p>
+              ) : null;
+            } catch {
+              return null;
+            }
+          })()}
           <div className="mt-4 space-y-2">
             {planWeeks.map((w) => {
               const days = mentee.planDays.filter((d) => d.week === w);
@@ -433,9 +456,11 @@ export default async function MenteeDetailPage({
                     Mentee&apos;s note: {row.note}
                   </p>
                 ) : null}
-                {row?.status === "granted" && row.apiKey ? (
+                {row?.status === "granted" ? (
                   <p className="mt-2 truncate font-mono text-xs text-zinc-500">
-                    {row.apiKey.slice(0, 14)}…{row.apiKey.slice(-4)}
+                    {row.apiKey
+                      ? `${row.apiKey.slice(0, 14)}…${row.apiKey.slice(-4)}`
+                      : "Shared site key (from environment)"}
                   </p>
                 ) : (
                   <div className="mt-3">

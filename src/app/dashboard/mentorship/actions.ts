@@ -469,14 +469,15 @@ export async function adminGrantAiTool(
 
   const menteeId = String(formData.get("menteeId") ?? "");
   const tool = String(formData.get("tool") ?? "");
-  const apiKey = String(formData.get("apiKey") ?? "").trim();
+  // Optional: when left blank the mentee receives the site's shared key from
+  // the environment (ANTHROPIC_API_KEY / OPENAI_API_KEY / FALAI_API_KEY).
+  const apiKey = String(formData.get("apiKey") ?? "").trim() || null;
   const note = String(formData.get("note") ?? "").trim() || null;
 
   if (!menteeId) return { error: "Missing mentee id." };
   if (!["anthropic", "openai", "fal"].includes(tool)) {
     return { error: "Unknown tool." };
   }
-  if (!apiKey) return { error: "Paste the API key to grant." };
 
   await prisma.mentorshipAiTool.upsert({
     where: { menteeId_tool: { menteeId, tool } },

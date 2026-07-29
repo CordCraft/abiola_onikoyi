@@ -41,7 +41,7 @@ function fallbackGoals(mentee: MentorshipMentee): DraftGoal[] {
   ];
 }
 
-function profileSummary(mentee: MentorshipMentee): string {
+export function profileSummary(mentee: MentorshipMentee): string {
   const lines = [
     `Name: ${mentee.name}`,
     mentee.level ? `Level: ${mentee.level} chemical engineering, UNILAG` : null,

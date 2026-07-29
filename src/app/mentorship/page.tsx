@@ -207,8 +207,8 @@ export default function MentorshipPage() {
                     Momentum, monthly
                   </h2>
                   <p className="mt-4 text-zinc-400">
-                    At least four touchpoints a month, so progress never stalls
-                    between sessions.
+                    A personalised task lands every single day, so progress
+                    never stalls between sessions.
                   </p>
                   <ul className="mt-8 space-y-4">
                     {CADENCE.map((c, i) => (

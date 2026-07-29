@@ -1,8 +1,10 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   closePlanDay,
+  prepareProgramWeek,
   requestAiTool,
   togglePlanTask,
 } from "@/app/mentorship/portal/actions";
@@ -216,6 +218,71 @@ export function CloseDayForm({ dayId }: { dayId: string }) {
         </p>
       ) : null}
     </form>
+  );
+}
+
+// Rendered by the programme page when a week the mentee should see has no
+// generated days yet (new signups). Kicks off server-side generation on
+// mount, keeps the mentee company while the AI writes their week, then
+// refreshes to reveal it.
+export function GenerateWeek({ week }: { week: number }) {
+  const router = useRouter();
+  const [failed, setFailed] = useState(false);
+  const started = useRef(false);
+
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    let cancelled = false;
+    prepareProgramWeek(week)
+      .then((res) => {
+        if (cancelled) return;
+        if (res.ok) router.refresh();
+        else setFailed(true);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [week, router]);
+
+  if (failed) {
+    return (
+      <div className="rounded-2xl border border-amber-500/20 bg-amber-500/[0.06] p-6 text-center">
+        <p className="text-sm text-amber-200">
+          Week {week} could not be prepared just now.
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            setFailed(false);
+            started.current = false;
+            prepareProgramWeek(week).then((res) => {
+              if (res.ok) router.refresh();
+              else setFailed(true);
+            });
+          }}
+          className="mt-3 rounded-full bg-white px-4 py-1.5 text-sm font-semibold text-zinc-950 transition-colors hover:bg-zinc-200"
+        >
+          Try again
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-2xl border border-accent/20 bg-accent/[0.04] p-8 text-center">
+      <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-accent/30 border-t-accent" />
+      <p className="text-sm font-semibold text-white">
+        Building week {week} of your personalised programme…
+      </p>
+      <p className="mt-1 text-xs text-zinc-400">
+        Your mentor&apos;s AI is designing this week&apos;s daily tasks from
+        your story, goals, and progress. This takes under a minute.
+      </p>
+    </div>
   );
 }
 

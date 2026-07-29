@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { verifyMentee } from "@/lib/mentorship/dal";
+import { sharedKeyFor } from "@/lib/mentorship/ai-keys";
 import { Card, CardTitle, Pill } from "@/components/mentorship/ui";
 import { RequestToolForm } from "@/components/mentorship/plan-forms";
 import { CopyButton } from "@/components/mentorship/CopyButton";
@@ -89,6 +90,10 @@ export default async function ToolkitPage() {
       {TOOLS.map((t) => {
         const row = byTool.get(t.tool);
         const status = row?.status ?? "available";
+        // A mentee-specific key wins; otherwise granted tools hand out the
+        // site's shared key from the environment.
+        const key =
+          status === "granted" ? (row?.apiKey ?? sharedKeyFor(t.tool)) : null;
         return (
           <Card key={t.tool}>
             <CardTitle
@@ -106,25 +111,29 @@ export default async function ToolkitPage() {
             />
             <p className="text-sm leading-relaxed text-zinc-400">{t.bestFor}</p>
 
-            {status === "granted" && row?.apiKey ? (
+            {status === "granted" && key ? (
               <div className="mt-4 rounded-xl border border-emerald-500/20 bg-emerald-500/[0.05] p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-xs font-semibold uppercase tracking-wide text-emerald-300">
                     Your API key
                   </p>
                   <CopyButton
-                    text={row.apiKey}
+                    text={key}
                     label="Copy key"
                     className="rounded-full border border-white/20 px-3 py-1 text-xs font-medium text-zinc-300 transition-colors hover:bg-white/10"
                   />
                 </div>
                 <code className="mt-2 block overflow-x-auto whitespace-nowrap rounded-lg bg-zinc-950/60 px-3 py-2 font-mono text-xs text-zinc-300">
-                  {row.apiKey}
+                  {key}
                 </code>
-                {row.note ? (
+                {row?.note ? (
                   <p className="mt-2 text-xs text-zinc-500">{row.note}</p>
                 ) : null}
               </div>
+            ) : status === "granted" ? (
+              <p className="mt-4 rounded-xl bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
+                Granted, but no key is configured yet. Message your mentor.
+              </p>
             ) : (
               <div className="mt-4">
                 <RequestToolForm tool={t.tool} requested={status === "requested"} />

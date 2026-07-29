@@ -7,9 +7,10 @@ import {
   monthOfWeek,
   MONTH_THEMES,
 } from "@/lib/mentorship/constants";
-import { Card, EmptyState, Pill } from "@/components/mentorship/ui";
+import { Card, Pill } from "@/components/mentorship/ui";
 import {
   CloseDayForm,
+  GenerateWeek,
   PlanTaskItem,
 } from "@/components/mentorship/plan-forms";
 
@@ -146,15 +147,20 @@ export default async function ProgramPage({
   const params = await searchParams;
 
   if (!state.hasPlan) {
+    // New signups: their programme is AI-designed from their own signup
+    // story, one week at a time, starting the moment they first open this
+    // page. Anyone with a portal session has onboarded.
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">
-          Daily programme
-        </h1>
-        <EmptyState>
-          Your personalised 91-day programme is being prepared by your mentor.
-          Check back soon.
-        </EmptyState>
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">
+            Daily programme
+          </h1>
+          <p className="mt-1 text-zinc-400">
+            91 days of personalised micro-tasks, built from your story.
+          </p>
+        </div>
+        <GenerateWeek week={1} />
       </div>
     );
   }
@@ -196,6 +202,7 @@ export default async function ProgramPage({
           Daily programme
         </h1>
         <p className="mt-1 text-zinc-400">
+          {mentee.track ? `${mentee.track} · ` : ""}
           {notStarted
             ? "Day 1 lands on Saturday 1 August. Preview week 1 below and come ready."
             : wrapped
@@ -315,21 +322,25 @@ export default async function ProgramPage({
           </p>
         ) : null}
 
-        <div className="space-y-3">
-          {weekDays.map((day) => (
-            <DayCard
-              key={day.id}
-              day={day}
-              locked={weekLocked}
-              isToday={!notStarted && !wrapped && day.dayIndex === state.todayIndex}
-              canClose={
-                !weekLocked &&
-                !day.completedAt &&
-                day.date.getTime() <= today
-              }
-            />
-          ))}
-        </div>
+        {weekDays.length === 0 ? (
+          <GenerateWeek week={selectedWeek} />
+        ) : (
+          <div className="space-y-3">
+            {weekDays.map((day) => (
+              <DayCard
+                key={day.id}
+                day={day}
+                locked={weekLocked}
+                isToday={!notStarted && !wrapped && day.dayIndex === state.todayIndex}
+                canClose={
+                  !weekLocked &&
+                  !day.completedAt &&
+                  day.date.getTime() <= today
+                }
+              />
+            ))}
+          </div>
+        )}
       </Card>
     </div>
   );

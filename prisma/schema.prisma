@@ -281,6 +281,12 @@ model MentorshipMentee {
   availability    String? // preferred meeting windows
   commsPref       String? // whatsapp | email | portal | call
 
+  // Auto-generated programme design (new signups): short track name shown in
+  // the UI, and the JSON blueprint (capstone + 13 week themes) that steers
+  // week-by-week task generation in src/lib/mentorship/program-gen.ts.
+  track            String?
+  programBlueprint String?
+
   goals    MentorshipGoal[]
   tasks    MentorshipTask[]
   checkins MentorshipCheckin[]

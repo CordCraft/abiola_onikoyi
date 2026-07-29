@@ -14,6 +14,8 @@ import {
   canWorkDay,
   computeUnlockedWeek,
 } from "@/lib/mentorship/plan";
+import { ensureWeekGenerated } from "@/lib/mentorship/program-gen";
+import { after } from "next/server";
 
 export type PortalFormResult = { error?: string; ok?: boolean } | undefined;
 
@@ -140,6 +142,14 @@ export async function submitCheckin(
     data: { menteeId: mentee.id, week, wins, blockers, nextFocus, confidence },
   });
 
+  // For auto-generated programmes, have the newly unlocked week's tasks
+  // ready (informed by this very check-in) by the time they open the page.
+  // Hand-seeded plans already have every week; ensureWeekGenerated no-ops.
+  if (week < PROGRAM_WEEKS) {
+    const menteeId = mentee.id;
+    after(() => ensureWeekGenerated(menteeId, week + 1).catch(() => {}));
+  }
+
   revalidatePath("/mentorship/portal/checkins");
   revalidatePath("/mentorship/portal/program");
   revalidatePath("/mentorship/portal");
@@ -254,6 +264,26 @@ export async function closePlanDay(
   });
   revalidateProgram();
   return { ok: true };
+}
+
+// Generates the plan days for one week of the mentee's own programme, called
+// automatically by the programme page when a needed week has no days yet
+// (new signups get their weeks AI-generated on demand). Only weeks the
+// mentee is allowed to see (unlocked + one preview) can be generated.
+export async function prepareProgramWeek(
+  week: number,
+): Promise<{ ok: boolean }> {
+  const mentee = await verifyMentee();
+  const w = Math.floor(week);
+  if (w < 1 || w > PROGRAM_WEEKS) return { ok: false };
+
+  const unlocked = await unlockedWeekFor(mentee.id);
+  const visible = Math.min(Math.max(unlocked, 1) + 1, PROGRAM_WEEKS);
+  if (w > visible) return { ok: false };
+
+  const result = await ensureWeekGenerated(mentee.id, w);
+  if (result !== "failed") revalidateProgram();
+  return { ok: result !== "failed" };
 }
 
 export async function requestAiTool(

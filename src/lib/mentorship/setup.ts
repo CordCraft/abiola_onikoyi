@@ -211,6 +211,8 @@ const MENTEE_PROFILE_COLUMNS = [
   "challenges",
   "availability",
   "commsPref",
+  "track",
+  "programBlueprint",
 ];
 
 // Applies only the ALTERs that are actually needed (Postgres). Returns true

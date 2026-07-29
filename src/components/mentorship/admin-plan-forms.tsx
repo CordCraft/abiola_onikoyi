@@ -92,8 +92,7 @@ export function GrantToolForm({
       <input type="hidden" name="tool" value={tool} />
       <input
         name="apiKey"
-        required
-        placeholder={`Paste ${TOOL_LABELS[tool] ?? tool} key…`}
+        placeholder={`${TOOL_LABELS[tool] ?? tool} key (blank = shared site key)`}
         className={`${inputClass} min-w-0 flex-1 font-mono text-xs`}
       />
       <input
