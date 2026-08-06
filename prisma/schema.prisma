@@ -242,6 +242,100 @@ model JarvisProposal {
 }
 
 // ---------------------------------------------------------------------------
+// Trading dashboard (private /dashboard/trading)
+// One MT5 account per row, fed by the Reporter EA posting to
+// /api/trading/ingest. Tables are created in production by
+// ensureTradingTables() in src/lib/trading/setup.ts (idempotent raw DDL),
+// since deploys never run `prisma db push`. Keep that DDL in sync.
+// ---------------------------------------------------------------------------
+
+model TradingAccount {
+  id        String @id @default(cuid())
+  // `${login}@${server}` so the same login on a demo and live server stay apart
+  accountKey String @unique
+  login     String
+  server    String
+  broker    String // company name reported by the terminal
+  label     String? // friendly name set in the EA inputs, e.g. "Vantage"
+  name      String? // account holder name reported by the terminal
+  currency  String  @default("USD")
+  leverage  Int?
+  // Live state, overwritten on every EA post
+  balance       Float    @default(0)
+  equity        Float    @default(0)
+  margin        Float    @default(0)
+  freeMargin    Float    @default(0)
+  // Percent; null when no positions are open (margin = 0)
+  marginLevel   Float?
+  floatingPnl   Float    @default(0)
+  positionCount Int      @default(0)
+  // Open positions as reported in the latest snapshot (array of objects)
+  openPositions Json?
+  // Broker server clock minus GMT, in seconds (deal times arrive in server time)
+  gmtOffsetSeconds Int @default(0)
+  lastSeenAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  deals     TradingDeal[]
+  snapshots TradingSnapshot[]
+}
+
+// Raw MT5 deals (one row per fill). A "trade" in the UI is the set of deals
+// sharing a positionId; grouping happens in src/lib/trading/data.ts.
+model TradingDeal {
+  id         String         @id @default(cuid())
+  account    TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId  String
+  // MT5 tickets exceed 2^31; stored as strings to keep JSON serialisation safe
+  ticket     String
+  orderTicket String?
+  positionId String?
+  symbol     String
+  // "buy" | "sell" | "balance" | "credit" | "other"
+  type       String
+  // "in" | "out" | "inout" | "out_by" | "" (balance ops)
+  entry      String @default("")
+  volume     Float  @default(0)
+  price      Float  @default(0)
+  sl         Float?
+  tp         Float?
+  profit     Float  @default(0)
+  swap       Float  @default(0)
+  commission Float  @default(0)
+  fee        Float  @default(0)
+  magic      String?
+  comment    String?
+  // UTC (EA reports the broker GMT offset and the server converts)
+  time DateTime
+
+  @@unique([accountId, ticket])
+  @@index([accountId, time])
+  @@index([accountId, positionId])
+}
+
+// Periodic equity/margin snapshots. Stored on every EA post while positions
+// are open (30s granularity for drawdown and stop-out analysis), and roughly
+// every 15 minutes while flat.
+model TradingSnapshot {
+  id        String         @id @default(cuid())
+  account   TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId String
+  at        DateTime       @default(now())
+  balance     Float
+  equity      Float
+  margin      Float @default(0)
+  freeMargin  Float @default(0)
+  marginLevel Float?
+  floatingPnl Float @default(0)
+  positionCount Int @default(0)
+  // Open positions at snapshot time (only stored while positions are open)
+  positions Json?
+
+  @@index([accountId, at])
+}
+
+// ---------------------------------------------------------------------------
 // Mentorship programme (public /mentorship + mentee portal + admin area)
 // Tables are created in production by ensureMentorshipTables() in
 // src/lib/mentorship/setup.ts (idempotent raw DDL), since deploys never run

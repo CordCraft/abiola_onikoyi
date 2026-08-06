@@ -30,6 +30,9 @@ export default async function DashboardLayout({
               <Link href="/dashboard/blog" className="hover:text-zinc-900">
                 Blog
               </Link>
+              <Link href="/dashboard/trading" className="hover:text-zinc-900">
+                Trading
+              </Link>
               <Link href="/dashboard/mentorship" className="hover:text-zinc-900">
                 Mentorship
               </Link>

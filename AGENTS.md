@@ -26,6 +26,15 @@ Three-month cohort mentorship for NSChE UNILAG chemical engineering students (Co
 - **Tables**: created lazily by `ensureMentorshipTables()` (`src/lib/mentorship/setup.ts`), idempotent raw DDL run from the admin pages and mentee login, because deploys never run `prisma db push`. Columns added after launch ship as `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` in the same file (each wrapped in try/catch so local SQLite dev, which gets columns via `prisma db push`, is unaffected). Keep the DDL in sync with the `Mentorship*` Prisma models.
 - Session times are entered and displayed in West Africa Time (`formatDateTime` pins `Africa/Lagos`).
 
+## Trading dashboard
+
+Private telemetry for three MT5 algo accounts (Vantage, BlackBull, Exness) at `/dashboard/trading` (overview cards) and `/dashboard/trading/[id]` (equity/margin charts, open positions, trade backlog, stats).
+
+- **Feed**: `public/trading/OnikoyiReporter.mq5` is a read-only EA attached to one chart per terminal on the VPS. Every 30s it POSTs account state + newly closed deals to `/api/trading/ingest` (under `/api/*` on purpose, gotcha 2) with header `x-trading-secret: TRADING_INGEST_SECRET`. The response's `sinceTicket` is the server's history cursor; the EA trusts it in both directions and deal writes are idempotent per (accountId, ticket), so re-sends and DB resets self-heal. Deal timestamps arrive in broker server time; the route converts to UTC using the reported `time.server - time.gmt` offset rounded to 30 min.
+- **Tables**: `TradingAccount` (live state, `accountKey = login@server`), `TradingDeal` (raw MT5 deals; tickets stored as TEXT to avoid BigInt serialisation), `TradingSnapshot` (every post while positions are open, ~15 min while flat; pruned past 120 days). Created lazily by `ensureTradingTables()` in `src/lib/trading/setup.ts` (same pattern as mentorship). Round-trip trades are grouped from deals by `positionId` in `src/lib/trading/data.ts` (`groupTrades`/`computeStats`).
+- **Charts**: hand-rolled SVG client component `src/components/dashboard/TradingLineChart.tsx` (no chart lib). Deal dedup in the ingest route is a pre-filter + plain `createMany` because `skipDuplicates` does not exist on SQLite clients.
+- Do not report Prisma `mode: "insensitive"`-style Postgres-only options in this area; the trading code deliberately stays provider-agnostic so it can be E2E-tested against a local SQLite db (flip the datasource provider locally, `prisma db push`, post fake EA payloads to the ingest route, flip back and regenerate).
+
 ## Jarvis architecture
 
 - **Chat**: `src/components/jarvis/JarvisChat.tsx` (client) <-> `src/app/jarvis/api/chat/route.ts` (NDJSON stream: `meta|ping|status|delta|saved|resume|done|error`). Tools in `src/lib/jarvis/tools.ts` write DIRECTLY (no confirm step) and emit receipt chips with Undo (`undoRecord` action). Context snapshot: `src/lib/jarvis/context.ts`.
@@ -51,4 +60,4 @@ Mint a session cookie with jose from `SESSION_SECRET` in `.env`, then hit routes
 
 ## Environment variables
 
-Netlify (production): `DATABASE_URL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH`, `SESSION_SECRET`, `ANTHROPIC_API_KEY`, `CRON_SECRET`, `NEXT_PUBLIC_VAPID_PUBLIC_KEY` (inlined at build time), `VAPID_PRIVATE_KEY`, `VOYAGE_API_KEY`. Local `.env` mirrors these (the bcrypt hash needs each `$` escaped as `\$` locally; the Anthropic key is intentionally empty). `.env` is gitignored: moving to a new machine means copying it through a secure channel, never through git.
+Netlify (production): `DATABASE_URL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH`, `SESSION_SECRET`, `ANTHROPIC_API_KEY`, `CRON_SECRET`, `NEXT_PUBLIC_VAPID_PUBLIC_KEY` (inlined at build time), `VAPID_PRIVATE_KEY`, `VOYAGE_API_KEY`, `TRADING_INGEST_SECRET` (shared with the OnikoyiReporter EA inputs on the VPS). Local `.env` mirrors these (the bcrypt hash needs each `$` escaped as `\$` locally; the Anthropic key is intentionally empty). `.env` is gitignored: moving to a new machine means copying it through a secure channel, never through git.
