@@ -1,6 +1,18 @@
 import Link from "next/link";
 import { verifySession } from "@/lib/dal";
-import { getSnapshots, getTradingAccounts } from "@/lib/trading/data";
+import {
+  getDeals,
+  getSnapshots,
+  getTradingAccounts,
+  groupTrades,
+  type LivePosition,
+} from "@/lib/trading/data";
+import {
+  buildClusters,
+  buildExposure,
+  inferPointValues,
+  type ExposureAccountInput,
+} from "@/lib/trading/analytics";
 import { daysAgo, isStale, marginStatus } from "@/lib/trading/status";
 import { formatDateTime } from "@/lib/format";
 import TradingLineChart from "@/components/dashboard/TradingLineChart";
@@ -11,6 +23,7 @@ const money = new Intl.NumberFormat("en-GB", {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 });
+const num2 = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 2 });
 
 export default async function TradingPage() {
   await verifySession();
@@ -26,6 +39,36 @@ export default async function TradingPage() {
       })),
     })),
   );
+
+  // Combined exposure: what a move in the underlying costs across every
+  // terminal at once. Combined equity is one number; this is the other one.
+  const exposureInputs: ExposureAccountInput[] = await Promise.all(
+    accounts.map(async (a): Promise<ExposureAccountInput> => {
+      const trades = groupTrades(await getDeals(a.id));
+      const pointValues = inferPointValues(trades);
+      const clusters = buildClusters(trades, pointValues);
+      const peak = clusters.reduce<(typeof clusters)[number] | null>(
+        (best, c) => (best === null || c.maxVolume > best.maxVolume ? c : best),
+        null,
+      );
+      return {
+        id: a.id,
+        label: a.label || a.broker || "Account",
+        equity: a.equity,
+        positions: (a.openPositions ?? []) as LivePosition[],
+        pointValues,
+        peakCluster: peak
+          ? {
+              legs: peak.maxConcurrent,
+              volume: peak.maxVolume,
+              symbol: peak.symbol,
+              at: peak.openedAt,
+            }
+          : null,
+      };
+    }),
+  );
+  const exposure = buildExposure(exposureInputs);
 
   const currencies = new Set(accounts.map((a) => a.currency));
   const sameCurrency = currencies.size === 1 ? accounts[0]?.currency : null;
@@ -151,6 +194,200 @@ export default async function TradingPage() {
             );
           })}
         </ul>
+      )}
+
+      {accounts.length > 0 && (
+        <section className="mt-6 rounded-2xl border border-zinc-200 bg-white p-6">
+          <h2 className="font-semibold text-zinc-900">Combined exposure</h2>
+          <p className="mt-1 text-xs text-zinc-500">
+            Every terminal runs the same strategy on the same instrument, so
+            their risk adds up even though their equity is reported separately.
+            This is what one unit of adverse price movement costs across all of
+            them at once.
+          </p>
+
+          {exposure.legs.length > 0 ? (
+            <>
+              <div className="mt-4 grid gap-4 sm:grid-cols-3">
+                <div className="rounded-xl border border-zinc-200 p-4">
+                  <div className="text-xs uppercase tracking-wide text-zinc-400">
+                    Open now
+                  </div>
+                  <div
+                    className="mt-1 text-xl font-bold text-zinc-900"
+                    style={{ fontVariantNumeric: "tabular-nums" }}
+                  >
+                    {num2.format(exposure.legs.reduce((s, l) => s + l.volume, 0))} lots
+                  </div>
+                  <div className="mt-1 text-xs text-zinc-500">
+                    across {exposure.legs.reduce((s, l) => s + l.positions, 0)} positions
+                  </div>
+                </div>
+                <div className="rounded-xl border border-zinc-200 p-4">
+                  <div className="text-xs uppercase tracking-wide text-zinc-400">
+                    Per 1.00 adverse move
+                  </div>
+                  <div
+                    className="mt-1 text-xl font-bold text-red-700"
+                    style={{ fontVariantNumeric: "tabular-nums" }}
+                  >
+                    {money.format(exposure.totalPerUnitMove)}
+                  </div>
+                  <div className="mt-1 text-xs text-zinc-500">combined, all accounts</div>
+                </div>
+                <div className="rounded-xl border border-zinc-200 p-4">
+                  <div className="text-xs uppercase tracking-wide text-zinc-400">
+                    Move that zeroes everything
+                  </div>
+                  <div
+                    className="mt-1 text-xl font-bold text-zinc-900"
+                    style={{ fontVariantNumeric: "tabular-nums" }}
+                  >
+                    {exposure.moveToZero === null
+                      ? "n/a"
+                      : num2.format(exposure.moveToZero)}
+                  </div>
+                  <div className="mt-1 text-xs text-zinc-500">
+                    price units against the book
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full min-w-[32rem] text-sm">
+                  <thead>
+                    <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-400">
+                      <th className="pb-2 font-medium">Symbol</th>
+                      <th className="pb-2 text-right font-medium">Accounts</th>
+                      <th className="pb-2 text-right font-medium">Positions</th>
+                      <th className="pb-2 text-right font-medium">Lots</th>
+                      <th className="pb-2 text-right font-medium">Per 1.00 move</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100">
+                    {exposure.bySymbol.map((s) => (
+                      <tr key={s.symbol} style={{ fontVariantNumeric: "tabular-nums" }}>
+                        <td className="py-2 font-medium text-zinc-900">{s.symbol}</td>
+                        <td className="py-2 text-right text-zinc-600">{s.accounts}</td>
+                        <td className="py-2 text-right text-zinc-600">{s.positions}</td>
+                        <td className="py-2 text-right text-zinc-600">
+                          {num2.format(s.volume)}
+                        </td>
+                        <td className="py-2 text-right font-semibold text-zinc-900">
+                          {money.format(s.perUnitMove)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : (
+            <p className="mt-4 rounded-xl border border-dashed border-zinc-200 px-4 py-3 text-sm text-zinc-500">
+              Every account is flat right now, so live exposure is zero. The
+              figures below are what the book looked like at its largest, which
+              is the number worth planning around.
+            </p>
+          )}
+
+          {exposure.peak && (
+            <div className="mt-6 border-t border-zinc-100 pt-5">
+              <h3 className="text-sm font-semibold text-zinc-900">
+                If every account returned to its largest sequence at once
+              </h3>
+              <p className="mt-1 text-xs text-zinc-500">
+                Taken from the biggest averaging sequence each account has
+                actually run. Nothing here is hypothetical sizing; it has all
+                happened, just not on the same day.
+              </p>
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full min-w-[34rem] text-sm">
+                  <thead>
+                    <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-400">
+                      <th className="pb-2 font-medium">Account</th>
+                      <th className="pb-2 text-right font-medium">Legs</th>
+                      <th className="pb-2 text-right font-medium">Lots</th>
+                      <th className="pb-2 text-right font-medium">Per 1.00 move</th>
+                      <th className="pb-2 text-right font-medium">Seen</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100">
+                    {exposure.peak.accounts.map((a) => (
+                      <tr key={a.label} style={{ fontVariantNumeric: "tabular-nums" }}>
+                        <td className="py-2 font-medium text-zinc-900">{a.label}</td>
+                        <td className="py-2 text-right text-zinc-600">{a.legs}</td>
+                        <td className="py-2 text-right text-zinc-600">
+                          {num2.format(a.volume)}
+                        </td>
+                        <td className="py-2 text-right text-zinc-900">
+                          {money.format(a.perUnitMove)}
+                        </td>
+                        <td className="py-2 text-right text-zinc-500">
+                          {formatDateTime(a.at)}
+                        </td>
+                      </tr>
+                    ))}
+                    <tr
+                      className="border-t border-zinc-200 font-semibold"
+                      style={{ fontVariantNumeric: "tabular-nums" }}
+                    >
+                      <td className="py-2 text-zinc-900">Combined</td>
+                      <td className="py-2 text-right text-zinc-900">
+                        {exposure.peak.legs}
+                      </td>
+                      <td className="py-2 text-right text-zinc-900">
+                        {num2.format(exposure.peak.volume)}
+                      </td>
+                      <td className="py-2 text-right text-red-700">
+                        {money.format(exposure.peak.perUnitMove)}
+                      </td>
+                      <td className="py-2 text-right text-zinc-500"></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="mt-4 grid gap-2 sm:grid-cols-5">
+                {[10, 25, 50, 100, 200].map((move) => {
+                  const loss = move * exposure.peak!.perUnitMove;
+                  const share = exposure.totalEquity > 0 ? loss / exposure.totalEquity : 0;
+                  const tone =
+                    share >= 0.5
+                      ? "border-red-200 bg-red-50 text-red-800"
+                      : share >= 0.25
+                        ? "border-amber-200 bg-amber-50 text-amber-900"
+                        : "border-zinc-200 bg-zinc-50 text-zinc-700";
+                  return (
+                    <div key={move} className={`rounded-xl border p-3 ${tone}`}>
+                      <div className="text-xs font-medium">Move of {move}</div>
+                      <div
+                        className="mt-1 text-base font-bold"
+                        style={{ fontVariantNumeric: "tabular-nums" }}
+                      >
+                        {money.format(loss)}
+                      </div>
+                      <div className="mt-0.5 text-xs">
+                        {(share * 100).toFixed(0)}% of combined equity
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {exposure.peak.moveToZero !== null && (
+                <p className="mt-4 text-sm text-zinc-700">
+                  At that size, an adverse move of{" "}
+                  <span className="font-semibold text-red-700">
+                    {num2.format(exposure.peak.moveToZero)}
+                  </span>{" "}
+                  in the underlying takes the entire combined equity of{" "}
+                  {money.format(exposure.totalEquity)}
+                  {sameCurrency ? ` ${sameCurrency}` : ""}.
+                </p>
+              )}
+            </div>
+          )}
+        </section>
       )}
 
       <details

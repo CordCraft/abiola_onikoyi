@@ -13,6 +13,10 @@ export type ChartSeries = {
   name: string;
   color: string;
   points: SeriesPoint[];
+  // When set, the area between the line and `fillTo` is shaded. Used by the
+  // underwater plot, where the depth of the shading is the whole point.
+  fill?: string;
+  fillTo?: number;
 };
 
 type Props = {
@@ -101,12 +105,19 @@ export default function TradingLineChart({
 
   const paths = useMemo(
     () =>
-      series.map((s) => ({
-        ...s,
-        d: s.points
+      series.map((s) => {
+        const d = s.points
           .map((p, i) => `${i === 0 ? "M" : "L"}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`)
-          .join(""),
-      })),
+          .join("");
+        let area: string | null = null;
+        if (s.fill && s.points.length > 1) {
+          const base = y(s.fillTo ?? 0).toFixed(1);
+          const first = s.points[0];
+          const last = s.points[s.points.length - 1];
+          area = `${d}L${x(last.t).toFixed(1)},${base}L${x(first.t).toFixed(1)},${base}Z`;
+        }
+        return { ...s, d, area };
+      }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [series, tMin, tMax, vMin, vMax],
   );
@@ -240,6 +251,12 @@ export default function TradingLineChart({
               {referenceLine.label}
             </text>
           </g>
+        )}
+
+        {paths.map((s) =>
+          s.area ? (
+            <path key={`${s.name}-area`} d={s.area} fill={s.fill} stroke="none" />
+          ) : null,
         )}
 
         {paths.map((s) => (

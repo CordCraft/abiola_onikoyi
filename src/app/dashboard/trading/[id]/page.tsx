@@ -122,18 +122,26 @@ export default async function TradingAccountPage({
             )}
           </p>
         </div>
-        <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-zinc-50 px-3 py-1.5 text-sm font-medium">
-          <span
-            className="inline-block h-2 w-2 rounded-full"
-            style={{ backgroundColor: status.color }}
-          />
-          <span className={status.text}>
-            {status.label}
-            {account.marginLevel !== null
-              ? `, margin ${Math.round(account.marginLevel)}%`
-              : ""}
+        <div className="flex shrink-0 items-center gap-3">
+          <Link
+            href={`/dashboard/trading/${account.id}/analytics`}
+            className="rounded-full bg-zinc-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-zinc-700"
+          >
+            Analytics
+          </Link>
+          <span className="flex items-center gap-1.5 rounded-full bg-zinc-50 px-3 py-1.5 text-sm font-medium">
+            <span
+              className="inline-block h-2 w-2 rounded-full"
+              style={{ backgroundColor: status.color }}
+            />
+            <span className={status.text}>
+              {status.label}
+              {account.marginLevel !== null
+                ? `, margin ${Math.round(account.marginLevel)}%`
+                : ""}
+            </span>
           </span>
-        </span>
+        </div>
       </div>
 
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
