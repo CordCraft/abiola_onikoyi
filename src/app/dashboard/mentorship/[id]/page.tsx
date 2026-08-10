@@ -280,16 +280,24 @@ export default async function MenteeDetailPage({
             <h2 className="text-lg font-semibold text-zinc-900">
               Daily programme
             </h2>
-            <p className="text-sm text-zinc-500">
-              {planDone.length}/{planTasks.length} tasks ·{" "}
-              {planDone.reduce((s, t) => s + t.points, 0)} pts
-              {planStreak > 0 ? ` · 🔥 ${planStreak}-day streak` : ""}
-              {todayIndex >= 1 && todayIndex <= 91
-                ? ` · Day ${todayIndex}, week ${currentWeek}`
-                : todayIndex === 0
-                  ? " · starts 1 Aug"
-                  : " · wrapped"}
-            </p>
+            <div className="flex items-center gap-3">
+              <p className="text-sm text-zinc-500">
+                {planDone.length}/{planTasks.length} tasks ·{" "}
+                {planDone.reduce((s, t) => s + t.points, 0)} pts
+                {planStreak > 0 ? ` · 🔥 ${planStreak}-day streak` : ""}
+                {todayIndex >= 1 && todayIndex <= 91
+                  ? ` · Day ${todayIndex}, week ${currentWeek}`
+                  : todayIndex === 0
+                    ? " · starts 1 Aug"
+                    : " · wrapped"}
+              </p>
+              <Link
+                href={`/dashboard/mentorship/${mentee.id}/program`}
+                className={smallButton}
+              >
+                View as mentee →
+              </Link>
+            </div>
           </div>
           <p className="mt-1 text-xs text-zinc-400">
             Review evidence and leave comments; mentees see them on the day.

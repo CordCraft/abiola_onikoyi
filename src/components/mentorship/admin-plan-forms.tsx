@@ -84,6 +84,82 @@ export function PlanTaskCommentForm({ taskId }: { taskId: string }) {
   );
 }
 
+// Dark variants for the "mirror" view, which reuses the mentee portal's
+// visual language inside the admin dashboard.
+
+const darkInputClass =
+  "w-full rounded-lg border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-white placeholder-zinc-500 outline-none focus:border-accent focus:ring-2 focus:ring-accent/30";
+
+function DarkError({ state }: { state: AdminFormResult }) {
+  if (!state?.error) return null;
+  return (
+    <p role="alert" className="rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-300">
+      {state.error}
+    </p>
+  );
+}
+
+export function PlanDayCommentFormDark({ dayId }: { dayId: string }) {
+  const [state, action, pending] = useActionState(adminCommentPlanDay, undefined);
+
+  return (
+    <form action={action} className="space-y-2">
+      <input type="hidden" name="id" value={dayId} />
+      <textarea
+        name="comment"
+        rows={2}
+        required
+        placeholder="Reply to this day's work…"
+        className={darkInputClass}
+      />
+      <button
+        type="submit"
+        disabled={pending}
+        className="rounded-full bg-gradient-to-r from-accent to-accent-2 px-4 py-1.5 text-xs font-semibold text-zinc-950 transition-opacity hover:opacity-90 disabled:opacity-60"
+      >
+        {pending ? (
+          <span className="inline-flex items-center gap-1.5">
+            <Spinner className="h-3.5 w-3.5" /> Sending…
+          </span>
+        ) : (
+          "Reply"
+        )}
+      </button>
+      <DarkError state={state} />
+    </form>
+  );
+}
+
+export function PlanTaskCommentFormDark({ taskId }: { taskId: string }) {
+  const [state, action, pending] = useActionState(adminCommentPlanTask, undefined);
+
+  return (
+    <form action={action} className="mt-2 flex items-start gap-2">
+      <input type="hidden" name="id" value={taskId} />
+      <input
+        name="comment"
+        required
+        placeholder="Comment on this evidence…"
+        className={`${darkInputClass} flex-1`}
+      />
+      <button
+        type="submit"
+        disabled={pending}
+        className="rounded-full border border-white/15 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-white/10 disabled:opacity-60"
+      >
+        {pending ? (
+          <span className="inline-flex items-center gap-1.5">
+            <Spinner className="h-3.5 w-3.5" /> …
+          </span>
+        ) : (
+          "Comment"
+        )}
+      </button>
+      <DarkError state={state} />
+    </form>
+  );
+}
+
 const TOOL_LABELS: Record<string, string> = {
   anthropic: "Claude API",
   openai: "OpenAI API",

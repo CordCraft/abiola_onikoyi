@@ -418,6 +418,7 @@ export async function deleteAnnouncement(formData: FormData): Promise<void> {
 
 function revalidateProgram(menteeId: string) {
   revalidatePath(`/dashboard/mentorship/${menteeId}`);
+  revalidatePath(`/dashboard/mentorship/${menteeId}/program`);
   revalidatePath("/mentorship/portal/program");
   revalidatePath("/mentorship/portal");
 }
