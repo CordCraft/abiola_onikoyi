@@ -8,8 +8,12 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // Only read by `prisma db push`/`migrate` (DDL and advisory locks need a
+  // direct connection; PgBouncer transaction pooling can't carry them).
+  // The app's Prisma Client at runtime only ever uses `url` above.
+  directUrl = env("DIRECT_DATABASE_URL")
 }
 
 model Project {

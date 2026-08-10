@@ -48,6 +48,35 @@ function useResetOnSuccess(state: AdminFormResult) {
   return ref;
 }
 
+// Server actions here have no client-side timeout, so a slow or stuck DB
+// connection leaves the button spinning with no explanation. After a few
+// seconds of continuous pending, say so instead of spinning silently.
+function useSlowPending(pending: boolean, ms = 7000) {
+  const [tracked, setTracked] = useState({ pending, slow: false });
+  if (pending !== tracked.pending) {
+    setTracked({ pending, slow: false });
+  }
+  useEffect(() => {
+    if (!pending) return;
+    const timer = setTimeout(() => {
+      setTracked((s) => (s.pending ? { ...s, slow: true } : s));
+    }, ms);
+    return () => clearTimeout(timer);
+  }, [pending, ms]);
+  return tracked.pending && tracked.slow;
+}
+
+function SlowNotice({ show }: { show: boolean }) {
+  if (!show) return null;
+  return (
+    <p className="text-xs text-amber-600">
+      Still sending — this can take longer when the database connection is
+      waking up. Nothing is lost; refresh in a bit to check whether it went
+      through before resending.
+    </p>
+  );
+}
+
 export function MenteeForm({
   mode,
   defaults,
@@ -222,6 +251,7 @@ export function AdminTaskForm({
 
 export function CheckinReplyForm({ checkinId }: { checkinId: string }) {
   const [state, action, pending] = useActionState(replyToCheckin, undefined);
+  const slow = useSlowPending(pending);
 
   return (
     <form action={action} className="mt-3 space-y-2">
@@ -243,6 +273,7 @@ export function CheckinReplyForm({ checkinId }: { checkinId: string }) {
           "Send reply"
         )}
       </button>
+      <SlowNotice show={slow} />
     </form>
   );
 }
@@ -250,6 +281,7 @@ export function CheckinReplyForm({ checkinId }: { checkinId: string }) {
 export function AdminMessageForm({ menteeId }: { menteeId: string }) {
   const [state, action, pending] = useActionState(adminSendMessage, undefined);
   const ref = useResetOnSuccess(state);
+  const slow = useSlowPending(pending);
 
   return (
     <form ref={ref} action={action} className="space-y-2">
@@ -273,6 +305,7 @@ export function AdminMessageForm({ menteeId }: { menteeId: string }) {
         </button>
       </div>
       <Feedback state={state} />
+      <SlowNotice show={slow} />
     </form>
   );
 }
