@@ -45,6 +45,22 @@ export function computeUnlockedWeek(
   return unlocked;
 }
 
+// The check-in a mentee should submit next: the earliest week the calendar
+// has reached that still has none. Because week gating walks check-ins in
+// order, a missed week blocks every week after it, so the portal must offer
+// that week (not just the calendar's current week) or the mentee is stuck
+// for good. Null once every reached week is in.
+export function nextCheckinWeek(
+  calendarWeek: number,
+  checkinWeeks: Set<number>,
+): number | null {
+  const last = Math.min(calendarWeek, PROGRAM_WEEKS);
+  for (let w = 1; w <= last; w++) {
+    if (!checkinWeeks.has(w)) return w;
+  }
+  return null;
+}
+
 export function computeStreak(
   days: Pick<MentorshipPlanDay, "dayIndex" | "completedAt">[],
   todayIndex: number,

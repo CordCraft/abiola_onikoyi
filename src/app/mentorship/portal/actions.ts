@@ -128,7 +128,17 @@ export async function submitCheckin(
     return { error: "Share at least one win or piece of progress, however small." };
   }
 
-  const week = Math.max(1, programWeek());
+  // Mentees may catch up on any week the calendar has already reached (a
+  // missed week blocks every later week of the daily programme), but never
+  // check in ahead of the calendar.
+  const lastWeek = Math.min(programWeek(), PROGRAM_WEEKS);
+  const week = Number(formData.get("week"));
+  if (lastWeek < 1) {
+    return { error: "Check-ins open when the programme kicks off." };
+  }
+  if (!Number.isInteger(week) || week < 1 || week > lastWeek) {
+    return { error: "That week is not open for check-ins yet." };
+  }
 
   const existing = await prisma.mentorshipCheckin.findFirst({
     where: { menteeId: mentee.id, week },

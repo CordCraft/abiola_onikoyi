@@ -4,6 +4,7 @@ import { PROGRAM_WEEKS, programWeek } from "@/lib/mentorship/constants";
 import { CheckinForm } from "@/components/mentorship/forms";
 import { Card, CardTitle, EmptyState, Pill } from "@/components/mentorship/ui";
 import { formatDate } from "@/lib/format";
+import { nextCheckinWeek } from "@/lib/mentorship/plan";
 
 export default async function CheckinsPage() {
   const mentee = await verifyMentee();
@@ -15,7 +16,15 @@ export default async function CheckinsPage() {
     orderBy: { week: "desc" },
   });
 
-  const thisWeekDone = checkins.some((c) => c.week === week);
+  // Offer the earliest missed week first: each week of the daily programme
+  // unlocks only once the previous week's check-in is in, so a mentee who
+  // fell behind has to be able to catch up, one week at a time.
+  const lastWeek = Math.min(week, PROGRAM_WEEKS);
+  const submitted = new Set(checkins.map((c) => c.week));
+  const dueWeek = week >= 1 ? nextCheckinWeek(week, submitted) : null;
+  const catchingUp = dueWeek !== null && dueWeek < lastWeek;
+  let missedCount = 0;
+  for (let w = 1; w <= lastWeek; w++) if (!submitted.has(w)) missedCount += 1;
 
   return (
     <div className="space-y-6">
@@ -30,12 +39,23 @@ export default async function CheckinsPage() {
         </p>
       </div>
 
-      {inProgram && !thisWeekDone ? (
+      {dueWeek !== null ? (
         <Card>
-          <CardTitle kicker={`Week ${week}`} title="This week's check-in" />
-          <CheckinForm week={week} />
+          <CardTitle
+            kicker={`Week ${dueWeek}`}
+            title={catchingUp ? "Catch-up check-in" : "This week's check-in"}
+          />
+          {catchingUp ? (
+            <p className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/[0.06] px-4 py-3 text-sm text-amber-200">
+              You have {missedCount} check-in{missedCount === 1 ? "" : "s"} to
+              catch up on. Reflect on week {dueWeek} and submit it to unlock
+              week {dueWeek + 1} of your daily programme. The next one appears
+              here straight after.
+            </p>
+          ) : null}
+          <CheckinForm week={dueWeek} />
         </Card>
-      ) : inProgram && thisWeekDone ? (
+      ) : inProgram ? (
         <p className="rounded-xl bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
           Week {week} check-in done. Next one opens when the new week starts.
         </p>

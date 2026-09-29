@@ -128,6 +128,7 @@ export function CheckinForm({ week }: { week: number }) {
 
   return (
     <form ref={ref} action={action} className="space-y-4">
+      <input type="hidden" name="week" value={week} />
       <div>
         <label htmlFor="wins" className="block text-sm font-medium text-zinc-300">
           Wins and progress this week
@@ -195,7 +196,7 @@ export function CheckinForm({ week }: { week: number }) {
       <ErrorNote state={state} />
       {state?.ok ? (
         <p className="rounded-lg bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300">
-          Week {week} check-in submitted. Your mentor will see it right away.
+          Check-in submitted. Your mentor will see it right away.
         </p>
       ) : null}
       <button
