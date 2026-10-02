@@ -1,7 +1,7 @@
 "use client";
 
-// Friendly error boundary for the Jarvis area. The most common cause is the
-// Neon free tier waking from suspend, which a retry fixes.
+// Friendly error boundary for the Jarvis area. The most common cause is a
+// dropped pooled database connection, which a retry fixes.
 export default function JarvisError({
   reset,
 }: {

@@ -13,7 +13,7 @@ export const metadata = { title: "Mentorship admin" };
 
 export default async function MentorshipAdminPage() {
   await verifySession();
-  // First visit after deploy creates the tables in Neon.
+  // First visit after deploy creates the tables if missing.
   await ensureMentorshipTables();
 
   const week = programWeek();

@@ -1,5 +1,5 @@
 // Prisma schema for the private projects area.
-// Local development uses SQLite; production uses Postgres (Neon).
+// Local development uses SQLite; production uses Postgres (Supabase).
 // The models below are intentionally provider-agnostic so the same schema
 // works in both — we use `prisma db push` rather than migrations.
 

@@ -4,8 +4,8 @@ import { verifySession } from "@/lib/dal";
 
 export * from "@/lib/jarvis/constants";
 
-// Neon's free tier suspends when idle; the first query after a wake can fail.
-// One short retry absorbs almost all of those errors.
+// A pooled serverless connection can drop on the first query after an idle
+// spell. One short retry absorbs almost all of those errors.
 async function retryOnce<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();

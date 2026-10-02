@@ -2,7 +2,7 @@
 
 This site is a Next.js 16 app. The public portfolio is static; the private
 `/dashboard` area is gated by a single-user login and stores project updates in
-a Postgres database. Local development uses SQLite; production uses Neon Postgres.
+a Postgres database. Local development uses SQLite; production uses Supabase Postgres.
 
 Hosting: **Netlify** (free tier). The `netlify.toml` in this repo configures the
 Next.js runtime plugin and Node version — no manual build settings needed.
@@ -12,7 +12,7 @@ Next.js runtime plugin and Node version — no manual build settings needed.
 ### 1. Create free accounts
 - **GitHub** — https://github.com (stores the code; Netlify deploys from it)
 - **Netlify** — https://netlify.com (hosting)
-- **Neon** — https://neon.tech (Postgres database)
+- **Supabase**: https://supabase.com (Postgres database)
 
 ### 2. Push the code to a private GitHub repo
 ```bash
@@ -20,9 +20,13 @@ gh repo create abiolaonikoyi-site --private --source=. --push
 # or create the repo in the GitHub UI and: git remote add origin … && git push -u origin main
 ```
 
-### 3. Create the production database (Neon)
-In Neon, create a project and copy the **connection string**
-(`postgresql://USER:PASSWORD@HOST/dbname?sslmode=require`).
+### 3. Create the production database (Supabase)
+In Supabase, create a project in the same region as Netlify functions (us-east-1).
+Under **Connect**, copy the **transaction pooler** string (port 6543) for
+`DATABASE_URL`, adding `?pgbouncer=true&connection_limit=1`, and the **session
+pooler** string (port 5432) for `DIRECT_DATABASE_URL`. Then enable row level
+security on every table in `public` (no policies needed; Prisma connects as
+`postgres`, which bypasses it) so the Supabase Data API exposes nothing.
 
 ### 4. Switch Prisma to Postgres
 In `prisma/schema.prisma`, change the datasource provider:
@@ -32,9 +36,9 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 ```
-Then push the schema to Neon (one time, and after any schema change):
+Then push the schema to Supabase (one time, and after any schema change):
 ```bash
-DATABASE_URL="<your-neon-url>" npx prisma db push
+DIRECT_DATABASE_URL="<session-pooler-url>" DATABASE_URL="<transaction-pooler-url>" npx prisma db push
 ```
 
 ### 5. Generate your admin credentials
@@ -50,7 +54,8 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"     
 3. Before the first deploy, add **Environment variables**
    (Site configuration → Environment variables). Paste the hash with normal `$`
    (no escaping — escaping is only needed in a local `.env`):
-   - `DATABASE_URL` = your Neon connection string
+   - `DATABASE_URL` = the Supabase transaction pooler string (port 6543)
+   - `DIRECT_DATABASE_URL` = the Supabase session pooler string (port 5432)
    - `ADMIN_USERNAME` = your username
    - `ADMIN_PASSWORD_HASH` = the bcrypt hash from step 5
    - `SESSION_SECRET` = the random string from step 5
