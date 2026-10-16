@@ -10,30 +10,49 @@ function archiveCutoff(): Date {
 }
 
 // --- Public reads (published only) ---
+// Public pages must never 500 because the database hiccuped (pooler limits,
+// cold connections). Fall back to an empty result and log the cause.
+async function publicRead<T>(label: string, fallback: T, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    console.error(`public blog read failed: ${label}`, err);
+    return fallback;
+  }
+}
+
 export async function getRecentPosts() {
-  return prisma.post.findMany({
-    where: { published: true, publishedAt: { gte: archiveCutoff() } },
-    orderBy: { publishedAt: "desc" },
-  });
+  return publicRead("recent", [], () =>
+    prisma.post.findMany({
+      where: { published: true, publishedAt: { gte: archiveCutoff() } },
+      orderBy: { publishedAt: "desc" },
+    }),
+  );
 }
 
 export async function getArchivedPosts() {
-  return prisma.post.findMany({
-    where: { published: true, publishedAt: { lt: archiveCutoff() } },
-    orderBy: { publishedAt: "desc" },
-  });
+  return publicRead("archived", [], () =>
+    prisma.post.findMany({
+      where: { published: true, publishedAt: { lt: archiveCutoff() } },
+      orderBy: { publishedAt: "desc" },
+    }),
+  );
 }
 
 export async function getLatestPosts(take = 3) {
-  return prisma.post.findMany({
-    where: { published: true },
-    orderBy: { publishedAt: "desc" },
-    take,
-  });
+  return publicRead("latest", [], () =>
+    prisma.post.findMany({
+      where: { published: true },
+      orderBy: { publishedAt: "desc" },
+      take,
+    }),
+  );
 }
 
 export async function getPublishedPostBySlug(slug: string) {
-  return prisma.post.findFirst({ where: { slug, published: true } });
+  return publicRead("by-slug", null, () =>
+    prisma.post.findFirst({ where: { slug, published: true } }),
+  );
 }
 
 // --- Admin reads (session-gated) ---
