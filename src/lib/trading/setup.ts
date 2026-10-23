@@ -80,6 +80,26 @@ const DDL: string[] = [
       REFERENCES "TradingAccount"("id") ON DELETE CASCADE ON UPDATE CASCADE
   )`,
   `CREATE INDEX IF NOT EXISTS "TradingSnapshot_accountId_at_idx" ON "TradingSnapshot"("accountId", "at")`,
+
+  // Phone alerts (added Oct 2026)
+  `ALTER TABLE "TradingAccount" ADD COLUMN IF NOT EXISTS "alertState" JSONB`,
+  `CREATE TABLE IF NOT EXISTS "TradingAlert" (
+    "id" TEXT NOT NULL,
+    "accountId" TEXT NOT NULL,
+    "at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "kind" TEXT NOT NULL,
+    "level" INTEGER NOT NULL,
+    "severity" TEXT NOT NULL,
+    "title" TEXT NOT NULL,
+    "body" TEXT NOT NULL,
+    "delivered" INTEGER NOT NULL DEFAULT 0,
+    CONSTRAINT "TradingAlert_pkey" PRIMARY KEY ("id"),
+    CONSTRAINT "TradingAlert_accountId_fkey" FOREIGN KEY ("accountId")
+      REFERENCES "TradingAccount"("id") ON DELETE CASCADE ON UPDATE CASCADE
+  )`,
+  `CREATE INDEX IF NOT EXISTS "TradingAlert_at_idx" ON "TradingAlert"("at")`,
+  `CREATE INDEX IF NOT EXISTS "TradingAlert_accountId_at_idx" ON "TradingAlert"("accountId", "at")`,
+  `ALTER TABLE "TradingAlert" ENABLE ROW LEVEL SECURITY`,
 ];
 
 // One run per serverless instance is enough; IF NOT EXISTS keeps reruns cheap

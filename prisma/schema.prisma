@@ -278,11 +278,35 @@ model TradingAccount {
   // Broker server clock minus GMT, in seconds (deal times arrive in server time)
   gmtOffsetSeconds Int @default(0)
   lastSeenAt DateTime @default(now())
+  // Which phone alerts are currently fired, see src/lib/trading/alerts.ts
+  alertState Json?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
   deals     TradingDeal[]
   snapshots TradingSnapshot[]
+  alerts    TradingAlert[]
+}
+
+// Every phone alert sent for an account (drawdown, margin, stale feed).
+model TradingAlert {
+  id        String         @id @default(cuid())
+  account   TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId String
+  at        DateTime       @default(now())
+  // "drawdown" | "margin" | "stale"
+  kind      String
+  // Level crossed; 0 for a recovery notice
+  level     Int
+  // "info" | "warning" | "critical"
+  severity  String
+  title     String
+  body      String
+  // Devices the push reached
+  delivered Int            @default(0)
+
+  @@index([at])
+  @@index([accountId, at])
 }
 
 // Raw MT5 deals (one row per fill). A "trade" in the UI is the set of deals
