@@ -13,6 +13,7 @@ import {
   buildReturnCurve,
   computeCostDrag,
   inferPointValues,
+  monthlyReturns,
   rollingWindows,
   summariseR,
   summariseStreaks,
@@ -181,6 +182,7 @@ export default async function TradingAnalyticsPage({
   const windows = rollingWindows(trades);
   const dist = buildDistributions(trades);
   const streaks = summariseStreaks(trades);
+  const roic = monthlyReturns(deals);
 
   const attribution =
     view === "step"
@@ -238,7 +240,19 @@ export default async function TradingAnalyticsPage({
       </div>
 
       {/* ---------------------------------------------------------------- */}
-      <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+        <Tile
+          label="Monthly return on capital"
+          value={roic.avgMonthlyPct === null ? "n/a" : `${pct(roic.avgMonthlyPct, 2)} / mo`}
+          cls={roic.avgMonthlyPct !== null && roic.avgMonthlyPct >= 0 ? "text-emerald-700" : "text-red-700"}
+          hint={[
+            roic.currentMonth ? `${roic.currentMonth.label.split(" ")[0]} so far ${pct(roic.currentMonth.returnPct, 2)}.` : null,
+            `${pct(roic.totalRoicPct, 2)} on ${fmtMoney(roic.netInvested)} paid in, after swap, commission and fees.`,
+            account.floatingPnl ? `Open floating ${signed(account.floatingPnl)} not counted.` : null,
+          ]
+            .filter(Boolean)
+            .join(" ")}
+        />
         <Tile
           label="Return (deposit adjusted)"
           value={pct(curve.totalReturnPct)}
@@ -270,6 +284,63 @@ export default async function TradingAnalyticsPage({
       </div>
 
       {/* ---------------------------------------------------------------- */}
+      <section className="mt-6 rounded-2xl border border-zinc-200 bg-white p-6">
+        <h2 className="font-semibold text-zinc-900">Monthly return on invested capital</h2>
+        <p className="mt-1 text-xs text-zinc-500">
+          Net of every swap, commission and fee the broker booked, divided by the
+          capital at work that month. A deposit counts only for the days it sat
+          in the account, so topping up late in a month never dilutes it.
+          Average compounds the months:{" "}
+          <span className="font-medium text-zinc-900">
+            {pct(roic.avgMonthlyPct, 2)} a month
+          </span>
+          {roic.avgCompletedMonthlyPct !== null && roic.currentMonth ? (
+            <>, or {pct(roic.avgCompletedMonthlyPct, 2)} on completed months only</>
+          ) : null}
+          . Realised only; open floating P/L is left out.
+        </p>
+        {roic.months.length === 0 ? (
+          <p className="mt-4 text-sm text-zinc-400">No trading history yet.</p>
+        ) : (
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[40rem] text-sm">
+              <thead>
+                <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-400">
+                  <th className="pb-2 font-medium">Month</th>
+                  <th className="pb-2 text-right font-medium">Capital at work</th>
+                  <th className="pb-2 text-right font-medium">Gross</th>
+                  <th className="pb-2 text-right font-medium">Swap</th>
+                  <th className="pb-2 text-right font-medium">Commission and fees</th>
+                  <th className="pb-2 text-right font-medium">Net</th>
+                  <th className="pb-2 text-right font-medium">Return</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {[...roic.months].reverse().map((m) => (
+                  <tr key={m.key} style={{ fontVariantNumeric: "tabular-nums" }}>
+                    <td className="py-2 font-medium text-zinc-900">
+                      {m.label}
+                      {m.partial ? <span className="ml-1 text-xs text-zinc-400">so far</span> : null}
+                    </td>
+                    <td className="py-2 text-right text-zinc-600">{money.format(m.capital)}</td>
+                    <td className={`py-2 text-right ${pnlClass(m.gross)}`}>{signed(m.gross)}</td>
+                    <td className="py-2 text-right text-zinc-500">{money.format(m.swap)}</td>
+                    <td className="py-2 text-right text-zinc-500">{money.format(m.commission)}</td>
+                    <td className={`py-2 text-right font-semibold ${pnlClass(m.net)}`}>
+                      {signed(m.net)}
+                    </td>
+                    <td className={`py-2 text-right font-semibold ${pnlClass(m.returnPct ?? 0)}`}>
+                      {pct(m.returnPct, 2)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="mt-2 text-xs text-zinc-400">All figures in {account.currency}.</p>
+          </div>
+        )}
+      </section>
+
       <section className="mt-6 rounded-2xl border border-zinc-200 bg-white p-6">
         <h2 className="font-semibold text-zinc-900">Deposit adjusted return</h2>
         <p className="mt-1 text-xs text-zinc-500">

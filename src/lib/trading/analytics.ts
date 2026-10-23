@@ -603,6 +603,156 @@ export function buildReturnCurve(trades: Trade[], deals: DealRow[]): ReturnCurve
 }
 
 // ---------------------------------------------------------------------------
+// Monthly return on invested capital
+//
+// Modified Dietz per calendar month (UTC): what the account earned after
+// every deduction the broker booked (swap, commission, fees), divided by the
+// capital that was actually at work, where a deposit counts only for the share
+// of the month it was in the account. Months then compound, so the average is
+// the steady monthly rate that turns the money paid in into today's balance.
+//
+// Realised basis: floating P/L on open legs is not counted, because an open
+// grid's loss is temporary by design and would make the figure swing with the
+// gold price minute to minute. The page shows the floating figure beside it.
+// ---------------------------------------------------------------------------
+
+export type MonthlyReturnRow = {
+  key: string; // "2026-10"
+  label: string; // "Oct 2026"
+  startBalance: number;
+  flows: number; // deposits minus withdrawals inside the month
+  capital: number; // time weighted capital employed (the denominator)
+  gross: number; // trading P/L before costs
+  swap: number;
+  commission: number; // commission plus fees
+  net: number; // after all deductions
+  returnPct: number | null;
+  partial: boolean; // true for the month still running
+};
+
+export type MonthlyReturnSummary = {
+  months: MonthlyReturnRow[];
+  // Geometric mean over every month with trading, partial month included
+  avgMonthlyPct: number | null;
+  // Same, over completed months only
+  avgCompletedMonthlyPct: number | null;
+  currentMonth: MonthlyReturnRow | null;
+  netInvested: number;
+  netProfit: number;
+  // Lifetime net profit over net money paid in, simple not annualised
+  totalRoicPct: number | null;
+};
+
+const MONTH_LABEL = new Intl.DateTimeFormat("en-GB", {
+  month: "short",
+  year: "numeric",
+  timeZone: "UTC",
+});
+
+function monthKey(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 7);
+}
+
+function monthBounds(key: string): [number, number] {
+  const [y, m] = key.split("-").map(Number);
+  return [Date.UTC(y, m - 1, 1), Date.UTC(y, m, 1)];
+}
+
+function isFlow(d: DealRow): boolean {
+  return d.type === "balance" || d.type === "credit";
+}
+
+export function monthlyReturns(deals: DealRow[], now: Date = new Date()): MonthlyReturnSummary {
+  const sorted = [...deals].sort((a, b) => a.time.getTime() - b.time.getTime());
+  const netInvested = sorted
+    .filter(isFlow)
+    .reduce((s, d) => s + d.profit + d.swap + d.commission + d.fee, 0);
+  const netProfit = sorted
+    .filter((d) => !isFlow(d))
+    .reduce((s, d) => s + d.profit + d.swap + d.commission + d.fee, 0);
+
+  const firstTrade = sorted.find((d) => !isFlow(d));
+  const empty: MonthlyReturnSummary = {
+    months: [],
+    avgMonthlyPct: null,
+    avgCompletedMonthlyPct: null,
+    currentMonth: null,
+    netInvested,
+    netProfit,
+    totalRoicPct: netInvested > 0 ? (netProfit / netInvested) * 100 : null,
+  };
+  if (!firstTrade) return empty;
+
+  const nowMs = now.getTime();
+  const months: MonthlyReturnRow[] = [];
+  let balance = 0;
+  let i = 0;
+  // Everything before the first trading month is opening capital.
+  const [firstStart] = monthBounds(monthKey(firstTrade.time.getTime()));
+  while (i < sorted.length && sorted[i].time.getTime() < firstStart) {
+    const d = sorted[i++];
+    balance += d.profit + d.swap + d.commission + d.fee;
+  }
+
+  let key = monthKey(firstStart);
+  const lastKey = monthKey(Math.max(nowMs, sorted[sorted.length - 1].time.getTime()));
+  while (key <= lastKey) {
+    const [start, end] = monthBounds(key);
+    const horizon = Math.min(end, Math.max(nowMs, start + 1));
+    const row: MonthlyReturnRow = {
+      key,
+      label: MONTH_LABEL.format(new Date(start)),
+      startBalance: balance,
+      flows: 0,
+      capital: balance,
+      gross: 0,
+      swap: 0,
+      commission: 0,
+      net: 0,
+      returnPct: null,
+      partial: nowMs < end,
+    };
+    while (i < sorted.length && sorted[i].time.getTime() < end) {
+      const d = sorted[i++];
+      const effect = d.profit + d.swap + d.commission + d.fee;
+      if (isFlow(d)) {
+        const weight = Math.max(0, horizon - d.time.getTime()) / (horizon - start);
+        row.flows += effect;
+        row.capital += weight * effect;
+      } else {
+        row.gross += d.profit;
+        row.swap += d.swap;
+        row.commission += d.commission + d.fee;
+        row.net += effect;
+      }
+      balance += effect;
+    }
+    row.returnPct = row.capital > 0 ? (row.net / row.capital) * 100 : null;
+    months.push(row);
+    const [y, m] = key.split("-").map(Number);
+    key = monthKey(Date.UTC(y, m, 1));
+  }
+
+  const geo = (rows: MonthlyReturnRow[]) => {
+    const rs = rows.filter((r) => r.returnPct !== null);
+    if (rs.length === 0) return null;
+    const growth = rs.reduce((g, r) => g * (1 + r.returnPct! / 100), 1);
+    return growth > 0 ? (Math.pow(growth, 1 / rs.length) - 1) * 100 : null;
+  };
+
+  const last = months[months.length - 1] ?? null;
+  return {
+    months,
+    avgMonthlyPct: geo(months),
+    avgCompletedMonthlyPct: geo(months.filter((m) => !m.partial)),
+    currentMonth: last?.partial ? last : null,
+    netInvested,
+    netProfit,
+    totalRoicPct: empty.totalRoicPct,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Rolling windows
 // ---------------------------------------------------------------------------
 
