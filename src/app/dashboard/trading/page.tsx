@@ -15,6 +15,13 @@ import {
 } from "@/lib/trading/analytics";
 import { daysAgo, isStale, marginStatus } from "@/lib/trading/status";
 import { formatDateTime } from "@/lib/format";
+import {
+  DD_LEVELS,
+  MARGIN_BUFFERS,
+  STALE_MINUTES,
+  recentAlerts,
+  stopOutFor,
+} from "@/lib/trading/alerts";
 import TradingLineChart from "@/components/dashboard/TradingLineChart";
 
 export const dynamic = "force-dynamic";
@@ -75,6 +82,7 @@ export default async function TradingPage() {
   const totalEquity = accounts.reduce((s, a) => s + a.equity, 0);
   const totalFloating = accounts.reduce((s, a) => s + a.floatingPnl, 0);
   const totalPositions = accounts.reduce((s, a) => s + a.positionCount, 0);
+  const alerts = await recentAlerts(10);
 
   return (
     <div>
@@ -194,6 +202,49 @@ export default async function TradingPage() {
             );
           })}
         </ul>
+      )}
+
+      {accounts.length > 0 && (
+        <section className="mt-6 rounded-2xl border border-zinc-200 bg-white p-6">
+          <h2 className="font-semibold text-zinc-900">Phone alerts</h2>
+          <p className="mt-1 text-xs text-zinc-500">
+            Pushed to every device subscribed in Jarvis. Floating drawdown at{" "}
+            {DD_LEVELS.join("%, ")}%; margin level within{" "}
+            {MARGIN_BUFFERS.join(", ")} points of each broker&apos;s stop-out (
+            {accounts
+              .map((a) => `${a.label || a.broker} ${stopOutFor(a.broker, a.label)}%`)
+              .join(", ")}
+            ); and no data for {STALE_MINUTES} minutes (an hour at weekends). Each
+            level fires once and re-arms after a real recovery.
+          </p>
+          {alerts.length === 0 ? (
+            <p className="mt-4 text-sm text-zinc-400">No alerts sent yet.</p>
+          ) : (
+            <ul className="mt-4 divide-y divide-zinc-100 text-sm">
+              {alerts.map((al) => (
+                <li key={al.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-2">
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                      al.severity === "critical"
+                        ? "bg-red-50 text-red-700"
+                        : al.severity === "warning"
+                          ? "bg-amber-50 text-amber-700"
+                          : "bg-emerald-50 text-emerald-700"
+                    }`}
+                  >
+                    {al.severity === "info" ? "Recovered" : al.severity === "critical" ? "Critical" : "Warning"}
+                  </span>
+                  <span className="font-medium text-zinc-900">{al.title}</span>
+                  <span className="text-zinc-500">{al.body}</span>
+                  <span className="ml-auto text-xs text-zinc-400">
+                    {formatDateTime(al.at)}
+                    {al.delivered === 0 ? ", not delivered" : ""}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       )}
 
       {accounts.length > 0 && (

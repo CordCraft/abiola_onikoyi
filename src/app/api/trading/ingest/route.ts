@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { ensureTradingTables } from "@/lib/trading/setup";
+import { checkSnapshotAlerts } from "@/lib/trading/alerts";
+import type { LivePosition } from "@/lib/trading/data";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -147,6 +149,15 @@ export async function POST(req: Request) {
     where: { accountKey },
     create: { accountKey, ...live },
     update: live,
+  });
+
+  // Drawdown and margin alerts against the fresh numbers (never throws).
+  await checkSnapshotAlerts(account, {
+    balance: live.balance,
+    equity: live.equity,
+    margin: live.margin,
+    marginLevel: live.marginLevel,
+    positions: positions as LivePosition[],
   });
 
   // Snapshot cadence: every post while positions are open (the interesting
