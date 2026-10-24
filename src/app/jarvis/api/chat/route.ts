@@ -46,8 +46,13 @@ const serverTools = [
   { type: "web_fetch_20260209" as const, name: "web_fetch" as const, max_uses: 6 },
 ];
 
-function buildSystem(context: string, voice: boolean): string {
-  return `You are Jarvis, ${profile.name}'s personal chief-of-staff and second brain. You have live access to their ventures, projects, tasks, goals, notes, decisions and document library (snapshot below). Be concise, direct, and action-oriented. Do not use em dashes.
+// The system prompt is two text blocks: the frozen instructions (identical on
+// every request, so tools + instructions form one cached prefix) and the
+// per-request part (voice mode and the live memory snapshot). Both carry a
+// cache breakpoint: the snapshot is built once per invocation and re-read on
+// every tool-loop iteration of the turn.
+function buildSystem(context: string, voice: boolean): Anthropic.TextBlockParam[] {
+  const instructions = `You are Jarvis, ${profile.name}'s personal chief-of-staff and second brain. You have live access to their ventures, projects, tasks, goals, notes, decisions and document library (snapshot below). Be concise, direct, and action-oriented. Do not use em dashes.
 
 ## How you save things (CRITICAL)
 Your write tools (create_project, update_project, create_task, create_tasks_bulk, complete_task, log_note, log_decision, set_goal, add_milestone, complete_milestone, file_document, save_document, file_note) apply IMMEDIATELY. There is no confirmation step. Hard rules:
@@ -81,8 +86,32 @@ Documents named "Playbook: ..." are reusable checklists. To instantiate one, rea
 
 ## Duplicates
 create_task and create_project refuse near-duplicates and tell you what exists. Prefer updating the existing record; only pass allowDuplicate when it is genuinely distinct.
-${voice ? `\n## Voice mode\nThe user is speaking and will hear your reply read aloud. Keep replies short and conversational: a few sentences, no markdown formatting, no headings, no bullet lists, no tables. Spell numbers naturally.\n` : ""}
+`;
+  const volatile = `${voice ? `\n## Voice mode\nThe user is speaking and will hear your reply read aloud. Keep replies short and conversational: a few sentences, no markdown formatting, no headings, no bullet lists, no tables. Spell numbers naturally.\n` : ""}
 ${context}`;
+  return [
+    { type: "text", text: instructions, cache_control: { type: "ephemeral" } },
+    { type: "text", text: volatile, cache_control: { type: "ephemeral" } },
+  ];
+}
+
+// Returns a copy of the history with a cache breakpoint on the final block, so
+// each tool-loop iteration (and the next chat turn) reads the previous prefix.
+// The stored turn state is left untouched. Thinking blocks cannot be marked.
+function withHistoryCache(messages: Anthropic.MessageParam[]): Anthropic.MessageParam[] {
+  if (messages.length === 0) return messages;
+  const last = messages[messages.length - 1];
+  const blocks: Anthropic.ContentBlockParam[] =
+    typeof last.content === "string"
+      ? last.content.trim()
+        ? [{ type: "text", text: last.content }]
+        : []
+      : [...last.content];
+  const tail = blocks[blocks.length - 1];
+  if (!tail || tail.type === "thinking" || tail.type === "redacted_thinking") return messages;
+  if (tail.type === "text" && !tail.text.trim()) return messages;
+  blocks[blocks.length - 1] = { ...tail, cache_control: { type: "ephemeral" } } as Anthropic.ContentBlockParam;
+  return [...messages.slice(0, -1), { ...last, content: blocks }];
 }
 
 export async function POST(req: Request) {
@@ -373,7 +402,7 @@ export async function POST(req: Request) {
             system,
             tools: [...jarvisTools, ...serverTools],
             thinking: { type: "adaptive" as const },
-            messages: turn.messages,
+            messages: withHistoryCache(turn.messages),
           });
 
           messageStream.on("text", (delta) => {

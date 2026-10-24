@@ -56,7 +56,11 @@ Respond with ONLY a JSON object (no code fences, no text outside it):
     const response = await client.messages.create({
       model: "claude-opus-4-8",
       max_tokens: 3500,
-      system,
+      // The system prompt (instructions + current draft) is identical for every
+      // message until the draft changes; the top-level marker covers the
+      // growing history so each turn reads the previous one.
+      system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+      cache_control: { type: "ephemeral" },
       messages,
     });
 
