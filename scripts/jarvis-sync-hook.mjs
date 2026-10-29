@@ -134,6 +134,10 @@ async function main() {
   }
 }
 
+// Let Node exit naturally: process.exit() while fetch sockets are closing trips
+// a libuv assertion on Windows.
 main()
   .catch(() => {})
-  .finally(() => process.exit(0));
+  .finally(() => {
+    process.exitCode = 0;
+  });

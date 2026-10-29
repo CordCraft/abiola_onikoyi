@@ -101,12 +101,31 @@ async function setEnv(token, key, value) {
   try {
     await netlify(`/accounts/${ACCOUNT_ID}/env?site_id=${SITE_ID}`, token, { method: "POST", body: JSON.stringify([body]) });
   } catch {
-    // Already exists: replace it.
-    await netlify(`/accounts/${ACCOUNT_ID}/env/${key}?site_id=${SITE_ID}`, token, { method: "PUT", body: JSON.stringify(body) });
+    // Already exists (possibly marked secret, which cannot be edited in place):
+    // delete it and create it fresh.
+    await netlify(`/accounts/${ACCOUNT_ID}/env/${key}?site_id=${SITE_ID}`, token, { method: "DELETE" });
+    await netlify(`/accounts/${ACCOUNT_ID}/env?site_id=${SITE_ID}`, token, { method: "POST", body: JSON.stringify([body]) });
   }
 }
 
+// `--reset-secret`: replace CRON_SECRET with a fresh one in Netlify AND on this
+// laptop in one go, so the hook and the scheduled jobs are guaranteed to match.
+async function resetSecret() {
+  console.log("\nResetting CRON_SECRET in Netlify and on this laptop.\n");
+  step("Netlify token");
+  console.log("  Paste the Netlify token you made earlier, or make a new one on the page that opens.");
+  open("https://app.netlify.com/user/applications#personal-access-tokens");
+  const netlifyToken = await askToken("Netlify", "https://app.netlify.com/user/applications#personal-access-tokens", "https://api.netlify.com/api/v1/user");
+  const cronSecret = randomBytes(32).toString("hex");
+  await setEnv(netlifyToken, "CRON_SECRET", cronSecret);
+  ok("New CRON_SECRET saved in Netlify");
+  writeFileSync(join(CLAUDE, "jarvis.json"), JSON.stringify({ url: SITE_URL, secret: cronSecret }, null, 2) + "\n");
+  ok("Same secret saved in ~/.claude/jarvis.json");
+  await redeployAndSync(netlifyToken, cronSecret);
+}
+
 async function main() {
+  if (process.argv.includes("--reset-secret")) return resetSecret();
   console.log("\nConnecting Jarvis to GitHub, Netlify, Supabase and Claude Code.");
   console.log("Tokens are hidden as you paste them and only stored in Netlify.\n");
 
@@ -176,7 +195,11 @@ async function main() {
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
   ok(already ? "Claude Code hook was already on" : "Turned on the Claude Code hook (~/.claude/settings.json)");
 
-  step("6/6  Redeploying the site so it picks up the tokens");
+  await redeployAndSync(netlifyToken, cronSecret);
+}
+
+async function redeployAndSync(netlifyToken, cronSecret) {
+  step("Redeploying the site so it picks up the changes");
   const build = await netlify(`/sites/${SITE_ID}/builds`, netlifyToken, { method: "POST", body: "{}" });
   ok("Build started. Waiting for it to go live (usually 2 to 4 minutes)...");
   const started = Date.now();
