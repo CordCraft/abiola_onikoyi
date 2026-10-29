@@ -2,6 +2,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { daysSince, isStalled } from "@/lib/jarvis/constants";
 import { formatDate } from "@/lib/format";
+import { buildActivitySection } from "@/lib/jarvis/sync/digest";
 
 // Assembles a compact snapshot of the structured memory for Claude. Called each
 // chat turn (after the route has verified the session).
@@ -116,6 +117,9 @@ export async function buildContext(): Promise<string> {
     const summary = doc.summary ? ` ${doc.summary.slice(0, 180)}` : " (no summary yet)";
     lines.push(`- ${proj}${doc.name} (${daysSince(doc.createdAt)}d ago) [doc:${doc.id}]${summary}`);
   }
+
+  const activity = await buildActivitySection();
+  if (activity) lines.push(activity);
 
   return lines.join("\n");
 }

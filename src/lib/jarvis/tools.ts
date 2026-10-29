@@ -3,6 +3,9 @@ import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/format";
 import { getUpcomingEvents, formatEvents } from "@/lib/jarvis/calendar";
 import { indexRecord, semanticSearch } from "@/lib/jarvis/embeddings";
+import { ensureSyncTables } from "@/lib/jarvis/sync/setup";
+import { getAlerts } from "@/lib/jarvis/sync/digest";
+import { gh } from "@/lib/jarvis/sync/github";
 
 // Jarvis tool surface. Read tools run live queries. Write tools apply
 // IMMEDIATELY (no confirmation step) and report a receipt the UI shows with an
@@ -18,7 +21,8 @@ export type SavedRecord = {
     | "note"
     | "decision"
     | "goal"
-    | "document";
+    | "document"
+    | "github_issue";
   id: string;
   summary: string;
   undoable: boolean;
@@ -301,6 +305,36 @@ export const jarvisTools = [
         projectName: { type: "string" },
       },
       required: ["noteId"],
+    },
+  },
+  {
+    name: "link_source",
+    description:
+      "Attach a GitHub repo, Netlify site, Supabase database or Claude Code folder to a Jarvis project (fixes wrong or duplicate auto-tracked projects). Moves its activity to that project, and deletes the old auto-created project if it is now empty. Use subject exactly as shown in activity, e.g. CordCraft/hoppertax.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        source: { type: "string", description: "github | netlify | supabase | claude" },
+        subject: { type: "string" },
+        projectId: { type: "string" },
+        projectName: { type: "string" },
+      },
+      required: ["source", "subject"],
+    },
+  },
+  {
+    name: "ask_claude_code",
+    description:
+      "Hand a coding job to Claude Code by opening a GitHub issue that mentions @claude in the project's repo. Claude Code (GitHub app) picks it up, works on a branch and opens a pull request. Use when the user asks Jarvis to build, fix or change something in one of their codebases. Write a self-contained brief: goal, relevant files or pages, and what done looks like.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        repo: { type: "string", description: "owner/name, e.g. CordCraft/hoppertax. Optional if projectName given." },
+        projectName: { type: "string", description: "Jarvis project whose linked GitHub repo to use" },
+        title: { type: "string" },
+        brief: { type: "string", description: "Full instructions for Claude Code" },
+      },
+      required: ["title", "brief"],
     },
   },
 ];
@@ -592,6 +626,42 @@ export async function executeTool(
             `- ${d.name}${d.projectName ? ` (${d.projectName})` : ""} [doc:${d.id}]\n  ...${d.snippet.replace(/\s+/g, " ")}...`,
         )
         .join("\n");
+    }
+    case "get_activity": {
+      await ensureSyncTables();
+      const days = Math.min(Math.max(Number(input.days) || 7, 1), 90);
+      const source = str(input.source);
+      const q = str(input.query);
+      const proj = str(input.projectName) ? await resolveProject({ projectName: input.projectName }) : null;
+      const rows = await prisma.jarvisActivity.findMany({
+        where: {
+          occurredAt: { gt: new Date(Date.now() - days * 864e5) },
+          ...(source ? { source } : {}),
+          ...(proj ? { projectId: proj.id } : {}),
+          ...(q
+            ? {
+                OR: [
+                  { subject: { contains: q, mode: "insensitive" } },
+                  { title: { contains: q, mode: "insensitive" } },
+                ],
+              }
+            : {}),
+        },
+        orderBy: { occurredAt: "desc" },
+        take: 60,
+      });
+      const alerts = await getAlerts();
+      const head = alerts.length ? `Alerts:\n${alerts.map((a) => `- ${a.text}`).join("\n")}\n\n` : "";
+      if (!rows.length) return `${head}No activity in the last ${days} days for that filter.`;
+      return (
+        head +
+        rows
+          .map((r) => {
+            const detail = r.detail ? `\n  ${r.detail.replace(/\s+/g, " ").slice(0, r.kind === "session" ? 900 : 200)}` : "";
+            return `- ${formatDate(r.occurredAt)} [${r.source} ${r.kind}${r.state ? `, ${r.state}` : ""}] ${r.subject}: ${r.title}${r.url ? ` (${r.url})` : ""}${detail}`;
+          })
+          .join("\n")
+      );
     }
     case "get_calendar": {
       const days = Math.min(Math.max(Number(input.days) || 7, 1), 31);
@@ -910,6 +980,68 @@ export async function executeTool(
         undoable: false,
       });
       return `SAVED: milestone "${ms.title}" done on goal "${ms.goal.title}". ${remaining === 0 ? "That was the last open milestone: suggest the next one or ask if the goal is achieved." : `${remaining} milestone(s) remain.`}`;
+    }
+    case "link_source": {
+      await ensureSyncTables();
+      const source = str(input.source);
+      const subject = str(input.subject);
+      if (!source || !subject) return "source and subject are required.";
+      const target = await resolveProject(input);
+      if (!target) return "No matching project found. Create it first or give its exact name.";
+      const old = await prisma.jarvisSourceLink.findUnique({ where: { source_subject: { source, subject } } });
+      await prisma.jarvisSourceLink.upsert({
+        where: { source_subject: { source, subject } },
+        create: { source, subject, projectId: target.id },
+        update: { projectId: target.id },
+      });
+      const moved = await prisma.jarvisActivity.updateMany({
+        where: { subject, ...(old?.projectId ? { projectId: old.projectId } : {}) },
+        data: { projectId: target.id },
+      });
+      let removed = "";
+      if (old?.projectId && old.projectId !== target.id) {
+        // Repoint every other link (e.g. the Netlify site of the same repo).
+        await prisma.jarvisSourceLink.updateMany({ where: { projectId: old.projectId }, data: { projectId: target.id } });
+        await prisma.jarvisActivity.updateMany({ where: { projectId: old.projectId }, data: { projectId: target.id } });
+        const p = await prisma.jarvisProject.findUnique({
+          where: { id: old.projectId },
+          include: { _count: { select: { tasks: true, notes: true, decisions: true, documents: true } } },
+        });
+        const c = p?._count;
+        if (p && p.summary?.startsWith("Auto-tracked") && c && !c.tasks && !c.notes && !c.decisions && !c.documents) {
+          await prisma.jarvisProject.delete({ where: { id: p.id } });
+          removed = ` Deleted the empty auto-created project "${p.name}".`;
+        }
+      }
+      saved({ kind: "project_update", id: target.id, summary: `Linked ${subject} to ${target.name}`, undoable: false });
+      return `Linked ${source} ${subject} to ${target.name}; moved ${moved.count} activity items.${removed}`;
+    }
+    case "ask_claude_code": {
+      if (!process.env.GITHUB_TOKEN) return "GitHub is not connected (GITHUB_TOKEN missing in Netlify).";
+      const title = str(input.title);
+      const brief = str(input.brief);
+      if (!title || !brief) return "title and brief are required.";
+      let repo = str(input.repo);
+      if (!repo) {
+        await ensureSyncTables();
+        const proj = await resolveProject({ projectName: input.projectName });
+        const link = proj
+          ? await prisma.jarvisSourceLink.findFirst({ where: { source: "github", projectId: proj.id } })
+          : null;
+        repo = link?.subject;
+      }
+      if (!repo || !/^[\w.-]+\/[\w.-]+$/.test(repo)) {
+        return "Could not tell which GitHub repo to use. Ask the user, then pass repo as owner/name.";
+      }
+      const issue = await gh<{ number: number; html_url: string }>(`/repos/${repo}/issues`, {
+        method: "POST",
+        body: JSON.stringify({
+          title: title.slice(0, 250),
+          body: `@claude ${brief}\n\n_Sent from Jarvis._`,
+        }),
+      });
+      saved({ kind: "github_issue", id: String(issue.number), summary: `Claude Code job: ${repo}#${issue.number}`, undoable: false });
+      return `Opened ${issue.html_url}. Claude Code will pick it up if the Claude GitHub app is installed on ${repo}; its pull request will show up in activity once it opens.`;
     }
     case "file_note": {
       const noteId = str(input.noteId);

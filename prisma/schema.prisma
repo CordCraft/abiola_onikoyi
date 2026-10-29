@@ -245,6 +245,38 @@ model JarvisProposal {
   @@index([status, createdAt])
 }
 
+// Live activity synced from GitHub, Netlify, Supabase and Claude Code.
+// Tables are created lazily by src/lib/jarvis/sync/setup.ts; keep in sync.
+model JarvisActivity {
+  id         String   @id @default(cuid())
+  source     String // github | netlify | supabase | claude
+  kind       String // commit | pr | deploy | db_project | session
+  externalId String   @unique
+  subject    String // repo full name, Netlify site name, Supabase project name, or folder
+  title      String
+  detail     String?
+  url        String?
+  state      String? // e.g. ready | error | open | ACTIVE_HEALTHY | INACTIVE
+  projectId  String?
+  occurredAt DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([occurredAt])
+  @@index([projectId, occurredAt])
+}
+
+// Maps an external thing (repo, site, database) to a Jarvis project.
+model JarvisSourceLink {
+  id        String   @id @default(cuid())
+  source    String // github | netlify | supabase | claude
+  subject   String
+  projectId String?
+  createdAt DateTime @default(now())
+
+  @@unique([source, subject])
+}
+
 // ---------------------------------------------------------------------------
 // Trading dashboard (private /dashboard/trading)
 // One MT5 account per row, fed by the Reporter EA posting to

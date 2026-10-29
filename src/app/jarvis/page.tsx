@@ -16,6 +16,7 @@ import { CaptureBox } from "@/components/jarvis/CaptureBox";
 import { SpeakButton } from "@/components/jarvis/SpeakButton";
 import { BadgeUpdater } from "@/components/jarvis/BadgeUpdater";
 import { briefingFeedback, deleteNote } from "@/app/jarvis/actions";
+import { getAlerts } from "@/lib/jarvis/sync/digest";
 
 const toneColors: Record<string, string> = {
   good: "stroke-emerald-500",
@@ -69,11 +70,12 @@ export default async function JarvisOverview({
   searchParams: Promise<{ focus?: string }>;
 }) {
   const { focus } = await searchParams;
-  const [{ projects, tasks, goals }, unfiledDocs, inbox, briefing] = await Promise.all([
+  const [{ projects, tasks, goals }, unfiledDocs, inbox, briefing, alerts] = await Promise.all([
     getOverview(),
     listUnfiledDocuments(),
     listInboxNotes(),
     latestBriefing(),
+    getAlerts().catch(() => []),
   ]);
   const stalled = projects.filter((p) => isStalled(p));
   const active = projects.filter((p) => !isStalled(p));
@@ -128,6 +130,30 @@ export default async function JarvisOverview({
       </div>
 
       <BadgeUpdater count={inbox.length} />
+
+      {/* Live work: alerts from GitHub / Netlify / Supabase / Claude Code */}
+      <Link
+        href="/jarvis/activity"
+        className={`block rounded-2xl border p-4 transition-colors ${
+          alerts.length ? "border-rose-200 bg-rose-50/80 hover:bg-rose-50" : "border-zinc-200 bg-white/70 hover:bg-white"
+        }`}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <SectionLabel accent={alerts.length ? "text-rose-700" : undefined}>
+            {alerts.length ? `${alerts.length} need attention` : "Live activity"}
+          </SectionLabel>
+          <span className="text-xs text-zinc-400">GitHub, Netlify, Supabase, Claude Code</span>
+        </div>
+        {alerts.length ? (
+          <ul className="mt-2 space-y-1">
+            {alerts.slice(0, 4).map((a) => (
+              <li key={a.key} className="text-sm text-rose-800">{a.text}</li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-1 text-sm text-zinc-600">Nothing broken. See what you shipped.</p>
+        )}
+      </Link>
 
       {/* Quick capture */}
       <CaptureBox autoFocus={focus === "capture"} />
