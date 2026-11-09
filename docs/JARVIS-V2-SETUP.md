@@ -23,7 +23,7 @@ In the Railway project you already use, add two services from the GitHub repo `C
   - `DATABASE_URL`: the Supabase **session pooler** string (port 5432, same as Netlify's `DIRECT_DATABASE_URL`)
   - `JARVIS_ENCRYPTION_KEY`, `LISTENER_ADMIN_KEY`: from the secrets file
   - `ANTHROPIC_API_KEY`: same key as Netlify
-  - `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`: same as Netlify (push)
+  - Push needs no keys here: the listener sends through the site (`/api/jarvis-push`, header `x-listener-key`)
   - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`: from steps 3 and 4
   - `VOICE_SERVICE_URL`, `VOICE_SECRET`: the voice service URL and secret (voice notes get transcribed)
   - Optional: `OWNER_TZ` (default `Asia/Kuwait`), `WHATSAPP_NUMBER` (digits only, to get a pairing code instead of a QR), `WHATSAPP_MAX_SENDS_PER_DAY` (default 25)

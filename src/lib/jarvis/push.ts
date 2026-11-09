@@ -11,6 +11,8 @@ export type PushPayload = {
   actions?: { action: string; title: string }[];
   // Arbitrary data the service worker needs to execute an action
   taskId?: string;
+  // Signal cards: the service worker posts Do it / Not now for this id
+  signalId?: string;
 };
 
 // Send a notification to every subscribed device. Prunes dead subscriptions,

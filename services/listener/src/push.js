@@ -16,8 +16,21 @@ function init() {
   return true;
 }
 
+// Without VAPID keys here, notifications go through the site (/api/jarvis-push), which holds them.
+async function sendViaSite(payload) {
+  if (!config.adminKey) return { sent: 0, skipped: 'no VAPID keys and no LISTENER_ADMIN_KEY' };
+  const res = await fetch(`${config.siteUrl}/api/jarvis-push`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-listener-key': config.adminKey },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`site push ${res.status}`);
+  const json = await res.json().catch(() => ({}));
+  return { sent: Number(json.sent || 0) };
+}
+
 export async function sendPush(payload) {
-  if (!init()) return { sent: 0, skipped: 'VAPID keys not set' };
+  if (!init()) return sendViaSite(payload);
   const subs = await q(`SELECT endpoint, p256dh, auth FROM "JarvisPushSubscription"`);
   let sent = 0;
   for (const s of subs) {
