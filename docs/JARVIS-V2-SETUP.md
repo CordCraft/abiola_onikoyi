@@ -93,3 +93,8 @@ See `docs/JARVIS-MCP.md`: add Jarvis as a custom connector so the Claude app on 
 - **Stop-work push** at your work end time on workdays.
 - **Learns** your real hours nightly from when you actually send messages.
 - Messages are kept 120 days, then deleted.
+
+## Setup state (10 Nov 2026)
+
+Done: Google Cloud project "Jarvis" (crested-photon-514218-k2, published), Entra app "Jarvis" (Nikstalis tenant, secret to Nov 2028), Railway project easygoing-optimism with jarvis-listener (jarvis-listener-production.up.railway.app, volume /data) and jarvis-voice (jarvis-voice-production-6416.up.railway.app), Supabase login `jarvis_listener` (Jarvis tables only), Netlify variables, WhatsApp linked on the owner's number.
+Netlify trap: only real secrets may be marked secret. Non-secret values such as PASSKEY_RP_ID (the domain) appear in the build output and trip "Exposed secrets detected", failing the build.
