@@ -29,7 +29,13 @@ export function newId() {
 export async function ensureTables() {
   const ddl = fs.readFileSync(new URL('./ddl.sql', import.meta.url), 'utf8');
   for (const stmt of ddl.split(/;\s*\n?/).map((s) => s.trim()).filter(Boolean)) {
-    await pool.query(stmt);
+    try {
+      await pool.query(stmt);
+    } catch (e) {
+      // The listener's own database login does not own the tables (the site does), so
+      // owner-only statements such as ENABLE ROW LEVEL SECURITY are refused. That is fine.
+      if (e.code !== '42501' && e.code !== '42P07') throw e;
+    }
   }
 }
 
