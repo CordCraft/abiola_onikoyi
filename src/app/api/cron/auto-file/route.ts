@@ -55,6 +55,9 @@ export async function POST(req: Request) {
         model: MODEL,
         max_tokens: 8000,
         thinking: { type: "adaptive" },
+        // Auto-places a breakpoint on the last block, so each loop iteration
+        // reads the tools + snapshot + earlier turns cached by the one before.
+        cache_control: { type: "ephemeral" },
         system,
         tools,
         messages,
