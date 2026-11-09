@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { Nav } from "@/components/site/Nav";
 import { Footer } from "@/components/site/Footer";
-import { getRecentPosts, POST_KIND_LABELS, type PostKind } from "@/lib/blog";
+import { getLatestPosts, getRecentPosts, POST_KIND_LABELS, type PostKind } from "@/lib/blog";
 import { formatDate } from "@/lib/format";
 
 export const metadata: Metadata = {
@@ -15,7 +15,11 @@ export const metadata: Metadata = {
 export const revalidate = 3600;
 
 export default async function BlogIndexPage() {
-  const posts = await getRecentPosts();
+  // When nothing is newer than the archive cutoff, show the latest posts
+  // anyway so the page never renders empty (Google flags that as a soft 404).
+  const recent = await getRecentPosts();
+  const showingArchive = recent.length === 0;
+  const posts = showingArchive ? await getLatestPosts(10) : recent;
 
   return (
     <>
@@ -32,6 +36,10 @@ export default async function BlogIndexPage() {
             Current developments and my own perspective on reservoir management,
             operations, and innovation in energy.
           </p>
+
+          {showingArchive && posts.length > 0 ? (
+            <p className="mt-10 text-sm font-medium text-zinc-500">From the archive</p>
+          ) : null}
 
           {posts.length === 0 ? (
             <p className="mt-12 text-zinc-500">No posts published yet. Check back soon.</p>
