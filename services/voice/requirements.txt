@@ -1,0 +1,9 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+faster-whisper==1.2.1
+# av 17+ breaks faster-whisper's audio decoding (metadata_errors kwarg); keep this pin.
+av==15.1.0
+kokoro-onnx==0.4.9
+numpy>=1.26,<3
+requests>=2.31

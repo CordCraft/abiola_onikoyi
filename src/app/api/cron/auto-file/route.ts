@@ -8,7 +8,7 @@ import { profile } from "@/content/profile";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MODEL = "claude-opus-4-8";
+const MODEL = "claude-opus-5-5";
 const MAX_LOOPS = 6;
 // Only the tools the filing job needs; no web, no destructive surface.
 const FILING_TOOLS = new Set([

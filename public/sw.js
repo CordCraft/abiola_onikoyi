@@ -23,7 +23,7 @@ self.addEventListener("push", (event) => {
       body: data.body,
       icon: "/icon-192.png",
       badge: "/icon-192.png",
-      data: { url: data.url || "/jarvis", taskId: data.taskId || null },
+      data: { url: data.url || "/jarvis", taskId: data.taskId || null, signalId: data.signalId || null },
       // Action buttons (Mark done / Snooze on task nudges); iOS ignores these.
       actions: Array.isArray(data.actions) ? data.actions.slice(0, 2) : [],
       // Distinct tag per push (sender provides it) so a new notification never
@@ -38,6 +38,27 @@ self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const data = event.notification.data || {};
   const url = data.url || "/jarvis";
+
+  // Signal buttons ("Do it" / "Not now") act without opening the app.
+  if (event.action && data.signalId) {
+    event.waitUntil(
+      fetch("/jarvis/api/signal-action", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ signalId: data.signalId, action: event.action }),
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error("action failed");
+          return self.registration.showNotification(
+            event.action === "approve" ? "On it" : "Okay, not now",
+            { icon: "/icon-192.png", badge: "/icon-192.png", tag: "jarvis-action-ack" }
+          );
+        })
+        .catch(() => self.clients.openWindow(url))
+    );
+    return;
+  }
 
   // Action buttons execute without opening the app.
   if (event.action && data.taskId) {

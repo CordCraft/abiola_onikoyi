@@ -1,0 +1,21 @@
+{
+  "name": "jarvis-listener",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Jarvis always-on listener: WhatsApp (linked device), Gmail, Outlook, triage brain, calendar writes, push and the daily planner.",
+  "type": "module",
+  "main": "src/index.js",
+  "engines": { "node": "24.x" },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.134.0",
+    "baileys": "7.0.0-rc14",
+    "pg": "^8.16.3",
+    "pino": "^9.7.0",
+    "qrcode": "^1.5.4",
+    "web-push": "^3.6.7"
+  }
+}

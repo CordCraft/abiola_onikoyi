@@ -1,91 +1,40 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { getSpeaker, unlockAudio } from "@/lib/jarvis/voice-client";
 
-const VOICE_KEY = "jarvis-tts-voice";
-
-function stripForSpeech(s: string): string {
-  return s
-    .replace(/\[\[doc:[^|\]]+\|([^\]]+)\]\]/g, "")
-    .replace(/[*_#`|]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function chunk(text: string, maxLen = 220): string[] {
-  const sentences = text.split(/(?<=[.!?])\s+/);
-  const out: string[] = [];
-  let cur = "";
-  for (const s of sentences) {
-    if ((cur + " " + s).length > maxLen && cur) {
-      out.push(cur.trim());
-      cur = s;
-    } else {
-      cur = cur ? cur + " " + s : s;
-    }
-  }
-  if (cur.trim()) out.push(cur.trim());
-  return out;
-}
-
-// Play/stop button that reads text aloud with the user's chosen Jarvis voice.
+// Play/stop button that reads text aloud with the user's chosen Jarvis voice
+// (Kokoro via the voice service, browser speechSynthesis if it is unavailable).
 export function SpeakButton({ text, label = "Listen" }: { text: string; label?: string }) {
   const [speaking, setSpeaking] = useState(false);
-  const [supported, setSupported] = useState(true);
   const genRef = useRef(0);
-  const utterRef = useRef<SpeechSynthesisUtterance | null>(null);
 
   useEffect(() => {
-    if (!("speechSynthesis" in window)) {
-      queueMicrotask(() => setSupported(false));
-    }
     return () => {
-      genRef.current += 1;
-      try { window.speechSynthesis?.cancel(); } catch { /* fine */ }
+      // Only silence the shared speaker if this button started the current speech.
+      if (genRef.current > 0) {
+        genRef.current += 1;
+        getSpeaker().stop();
+      }
     };
   }, []);
 
-  if (!supported) return null;
-
   function stop() {
     genRef.current += 1;
-    const u = utterRef.current;
-    if (u) { u.onend = null; u.onerror = null; }
-    utterRef.current = null;
-    try { window.speechSynthesis.cancel(); } catch { /* fine */ }
+    getSpeaker().stop();
     setSpeaking(false);
   }
 
   function play() {
-    const plain = stripForSpeech(text);
-    if (!plain) return;
-    const chunks = chunk(plain);
+    if (!text.trim()) return;
+    unlockAudio({ playbackOnly: true });
     const gen = ++genRef.current;
-    let idx = 0;
     setSpeaking(true);
-    const next = () => {
-      if (gen !== genRef.current) return;
-      if (idx >= chunks.length) {
-        utterRef.current = null;
-        setSpeaking(false);
-        return;
-      }
-      const u = new SpeechSynthesisUtterance(chunks[idx++]);
-      u.rate = 1.04;
-      try {
-        const wanted = localStorage.getItem(VOICE_KEY);
-        if (wanted) {
-          const v = window.speechSynthesis.getVoices().find((x) => x.name === wanted);
-          if (v) u.voice = v;
-        }
-      } catch { /* fine */ }
-      u.onend = () => setTimeout(next, 50);
-      u.onerror = () => { if (gen === genRef.current) { utterRef.current = null; setSpeaking(false); } };
-      utterRef.current = u;
-      window.speechSynthesis.speak(u);
-    };
-    window.speechSynthesis.cancel();
-    setTimeout(next, 80);
+    void getSpeaker()
+      .speak(text)
+      .then(() => {
+        if (gen === genRef.current) setSpeaking(false);
+      });
   }
 
   return (

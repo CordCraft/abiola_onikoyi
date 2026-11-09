@@ -286,34 +286,34 @@ model JarvisSourceLink {
 // ---------------------------------------------------------------------------
 
 model TradingAccount {
-  id        String @id @default(cuid())
+  id               String   @id @default(cuid())
   // `${login}@${server}` so the same login on a demo and live server stay apart
-  accountKey String @unique
-  login     String
-  server    String
-  broker    String // company name reported by the terminal
-  label     String? // friendly name set in the EA inputs, e.g. "Vantage"
-  name      String? // account holder name reported by the terminal
-  currency  String  @default("USD")
-  leverage  Int?
+  accountKey       String   @unique
+  login            String
+  server           String
+  broker           String // company name reported by the terminal
+  label            String? // friendly name set in the EA inputs, e.g. "Vantage"
+  name             String? // account holder name reported by the terminal
+  currency         String   @default("USD")
+  leverage         Int?
   // Live state, overwritten on every EA post
-  balance       Float    @default(0)
-  equity        Float    @default(0)
-  margin        Float    @default(0)
-  freeMargin    Float    @default(0)
+  balance          Float    @default(0)
+  equity           Float    @default(0)
+  margin           Float    @default(0)
+  freeMargin       Float    @default(0)
   // Percent; null when no positions are open (margin = 0)
-  marginLevel   Float?
-  floatingPnl   Float    @default(0)
-  positionCount Int      @default(0)
+  marginLevel      Float?
+  floatingPnl      Float    @default(0)
+  positionCount    Int      @default(0)
   // Open positions as reported in the latest snapshot (array of objects)
-  openPositions Json?
+  openPositions    Json?
   // Broker server clock minus GMT, in seconds (deal times arrive in server time)
-  gmtOffsetSeconds Int @default(0)
-  lastSeenAt DateTime @default(now())
+  gmtOffsetSeconds Int      @default(0)
+  lastSeenAt       DateTime @default(now())
   // Which phone alerts are currently fired, see src/lib/trading/alerts.ts
-  alertState Json?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  alertState       Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   deals     TradingDeal[]
   snapshots TradingSnapshot[]
@@ -344,30 +344,30 @@ model TradingAlert {
 // Raw MT5 deals (one row per fill). A "trade" in the UI is the set of deals
 // sharing a positionId; grouping happens in src/lib/trading/data.ts.
 model TradingDeal {
-  id         String         @id @default(cuid())
-  account    TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  accountId  String
+  id          String         @id @default(cuid())
+  account     TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId   String
   // MT5 tickets exceed 2^31; stored as strings to keep JSON serialisation safe
-  ticket     String
+  ticket      String
   orderTicket String?
-  positionId String?
-  symbol     String
+  positionId  String?
+  symbol      String
   // "buy" | "sell" | "balance" | "credit" | "other"
-  type       String
+  type        String
   // "in" | "out" | "inout" | "out_by" | "" (balance ops)
-  entry      String @default("")
-  volume     Float  @default(0)
-  price      Float  @default(0)
-  sl         Float?
-  tp         Float?
-  profit     Float  @default(0)
-  swap       Float  @default(0)
-  commission Float  @default(0)
-  fee        Float  @default(0)
-  magic      String?
-  comment    String?
+  entry       String         @default("")
+  volume      Float          @default(0)
+  price       Float          @default(0)
+  sl          Float?
+  tp          Float?
+  profit      Float          @default(0)
+  swap        Float          @default(0)
+  commission  Float          @default(0)
+  fee         Float          @default(0)
+  magic       String?
+  comment     String?
   // UTC (EA reports the broker GMT offset and the server converts)
-  time DateTime
+  time        DateTime
 
   @@unique([accountId, ticket])
   @@index([accountId, time])
@@ -378,19 +378,19 @@ model TradingDeal {
 // are open (30s granularity for drawdown and stop-out analysis), and roughly
 // every 15 minutes while flat.
 model TradingSnapshot {
-  id        String         @id @default(cuid())
-  account   TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  accountId String
-  at        DateTime       @default(now())
-  balance     Float
-  equity      Float
-  margin      Float @default(0)
-  freeMargin  Float @default(0)
-  marginLevel Float?
-  floatingPnl Float @default(0)
-  positionCount Int @default(0)
+  id            String         @id @default(cuid())
+  account       TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId     String
+  at            DateTime       @default(now())
+  balance       Float
+  equity        Float
+  margin        Float          @default(0)
+  freeMargin    Float          @default(0)
+  marginLevel   Float?
+  floatingPnl   Float          @default(0)
+  positionCount Int            @default(0)
   // Open positions at snapshot time (only stored while positions are open)
-  positions Json?
+  positions     Json?
 
   @@index([accountId, at])
 }
@@ -446,8 +446,8 @@ model MentorshipMentee {
   checkins MentorshipCheckin[]
   messages MentorshipMessage[]
   sessions MentorshipSession[]
-  planDays MentorshipPlanDay[]  @relation("planDays")
-  aiTools  MentorshipAiTool[]   @relation("aiTools")
+  planDays MentorshipPlanDay[] @relation("planDays")
+  aiTools  MentorshipAiTool[]  @relation("aiTools")
 }
 
 model MentorshipGoal {
@@ -574,19 +574,19 @@ model MentorshipPlanDay {
 }
 
 model MentorshipPlanTask {
-  id       String            @id @default(cuid())
-  day      MentorshipPlanDay @relation(fields: [dayId], references: [id], onDelete: Cascade)
-  dayId    String
-  menteeId String
-  order    Int               @default(0)
+  id           String            @id @default(cuid())
+  day          MentorshipPlanDay @relation(fields: [dayId], references: [id], onDelete: Cascade)
+  dayId        String
+  menteeId     String
+  order        Int               @default(0)
   // "mindset" | "skill" | "project" | "career" | "checkpoint"
-  kind     String            @default("skill")
-  title    String
-  detail   String?
+  kind         String            @default("skill")
+  title        String
+  detail       String?
   // Rough effort estimate shown to the mentee
-  minutes  Int               @default(30)
+  minutes      Int               @default(30)
   // Points feed the running score and streak display
-  points   Int               @default(10)
+  points       Int               @default(10)
   // When set, the portal shows an evidence box with this hint and the task
   // needs evidence text (a link, an answer, a summary) to be marked done
   evidenceHint String?
@@ -605,18 +605,18 @@ model MentorshipPlanTask {
 // The key is pasted by the mentor in the admin area and shown to the mentee
 // in their AI Toolkit once granted.
 model MentorshipAiTool {
-  id       String           @id @default(cuid())
-  mentee   MentorshipMentee @relation("aiTools", fields: [menteeId], references: [id], onDelete: Cascade)
-  menteeId String
+  id        String           @id @default(cuid())
+  mentee    MentorshipMentee @relation("aiTools", fields: [menteeId], references: [id], onDelete: Cascade)
+  menteeId  String
   // "openai" | "anthropic" | "fal"
-  tool     String
+  tool      String
   // "available" | "requested" | "granted"
-  status   String           @default("available")
-  apiKey   String?
+  status    String           @default("available")
+  apiKey    String?
   // Mentee's note on what they want it for / mentor's guidance
   note      String?
-  updatedAt DateTime        @updatedAt
-  createdAt DateTime        @default(now())
+  updatedAt DateTime         @updatedAt
+  createdAt DateTime         @default(now())
 
   @@unique([menteeId, tool])
 }
@@ -637,4 +637,140 @@ model MentorshipAnnouncement {
   title     String
   body      String
   createdAt DateTime @default(now())
+}
+
+// ── Jarvis v2: the always-on listener ──────────────────────────────────────
+// Tables are created lazily by ensureV2Tables() (src/lib/jarvis/v2/setup.ts).
+// Keep the DDL there in sync with these models.
+
+// A connected account Jarvis watches: a Gmail inbox, a Microsoft 365 / Outlook
+// mailbox (+ calendar), or the WhatsApp linked device.
+model JarvisConnection {
+  id              String    @id @default(cuid())
+  provider        String // google | microsoft | whatsapp
+  account         String // email address or phone number
+  label           String?
+  purpose         String    @default("personal") // personal | work: decides which calendar events land on
+  scopes          String?
+  accessTokenEnc  String?
+  refreshTokenEnc String?
+  expiresAt       DateTime?
+  cursor          String? // gmail historyId | graph deltaLink
+  calendarCursor  String?
+  status          String    @default("active") // active | paused | error | needs_reauth
+  lastSyncAt      DateTime?
+  lastError       String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([provider, account])
+}
+
+// Every message Jarvis hears, in or out. Pruned after 120 days.
+model JarvisInbound {
+  id           String    @id @default(cuid())
+  source       String // whatsapp | gmail | outlook
+  connectionId String?
+  externalId   String    @unique
+  threadKey    String?
+  direction    String    @default("in") // in | out (you wrote it)
+  sender       String?
+  senderName   String?
+  recipients   String?
+  subject      String?
+  body         String
+  isGroup      Boolean   @default(false)
+  chatName     String?
+  occurredAt   DateTime
+  triagedAt    DateTime?
+  triage       Json?
+  createdAt    DateTime  @default(now())
+
+  @@index([triagedAt, occurredAt])
+  @@index([threadKey, occurredAt])
+}
+
+// Something Jarvis noticed and what it proposes to do about it.
+model JarvisSignal {
+  id          String    @id @default(cuid())
+  kind        String // event | task | reply | opportunity | followup | fyi | plan | nudge
+  title       String
+  detail      String?
+  why         String? // the link to a goal / project / person
+  score       Int       @default(50) // 0-100, money + deadline + who is waiting
+  source      String? // whatsapp | gmail | outlook | planner | activity
+  inboundIds  Json?
+  projectId   String?
+  personKey   String?
+  action      Json? // { type, payload } the one-tap action
+  autonomy    String    @default("ask") // auto | ask
+  status      String    @default("new") // new | pushed | approved | applied | dismissed | snoozed | failed | undone
+  result      Json?
+  dueAt       DateTime?
+  snoozeUntil DateTime?
+  pushedAt    DateTime?
+  decidedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, score])
+  @@index([createdAt])
+}
+
+// Work for the Railway listener or one of your computers.
+model JarvisJob {
+  id         String    @id @default(cuid())
+  kind       String // apply_signal | calendar_event | send_whatsapp | send_email | machine_task
+  target     String    @default("listener") // listener | machine:<id>
+  payload    Json
+  status     String    @default("queued") // queued | running | done | failed | cancelled
+  result     Json?
+  error      String?
+  attempts   Int       @default(0)
+  createdAt  DateTime  @default(now())
+  startedAt  DateTime?
+  finishedAt DateTime?
+
+  @@index([target, status, createdAt])
+}
+
+// People Jarvis has met through your messages.
+model JarvisPerson {
+  id             String    @id @default(cuid())
+  key            String    @unique // normalised phone or email
+  name           String?
+  relation       String? // family | team | client | partner | vendor | other
+  org            String?
+  importance     Int       @default(30)
+  projectId      String?
+  notes          String?
+  lastInboundAt  DateTime?
+  lastOutboundAt DateTime?
+  openLoops      Int       @default(0)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+// Face ID / Touch ID passkeys for signing in to Jarvis.
+model JarvisPasskey {
+  id           String    @id @default(cuid())
+  credentialId String    @unique
+  publicKey    String
+  counter      Int       @default(0)
+  transports   String?
+  deviceName   String?
+  createdAt    DateTime  @default(now())
+  lastUsedAt   DateTime?
+}
+
+// Your computers running the Jarvis bridge.
+model JarvisMachine {
+  id         String    @id @default(cuid())
+  name       String    @unique
+  hostname   String?
+  os         String?
+  secretHash String
+  status     Json?
+  lastSeenAt DateTime?
+  createdAt  DateTime  @default(now())
 }

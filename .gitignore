@@ -43,3 +43,6 @@ next-env.d.ts
 # prisma local sqlite database
 *.db
 *.db-journal
+
+# jarvis voice service local venv
+services/voice/.venv

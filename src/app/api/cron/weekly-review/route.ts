@@ -8,7 +8,7 @@ import { profile } from "@/content/profile";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MODEL = "claude-opus-4-8";
+const MODEL = "claude-opus-5-5";
 
 // Sunday-evening review ritual: Jarvis reflects on the week and opens a chat
 // thread with the review plus three planning questions, then pushes a link.

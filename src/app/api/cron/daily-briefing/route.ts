@@ -9,7 +9,7 @@ import { profile } from "@/content/profile";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MODEL = "claude-opus-4-8";
+const MODEL = "claude-opus-5-5";
 
 // Generates the morning briefing with Claude and delivers it to every
 // subscribed device via Web Push. Triggered by the Netlify scheduled function.
@@ -32,6 +32,14 @@ export async function POST(req: Request) {
 
   if (!process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json({ ok: false, error: "ANTHROPIC_API_KEY missing" }, { status: 500 });
+  }
+
+  // The Railway listener's planner sends a fuller morning plan; when it already ran today, stay quiet.
+  const planned = await prisma.jarvisSignal
+    .findFirst({ where: { kind: "plan", createdAt: { gte: new Date(Date.now() - 12 * 3600e3) } } })
+    .catch(() => null);
+  if (planned) {
+    return NextResponse.json({ ok: true, skipped: "Listener planner already sent today's plan" });
   }
 
   try {

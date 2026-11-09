@@ -11,7 +11,7 @@ import {
 } from "@/lib/jarvis/queries";
 import { formatDate } from "@/lib/format";
 import { projectHealth, healthTone } from "@/lib/jarvis/health";
-import { PushToggle } from "@/components/jarvis/PushToggle";
+import { TodayPanel } from "@/components/jarvis/TodayPanel";
 import { CaptureBox } from "@/components/jarvis/CaptureBox";
 import { SpeakButton } from "@/components/jarvis/SpeakButton";
 import { BadgeUpdater } from "@/components/jarvis/BadgeUpdater";
@@ -84,14 +84,16 @@ export default async function JarvisOverview({
 
   return (
     <div className="space-y-10">
-      {/* Hero */}
+      <TodayPanel />
+
+      {/* Ventures at a glance */}
       <div className="relative overflow-hidden rounded-3xl border border-white/60 bg-gradient-to-br from-zinc-900 via-zinc-900 to-indigo-950 p-8 text-white shadow-[0_20px_50px_-20px_rgba(30,27,75,0.5)]">
         <div className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-indigo-500/25 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-20 left-10 h-56 w-56 rounded-full bg-violet-500/20 blur-3xl" />
         <div className="relative flex flex-wrap items-end justify-between gap-6">
           <div>
             <p className="text-xs font-medium uppercase tracking-[0.14em] text-indigo-300">Second brain</p>
-            <h1 className="mt-1.5 text-3xl font-bold tracking-tight">Overview</h1>
+            <h2 className="mt-1.5 text-3xl font-bold tracking-tight">Your ventures</h2>
             <p className="mt-2 max-w-md text-sm text-zinc-300">
               Your ventures at a glance. Ask Jarvis to capture documents, log decisions, and move things forward.
             </p>
@@ -109,7 +111,6 @@ export default async function JarvisOverview({
             >
               + Project
             </Link>
-            <PushToggle />
           </div>
         </div>
 

@@ -4,6 +4,7 @@ import { Suspense, useActionState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { login, type LoginState } from "./actions";
+import { PasskeySignIn } from "./PasskeySignIn";
 import { profile } from "@/content/profile";
 
 // Carries the ?from= destination through the login form so a deep link (for
@@ -12,6 +13,11 @@ function FromField() {
   const searchParams = useSearchParams();
   const from = searchParams.get("from") ?? "";
   return <input type="hidden" name="from" value={from} />;
+}
+
+function PasskeyBlock() {
+  const searchParams = useSearchParams();
+  return <PasskeySignIn from={searchParams.get("from") ?? ""} />;
 }
 
 export default function LoginPage() {
@@ -39,7 +45,13 @@ export default function LoginPage() {
             Private projects area. Authorized access only.
           </p>
 
-          <form action={action} className="mt-6 space-y-4">
+          <div className="mt-6">
+            <Suspense fallback={null}>
+              <PasskeyBlock />
+            </Suspense>
+          </div>
+
+          <form action={action} className="space-y-4">
             <Suspense fallback={null}>
               <FromField />
             </Suspense>
@@ -54,7 +66,7 @@ export default function LoginPage() {
                 id="username"
                 name="username"
                 type="text"
-                autoComplete="username"
+                autoComplete="username webauthn"
                 required
                 className="mt-1.5 w-full rounded-lg border border-white/10 bg-zinc-800 px-3 py-2 text-white placeholder-zinc-500 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/40"
               />

@@ -1,8 +1,23 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, type RefObject } from "react";
 import { Markdown } from "@/components/Markdown";
 import { undoRecord, saveMeetingTranscript } from "@/app/jarvis/actions";
+import { JarvisOrb, type OrbState } from "@/components/jarvis/Orb";
+import {
+  audioRunning,
+  createListener,
+  getSpeaker,
+  loadVoices,
+  micErrorMessage,
+  stripMarkdownForSpeech,
+  transcribe,
+  unlockAudio,
+  VoiceUnavailableError,
+  voiceServiceAvailable,
+  type Listener,
+  type VoiceInfo,
+} from "@/lib/jarvis/voice-client";
 
 const OUTBOX_KEY = "jarvis-outbox";
 const VOICE_KEY = "jarvis-tts-voice";
@@ -211,7 +226,7 @@ async function processFile(file: File): Promise<Attachment> {
   }
 }
 
-// ── Text-to-speech helpers ───────────────────────────────────────────────────
+// ── Citation helper ──────────────────────────────────────────────────────────
 
 // [[doc:<id>|<name>]] citation markers become clickable document chips.
 function renderCitations(s: string): string {
@@ -221,40 +236,65 @@ function renderCitations(s: string): string {
   );
 }
 
-function stripMarkdownForSpeech(s: string): string {
-  return s
-    .replace(/\[\[doc:[^|\]]+\|([^\]]+)\]\]/g, "")
-    .replace(/```[\s\S]*?```/g, " (code omitted) ")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/\*([^*]+)\*/g, "$1")
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-    .replace(/^\s*[-*+]\s+/gm, "")
-    .replace(/^\s*\d+\.\s+/gm, "")
-    .replace(/\|/g, ", ")
-    .replace(/\[saved:[^\]]*\]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function chunkSentences(text: string, maxLen = 220): string[] {
-  const sentences = text.split(/(?<=[.!?])\s+/);
-  const chunks: string[] = [];
-  let cur = "";
-  for (const s of sentences) {
-    if ((cur + " " + s).length > maxLen && cur) {
-      chunks.push(cur.trim());
-      cur = s;
-    } else {
-      cur = cur ? cur + " " + s : s;
-    }
-  }
-  if (cur.trim()) chunks.push(cur.trim());
-  return chunks;
-}
-
 type VoicePhase = "standby" | "capturing" | "thinking" | "speaking";
+
+// ── Voice overlay (orb) ───────────────────────────────────────────────────────
+
+// The audio level changes ~30 times a second; polling it here keeps those
+// re-renders inside this small component instead of the whole chat.
+function useLiveLevel(state: OrbState, mic: RefObject<number>, play: RefObject<number>): number {
+  const [level, setLevel] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => {
+      const v = state === "speaking" ? play.current : state === "listening" ? mic.current : 0;
+      setLevel((prev) => (Math.abs(prev - v) < 0.01 ? prev : v));
+    }, 33);
+    return () => clearInterval(t);
+  }, [state, mic, play]);
+  return level;
+}
+
+function VoiceOverlay({
+  state,
+  micRef,
+  playRef,
+  status,
+  userLine,
+  replyLine,
+  onTap,
+  onClose,
+}: {
+  state: OrbState;
+  micRef: RefObject<number>;
+  playRef: RefObject<number>;
+  status: string;
+  userLine: string;
+  replyLine: string;
+  onTap: () => void;
+  onClose: () => void;
+}) {
+  const level = useLiveLevel(state, micRef, playRef);
+  return (
+    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 overflow-y-auto bg-gradient-to-b from-zinc-950 via-zinc-950 to-indigo-950 px-6 py-4 text-center">
+      <button
+        type="button"
+        onClick={onTap}
+        aria-label="Tap to talk or interrupt"
+        className="shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
+      >
+        <JarvisOrb state={state} level={level} size={220} />
+      </button>
+      <p className="min-h-[1.25rem] max-w-md text-sm font-medium text-indigo-100">{status}</p>
+      {userLine ? (
+        <p className="line-clamp-2 max-w-md text-xs italic text-zinc-400">&ldquo;{userLine}&rdquo;</p>
+      ) : null}
+      {replyLine ? <p className="line-clamp-5 max-w-md text-sm text-zinc-300">{replyLine}</p> : null}
+      <button type="button" onClick={onClose} className="text-xs text-zinc-400 underline hover:text-zinc-200">
+        End voice mode
+      </button>
+    </div>
+  );
+}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -286,6 +326,12 @@ export function JarvisChat({
   const [voiceLive, setVoiceLive] = useState("");
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [voiceName, setVoiceName] = useState<string>("");
+  // Whisper/Kokoro voice service: null until probed, false when not configured
+  const [cloudVoice, setCloudVoice] = useState<boolean | null>(null);
+  const [kokoro, setKokoro] = useState<{ voices: VoiceInfo[]; default: string } | null>(null);
+  const [transcribing, setTranscribing] = useState(0);
+  // ?voice=1 deep link blocked by the browser: ask for one tap
+  const [needsTap, setNeedsTap] = useState(false);
 
   // Meeting recorder
   const [meeting, setMeeting] = useState(false);
@@ -309,8 +355,21 @@ export function JarvisChat({
   const captureBufRef = useRef("");
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const followupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const utterRef = useRef<SpeechSynthesisUtterance | null>(null);
   const speakGenRef = useRef(0);
+  const cloudRef = useRef<boolean | null>(null);
+  const listenerRef = useRef<Listener | null>(null);
+  const cloudModeRef = useRef<"off" | "dictation" | "voice" | "meeting">("off");
+  // Which engine the CURRENT hands-free session uses (fixed when it starts)
+  const voiceCloudRef = useRef(false);
+  const micLevelRef = useRef(0);
+  const playLevelRef = useRef(0);
+  const txQueueRef = useRef<Promise<void>>(Promise.resolve());
+  // Listener callbacks are created once; they reach current-render logic here.
+  const cloudHandlersRef = useRef<{
+    speechStart: (mode: "dictation" | "voice" | "meeting") => void;
+    utterance: (mode: "dictation" | "voice" | "meeting", blob: Blob) => void;
+    error: (mode: "dictation" | "voice" | "meeting", message: string) => void;
+  }>({ speechStart: () => {}, utterance: () => {}, error: () => {} });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const wakeLockRef = useRef<any>(null);
   const threadIdRef = useRef(initialThreadId);
@@ -326,6 +385,53 @@ export function JarvisChat({
   const setPhase = useCallback((p: VoicePhase) => {
     phaseRef.current = p;
     setVoicePhase(p);
+  }, []);
+
+  // ── Cloud engine primitives (Whisper listening via voice-client) ──────────
+
+  const stopCloudListening = useCallback(async (flush = false) => {
+    const l = listenerRef.current;
+    listenerRef.current = null;
+    cloudModeRef.current = "off";
+    micLevelRef.current = 0;
+    if (l) await l.stop(flush);
+  }, []);
+
+  const startCloudListening = useCallback(
+    async (mode: "dictation" | "voice" | "meeting") => {
+      await stopCloudListening();
+      const l = createListener({
+        silenceMs: mode === "meeting" ? 1400 : 800,
+        maxUtteranceMs: mode === "meeting" ? 40_000 : 60_000,
+        onLevel: (v) => {
+          micLevelRef.current = v;
+        },
+        onSpeechStart: () => cloudHandlersRef.current.speechStart(mode),
+        onUtterance: (blob) => cloudHandlersRef.current.utterance(mode, blob),
+        onError: (m) => cloudHandlersRef.current.error(mode, m),
+      });
+      listenerRef.current = l;
+      cloudModeRef.current = mode;
+      try {
+        await l.start();
+      } catch (e) {
+        if (listenerRef.current === l) {
+          listenerRef.current = null;
+          cloudModeRef.current = "off";
+        }
+        throw e;
+      }
+      // Stopped while the permission prompt was open: do not leave the mic on.
+      if (listenerRef.current !== l) await l.stop();
+    },
+    [stopCloudListening],
+  );
+
+  const resolveCloud = useCallback(async () => {
+    const ok = await voiceServiceAvailable();
+    cloudRef.current = ok;
+    setCloudVoice(ok);
+    return ok;
   }, []);
 
   useEffect(() => {
@@ -344,7 +450,8 @@ export function JarvisChat({
     shouldListenRef.current = false;
     try { recRef.current?.stop(); } catch { /* not started */ }
     recRef.current = null;
-  }, []);
+    void stopCloudListening();
+  }, [stopCloudListening]);
 
   const startRecognition = useCallback((mode: "dictation" | "voice" | "meeting") => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -492,71 +599,45 @@ export function JarvisChat({
     }, 1300);
   }, []);
 
-  const armFollowupWindow = useCallback(() => {
+  const armFollowupWindow = useCallback((ms = 8000) => {
     if (followupTimerRef.current) clearTimeout(followupTimerRef.current);
     followupTimerRef.current = setTimeout(() => {
       if (phaseRef.current === "capturing" && !captureBufRef.current.trim()) {
         setPhase("standby");
         setVoiceLive("");
       }
-    }, 8000);
+    }, ms);
   }, [setPhase]);
 
   // ── Text to speech ─────────────────────────────────────────────────────────
 
   const stopSpeaking = useCallback(() => {
-    // Bump the generation so any in-flight chunk chain goes inert: canceled
-    // utterances still fire onend/onerror, which would otherwise resume the
-    // chain or re-trigger onDone.
+    // Bump the generation so any in-flight speak() promise goes inert and its
+    // completion callback cannot resume the chain or re-trigger onDone.
     speakGenRef.current += 1;
-    const u = utterRef.current;
-    if (u) {
-      u.onend = null;
-      u.onerror = null;
-    }
-    utterRef.current = null;
-    try { window.speechSynthesis?.cancel(); } catch { /* unsupported */ }
+    getSpeaker().stop();
+    playLevelRef.current = 0;
+    listenerRef.current?.setMode("listen");
   }, []);
 
-  const speak = useCallback(
-    (text: string, onDone: () => void) => {
-      if (!("speechSynthesis" in window)) { onDone(); return; }
-      const plain = stripMarkdownForSpeech(text);
-      if (!plain) { onDone(); return; }
-      const chunks = chunkSentences(plain);
-      const gen = ++speakGenRef.current;
-      let idx = 0;
-      const next = () => {
+  const speak = useCallback((text: string, onDone: () => void) => {
+    const gen = ++speakGenRef.current;
+    // While Jarvis talks the mic only reacts to clearly louder speech (barge-in),
+    // so its own voice leaking into the mic does not interrupt it.
+    listenerRef.current?.setMode("boost");
+    void getSpeaker()
+      .speak(text, {
+        onLevel: (v) => {
+          playLevelRef.current = v;
+        },
+      })
+      .then(() => {
         if (gen !== speakGenRef.current) return; // barge-in or newer speech
-        if (!voiceModeRef.current || idx >= chunks.length) {
-          utterRef.current = null;
-          onDone();
-          return;
-        }
-        const u = new SpeechSynthesisUtterance(chunks[idx++]);
-        u.rate = 1.04;
-        // Honor the user's chosen voice (Memory in localStorage, per device)
-        try {
-          const wanted = localStorage.getItem(VOICE_KEY);
-          if (wanted) {
-            const v = window.speechSynthesis.getVoices().find((x) => x.name === wanted);
-            if (v) u.voice = v;
-          }
-        } catch { /* fine */ }
-        u.onend = () => setTimeout(next, 50);
-        u.onerror = () => {
-          if (gen !== speakGenRef.current) return;
-          utterRef.current = null;
-          onDone();
-        };
-        utterRef.current = u; // hold the ref (iOS GC bug)
-        window.speechSynthesis.speak(u);
-      };
-      window.speechSynthesis.cancel();
-      setTimeout(next, 100);
-    },
-    [],
-  );
+        playLevelRef.current = 0;
+        listenerRef.current?.setMode("listen");
+        onDone();
+      });
+  }, []);
 
   // ── Wake lock (keep screen on in hands-free "desk mode") ──────────────────
 
@@ -594,37 +675,57 @@ export function JarvisChat({
       // Tap while speaking = barge-in: stop speech, go back to listening
       if (phaseRef.current === "speaking") {
         stopSpeaking();
-        setPhase("standby");
-        startRecognition("voice");
+        if (voiceCloudRef.current) {
+          setPhase("capturing");
+          armFollowupWindow(12000);
+        } else {
+          setPhase("standby");
+          startRecognition("voice");
+        }
         return;
       }
       exitVoiceMode();
       return;
     }
-    if (!speechAvailable()) {
-      const standalone = window.matchMedia?.("(display-mode: standalone)")?.matches;
-      setError(
-        standalone
-          ? "Voice is not available inside the installed app on iPhone (an Apple limitation). Open abiolaonikoyi.com in Safari for voice, or use the app on Android or desktop."
-          : "Voice input is not supported in this browser. Try Chrome, Edge, or Safari.",
-      );
-      return;
-    }
     if (meeting) return; // do not hijack an active meeting recording
-    if (dictating) {
-      stopRecognition();
-      setDictating(false);
-      setInterimText("");
-    }
-    setError(null);
-    voiceModeRef.current = true;
-    setVoiceMode(true);
-    setPhase("standby");
-    // Unlock TTS inside the user gesture (required on iOS)
+    // Unlock audio output inside the user gesture (required on iOS)
+    unlockAudio();
     try { window.speechSynthesis?.speak(new SpeechSynthesisUtterance("")); } catch { /* fine */ }
-    void acquireWakeLock();
-    startRecognition("voice");
-  }, [acquireWakeLock, dictating, meeting, exitVoiceMode, setPhase, startRecognition, stopRecognition, stopSpeaking]);
+    void (async () => {
+      const cloud = await resolveCloud();
+      if (!cloud && !speechAvailable()) {
+        setError(
+          "Voice is not available. The voice service is not configured and this browser has no built-in speech recognition.",
+        );
+        return;
+      }
+      if (voiceModeRef.current) return; // double tap
+      if (dictating) {
+        stopRecognition();
+        setDictating(false);
+        setInterimText("");
+      }
+      setError(null);
+      voiceCloudRef.current = cloud;
+      voiceModeRef.current = true;
+      setVoiceMode(true);
+      void acquireWakeLock();
+      if (cloud) {
+        // A tap starts the conversation: listen straight away, no wake word.
+        setPhase("capturing");
+        try {
+          await startCloudListening("voice");
+          armFollowupWindow(12000);
+        } catch (e) {
+          setError(micErrorMessage(e));
+          exitVoiceMode();
+        }
+      } else {
+        setPhase("standby");
+        startRecognition("voice");
+      }
+    })();
+  }, [acquireWakeLock, armFollowupWindow, dictating, meeting, exitVoiceMode, resolveCloud, setPhase, startCloudListening, startRecognition, stopRecognition, stopSpeaking]);
 
   // Pause/resume on tab visibility changes
   useEffect(() => {
@@ -636,13 +737,61 @@ export function JarvisChat({
         }
       } else if (voiceModeRef.current) {
         void acquireWakeLock();
-        setPhase("standby");
-        startRecognition("voice");
+        if (voiceCloudRef.current) {
+          setPhase("capturing");
+          startCloudListening("voice")
+            .then(() => armFollowupWindow(12000))
+            .catch((e) => {
+              setError(micErrorMessage(e));
+              exitVoiceMode();
+            });
+        } else {
+          setPhase("standby");
+          startRecognition("voice");
+        }
       }
     };
     document.addEventListener("visibilitychange", onVis);
     return () => document.removeEventListener("visibilitychange", onVis);
-  }, [acquireWakeLock, setPhase, startRecognition, stopRecognition, stopSpeaking]);
+  }, [acquireWakeLock, armFollowupWindow, exitVoiceMode, setPhase, startCloudListening, startRecognition, stopRecognition, stopSpeaking]);
+
+  // /jarvis/chat?voice=1 starts hands-free right away. If the browser blocks
+  // audio or the mic without a gesture (iOS), show a single big tap target.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("voice") !== "1") return;
+    const t = setTimeout(() => {
+      try {
+        const u = new URL(window.location.href);
+        u.searchParams.delete("voice");
+        window.history.replaceState(null, "", u.pathname + u.search);
+      } catch { /* fine */ }
+      unlockAudio();
+      if (!audioRunning()) {
+        setNeedsTap(true);
+        return;
+      }
+      toggleVoiceMode();
+      setTimeout(() => {
+        if (!voiceModeRef.current) setNeedsTap(true);
+      }, 2500);
+    }, 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Probe the voice service once: decides Whisper/Kokoro vs the browser's own voice
+  useEffect(() => {
+    let alive = true;
+    void loadVoices().then((v) => {
+      if (!alive) return;
+      cloudRef.current = v !== null;
+      setCloudVoice(v !== null);
+      if (v) setKokoro({ voices: v.voices, default: v.default });
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // TTS voices load asynchronously on most platforms
   useEffect(() => {
@@ -687,7 +836,13 @@ export function JarvisChat({
   async function toggleMeeting() {
     if (voiceMode || dictating) return;
     if (meeting) {
-      stopRecognition();
+      if (cloudModeRef.current === "meeting") {
+        // Flush the utterance in progress, then wait for every chunk to transcribe
+        await stopCloudListening(true);
+        await txQueueRef.current;
+      } else {
+        stopRecognition();
+      }
       setMeeting(false);
       setMeetingLive("");
       const transcript = meetingBufRef.current.trim();
@@ -722,15 +877,25 @@ export function JarvisChat({
       }
       return;
     }
-    if (!speechAvailable()) {
-      setError("Voice recognition is not supported in this browser. Try Chrome, Edge, or Safari.");
+    const cloud = await resolveCloud();
+    if (!cloud && !speechAvailable()) {
+      setError("Voice recognition is not available. The voice service is not configured and this browser has no built-in speech recognition.");
       return;
     }
     setError(null);
     meetingBufRef.current = "";
     meetingStartRef.current = Date.now();
     setMeetingLive("");
-    if (startRecognition("meeting")) setMeeting(true);
+    if (cloud) {
+      try {
+        await startCloudListening("meeting");
+        setMeeting(true);
+      } catch (e) {
+        setError(micErrorMessage(e));
+      }
+    } else if (startRecognition("meeting")) {
+      setMeeting(true);
+    }
   }
 
   // Unmount cleanup
@@ -744,7 +909,9 @@ export function JarvisChat({
       shouldListenRef.current = false;
       try { recRef.current?.stop(); } catch { /* fine */ }
       recRef.current = null;
-      try { window.speechSynthesis?.cancel(); } catch { /* fine */ }
+      void listenerRef.current?.stop();
+      listenerRef.current = null;
+      getSpeaker().stop();
       try { wakeLockRef.current?.release?.(); } catch { /* fine */ }
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
       if (followupTimerRef.current) clearTimeout(followupTimerRef.current);
@@ -756,23 +923,34 @@ export function JarvisChat({
   function toggleDictation() {
     if (voiceMode || meeting) return; // hands-free / meeting own the mic
     if (dictating) {
-      stopRecognition();
+      // Cloud: flush the utterance in progress so the last words are kept
+      if (cloudModeRef.current === "dictation") void stopCloudListening(true);
+      else stopRecognition();
       setDictating(false);
       setInterimText("");
       return;
     }
-    if (!speechAvailable()) {
-      const standalone = window.matchMedia?.("(display-mode: standalone)")?.matches;
-      setError(
-        standalone
-          ? "Voice is not available inside the installed app on iPhone (an Apple limitation). Open abiolaonikoyi.com in Safari for voice, or use the app on Android or desktop."
-          : "Voice input is not supported in this browser. Try Chrome, Edge, or Safari.",
-      );
-      return;
-    }
-    setError(null);
-    committedRef.current = input;
-    if (startRecognition("dictation")) setDictating(true);
+    void (async () => {
+      const cloud = await resolveCloud();
+      if (!cloud && !speechAvailable()) {
+        setError(
+          "Voice input is not available. The voice service is not configured and this browser has no built-in speech recognition.",
+        );
+        return;
+      }
+      setError(null);
+      committedRef.current = input;
+      if (cloud) {
+        try {
+          await startCloudListening("dictation");
+          setDictating(true);
+        } catch (e) {
+          setError(micErrorMessage(e));
+        }
+      } else if (startRecognition("dictation")) {
+        setDictating(true);
+      }
+    })();
   }
 
   // ── Send ───────────────────────────────────────────────────────────────────
@@ -976,28 +1154,151 @@ export function JarvisChat({
       setSending(false);
       setWorkStatus(null);
       if (isVoice && voiceModeRef.current) {
+        const cloud = voiceCloudRef.current;
         if (finalReply) {
           setPhase("speaking");
-          stopRecognition(); // never transcribe our own voice
+          if (!cloud) stopRecognition(); // never transcribe our own voice
           speak(finalReply, () => {
             if (!voiceModeRef.current) return;
             setPhase("capturing"); // follow-up window: no wake word needed
             captureBufRef.current = "";
             setVoiceLive("");
-            setTimeout(() => {
-              // Do not reopen the mic while the tab is hidden; the
-              // visibilitychange handler resumes on return.
-              if (voiceModeRef.current && !document.hidden) startRecognition("voice");
-            }, 300);
+            if (cloud) {
+              // The listener keeps running through speech; only a hidden tab stopped it.
+              if (!listenerRef.current && !document.hidden) {
+                startCloudListening("voice").catch((e) => {
+                  setError(micErrorMessage(e));
+                  exitVoiceMode();
+                });
+              }
+            } else {
+              setTimeout(() => {
+                // Do not reopen the mic while the tab is hidden; the
+                // visibilitychange handler resumes on return.
+                if (voiceModeRef.current && !document.hidden) startRecognition("voice");
+              }, 300);
+            }
             armFollowupWindow();
           });
         } else {
-          setPhase("standby");
+          setPhase(cloud ? "capturing" : "standby");
+          if (cloud) armFollowupWindow();
         }
       }
     }
   }
   sendRef.current = send;
+
+  // ── Cloud listener callbacks (assigned each render, called via ref) ────────
+
+  function enqueueTranscription(blob: Blob, onText: (text: string) => void) {
+    setTranscribing((n) => n + 1);
+    txQueueRef.current = txQueueRef.current.then(async () => {
+      try {
+        const t = await transcribe(blob);
+        if (t.text) onText(t.text);
+      } catch (e) {
+        if (e instanceof VoiceUnavailableError) {
+          cloudRef.current = false;
+          setCloudVoice(false);
+          setError("The voice service is unavailable. Tap the mic again to use the browser's voice input instead.");
+        } else {
+          setError(e instanceof Error ? e.message : "Could not transcribe that.");
+        }
+      } finally {
+        setTranscribing((n) => Math.max(0, n - 1));
+      }
+    });
+  }
+
+  async function handleVoiceUtterance(blob: Blob) {
+    if (!voiceModeRef.current) return;
+    const prev = phaseRef.current;
+    if (prev === "thinking") return; // busy with the previous turn: drop it
+    const base: VoicePhase = prev === "standby" ? "standby" : "capturing";
+    if (followupTimerRef.current) clearTimeout(followupTimerRef.current);
+    setPhase("thinking");
+    const restore = () => {
+      setPhase(base);
+      if (base === "capturing") armFollowupWindow();
+    };
+    let text = "";
+    try {
+      text = (await transcribe(blob)).text;
+    } catch (e) {
+      if (!voiceModeRef.current) return;
+      if (e instanceof VoiceUnavailableError) {
+        cloudRef.current = false;
+        setCloudVoice(false);
+        setError("The voice service is unavailable, so hands-free has stopped. Tap the headset to use the browser's voice.");
+        exitVoiceMode();
+        return;
+      }
+      setError(e instanceof Error ? e.message : "Could not transcribe that.");
+      restore();
+      return;
+    }
+    if (!voiceModeRef.current) return;
+    if (base === "standby") {
+      // Wake word is matched on the Whisper transcript, so it works on iPhone too
+      const m = text.match(WAKE_RE);
+      if (!m) {
+        setPhase("standby");
+        return;
+      }
+      text = text.slice((m.index ?? 0) + m[0].length).trim();
+      if (!text) {
+        setPhase("capturing");
+        setVoiceLive("");
+        armFollowupWindow();
+        return;
+      }
+    } else {
+      text = text.replace(WAKE_RE, " ").trim();
+    }
+    if (!text || sendingRef.current) {
+      restore();
+      return;
+    }
+    setVoiceLive("");
+    void sendRef.current(text, { voice: true });
+  }
+
+  cloudHandlersRef.current = {
+    speechStart: (mode) => {
+      if (mode !== "voice" || !voiceModeRef.current) return;
+      if (phaseRef.current === "speaking") {
+        // Barge-in: the user started talking over Jarvis
+        stopSpeaking();
+        setPhase("capturing");
+      }
+      if (phaseRef.current === "capturing") {
+        if (followupTimerRef.current) clearTimeout(followupTimerRef.current);
+        setVoiceLive("");
+      }
+    },
+    utterance: (mode, blob) => {
+      if (mode === "dictation") {
+        enqueueTranscription(blob, (text) => {
+          committedRef.current = (committedRef.current + " " + text).trimStart();
+          setInput(committedRef.current);
+        });
+      } else if (mode === "meeting") {
+        enqueueTranscription(blob, (text) => {
+          meetingBufRef.current = (meetingBufRef.current + " " + text).trimStart();
+          const tail = meetingBufRef.current.slice(-160);
+          setMeetingLive((tail.length < meetingBufRef.current.length ? "..." : "") + tail);
+        });
+      } else {
+        void handleVoiceUtterance(blob);
+      }
+    },
+    error: (mode, message) => {
+      setError(message);
+      if (mode === "voice") exitVoiceMode();
+      else if (mode === "dictation") setDictating(false);
+    },
+  };
 
   async function undo(itemIdx: number, rec: SavedRecord) {
     const r = await undoRecord(rec.kind, rec.id);
@@ -1022,15 +1323,70 @@ export function JarvisChat({
 
   const voiceStatus =
     voicePhase === "standby"
-      ? 'Say "Hey Jarvis" to start'
+      ? voiceCloudRef.current
+        ? 'Say "Hey Jarvis" or tap the orb'
+        : 'Say "Hey Jarvis" to start'
       : voicePhase === "capturing"
         ? voiceLive || "Listening..."
         : voicePhase === "thinking"
           ? "Thinking..."
-          : "Speaking. Tap the headset to interrupt.";
+          : "Speaking. Tap or just talk to interrupt.";
+  const orbState: OrbState =
+    voicePhase === "capturing" ? "listening" : voicePhase === "standby" ? "idle" : voicePhase;
+  const lastMsg = [...items].reverse().find((i) => i.kind === "msg");
+  const lastUserMsg = [...items].reverse().find((i) => i.kind === "msg" && i.role === "user");
+  const lastUserLine =
+    lastUserMsg && lastUserMsg.kind === "msg" ? lastUserMsg.content.replace(/\[attached:[^\]]*\]/g, "").trim().slice(0, 200) : "";
+  const lastReplyLine =
+    lastMsg && lastMsg.kind === "msg" && lastMsg.role === "assistant"
+      ? stripMarkdownForSpeech(lastMsg.content).slice(0, 400)
+      : "";
+
+  function onOrbTap() {
+    if (voicePhase === "speaking") {
+      toggleVoiceMode(); // barge-in
+    } else if (voiceCloudRef.current && voicePhase === "standby") {
+      setPhase("capturing");
+      armFollowupWindow(12000);
+    } else if (voiceCloudRef.current && voicePhase === "capturing") {
+      if (followupTimerRef.current) clearTimeout(followupTimerRef.current);
+      setPhase("standby");
+      setVoiceLive("");
+    }
+  }
 
   return (
     <div className="flex h-[calc(100dvh-16rem)] min-h-[420px] flex-col overflow-hidden rounded-3xl border border-white/60 bg-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.04),0_20px_50px_-24px_rgba(30,27,75,0.28)] backdrop-blur-sm md:h-[calc(100dvh-12rem)]">
+      <div className="relative flex min-h-0 flex-1 flex-col">
+      {voiceMode ? (
+        <VoiceOverlay
+          state={orbState}
+          micRef={micLevelRef}
+          playRef={playLevelRef}
+          status={voiceStatus}
+          userLine={lastUserLine}
+          replyLine={voicePhase === "thinking" || voicePhase === "capturing" ? "" : lastReplyLine}
+          onTap={onOrbTap}
+          onClose={exitVoiceMode}
+        />
+      ) : needsTap ? (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-6 bg-gradient-to-b from-zinc-950 via-zinc-950 to-indigo-950 px-6 text-center">
+          <JarvisOrb state="idle" level={0} size={220} />
+          <button
+            type="button"
+            onClick={() => {
+              setNeedsTap(false);
+              toggleVoiceMode();
+            }}
+            className="rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 px-8 py-4 text-base font-semibold text-white shadow-lg shadow-indigo-500/30"
+          >
+            Tap to start talking
+          </button>
+          <button type="button" onClick={() => setNeedsTap(false)} className="text-xs text-zinc-400 underline">
+            Not now
+          </button>
+        </div>
+      ) : null}
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto p-4 md:p-5">
         {items.length === 0 ? (
@@ -1113,6 +1469,7 @@ export function JarvisChat({
           <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>
         ) : null}
       </div>
+      </div>
 
       {/* Input area */}
       <div className="border-t border-zinc-200/70 bg-white/60 p-3 backdrop-blur">
@@ -1192,7 +1549,25 @@ export function JarvisChat({
               )}
             </span>
             <span className="min-w-0 flex-1 truncate font-medium">{voiceStatus}</span>
-            {voices.length > 0 ? (
+            {cloudVoice && kokoro && kokoro.voices.length > 0 ? (
+              <select
+                value={kokoro.voices.some((v) => v.id === voiceName) ? voiceName : kokoro.default}
+                onChange={(e) => {
+                  setVoiceName(e.target.value);
+                  try {
+                    localStorage.setItem(VOICE_KEY, e.target.value);
+                  } catch { /* fine */ }
+                }}
+                className="max-w-[150px] shrink-0 rounded border border-zinc-200 bg-white px-1 py-0.5 text-[10px] text-zinc-600"
+                title="Jarvis's speaking voice on this device"
+              >
+                {kokoro.voices.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.label}
+                  </option>
+                ))}
+              </select>
+            ) : voices.length > 0 ? (
               <select
                 value={voiceName}
                 onChange={(e) => {
@@ -1221,7 +1596,9 @@ export function JarvisChat({
               <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500" />
             </span>
             <span className="font-medium">Listening</span>
-            {interimText ? (
+            {transcribing > 0 ? (
+              <span className="truncate italic text-red-500">Transcribing...</span>
+            ) : interimText ? (
               <span className="truncate italic text-red-500">{interimText}</span>
             ) : (
               <span className="text-red-400">Speak now...</span>
