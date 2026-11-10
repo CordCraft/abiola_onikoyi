@@ -94,7 +94,32 @@ See `docs/JARVIS-MCP.md`: add Jarvis as a custom connector so the Claude app on 
 - **Learns** your real hours nightly from when you actually send messages.
 - Messages are kept 120 days, then deleted.
 
-## Setup state (10 Nov 2026)
+## Setup state and hand-over (10 Nov 2026)
 
-Done: Google Cloud project "Jarvis" (crested-photon-514218-k2, published), Entra app "Jarvis" (Nikstalis tenant, secret to Nov 2028), Railway project easygoing-optimism with jarvis-listener (jarvis-listener-production.up.railway.app, volume /data) and jarvis-voice (jarvis-voice-production-6416.up.railway.app), Supabase login `jarvis_listener` (Jarvis tables only), Netlify variables, WhatsApp linked on the owner's number.
-Netlify trap: only real secrets may be marked secret. Non-secret values such as PASSKEY_RP_ID (the domain) appear in the build output and trip "Exposed secrets detected", failing the build.
+Live and verified on 10 Nov 2026:
+- **Listener** (Railway project "easygoing-optimism", service jarvis-listener, https://jarvis-listener-production.up.railway.app, volume /data): health ok, no missing env, triage, Gmail, Outlook and job loops running. First real signal produced from Outlook (the IDDA Azerbaijan call).
+- **Voice** (service jarvis-voice, https://jarvis-voice-production-6416.up.railway.app): Whisper small and 54 Kokoro voices.
+- **WhatsApp**: linked on the owner number +966 55 722 4308.
+- **Mailboxes connected**: abiolaonikoyi@gmail.com (personal, Google Calendar) and ceo@nikstalis.com (work, Outlook).
+- **Google Cloud** project "Jarvis" (id crested-photon-514218-k2, owner abiolaonikoyi@gmail.com): Gmail API and Calendar API enabled, OAuth app published to production, web client "Jarvis web".
+- **Entra** app "Jarvis" (Nikstalis tenant, app id be576ddc-c1ce-4d3f-b3a7-2d9dc46bf6e4): Mail.Read, Mail.Send, Calendars.ReadWrite, admin consent granted, client secret expires Nov 2028.
+- **Supabase**: dedicated login `jarvis_listener` with grants and row level security policies on the Jarvis* tables only. The listener uses it; the site still connects as postgres.
+- **Anthropic**: console key "jarvis-listener" (never expires), used only by the listener.
+- **Netlify**: all v2 variables set. Real secrets are marked secret; PASSKEY_RP_ID, LISTENER_URL, VOICE_SERVICE_URL, GOOGLE_CLIENT_ID and MS_CLIENT_ID are plain on purpose.
+
+Secrets: the generated values live only on the laptop used on 9 and 10 Nov 2026 (`C:\Users\abiol\jarvis-v2-secrets.env` and the folder `C:\Users\abiol\jarvis-setup`). None of the next steps need them. If a value is ever needed on another computer, read it from Railway (service, Variables) instead of copying files around.
+
+Next steps (pick up from any computer):
+1. **Other Gmail accounts.** The owner keeps each Gmail in its own Chrome profile (about eight). Fastest, with no passwords: in each Chrome profile open https://abiolaonikoyi.com/jarvis/connect, sign in to Jarvis, press "Connect a Google account", pick that profile's Gmail, then Advanced, "Go to abiolaonikoyi.com", Select all, Continue. Then set Work or Personal for it on the Connect page. Include the Airbnb / EraView Gmail.
+2. **HopperTax mail** (ceo@hoppertax.com) is a shared mailbox in the Nikstalis tenant. Jarvis reads only signed-in mailboxes today; shared ones need the Mail.Read.Shared permission plus listener code that polls `/users/{shared}/mailFolders`. Not built yet.
+3. **iPhone**: open Jarvis from the home screen, Settings, "Set up Face ID on this device"; on Today tap the bell to allow notifications; check Settings, My rhythm.
+4. **Computers** (Dhahran home, Kuwait room, Kuwait office, travel laptop): see `docs/JARVIS-BRIDGE.md`. Pair each from /jarvis/machines, run the installer, and turn on Remote Control in the Claude desktop app.
+5. **Claude app connector**: see `docs/JARVIS-MCP.md`. The URL token is JARVIS_MCP_TOKEN in Netlify.
+6. **Supabase quota**: the organisation went over its quota last billing cycle, and projects are restricted from 29 Nov 2026 if it stays over. That would take down the site and Jarvis. Check usage in the Supabase dashboard and upgrade or trim before then.
+7. **Tidy**: delete the stray JarvisConnection row "whatsapp / pending" (paused); optionally rename the Railway project to "Jarvis".
+
+Traps learned during setup:
+- Netlify: never tick "Contains secret values" for non-secret values (the domain, URLs, client ids). They appear in the build output, trip "Exposed secrets detected" and fail the build. Netlify also skips empty commits, so push a real change or use Trigger deploy.
+- Netlify secret values cannot be read back by anyone. To give another service the database or an API key, create a dedicated credential (as done for Supabase and Anthropic).
+- The Google Cloud console ignores reference clicks on an API's Enable button; click by position and confirm the page changes to "API/Service details".
+- The listener sends push through the site (`/api/jarvis-push` with header `x-listener-key`), so the VAPID keys live only in Netlify.
