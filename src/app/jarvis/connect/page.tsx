@@ -2,7 +2,15 @@ import { verifySession } from "@/lib/dal";
 import { prisma } from "@/lib/prisma";
 import { listConnections } from "@/lib/jarvis/v2/connections";
 import { SubmitButton } from "@/components/SubmitButton";
-import { removeConnection, setPurpose, setRouting, togglePaused, unlinkWhatsApp } from "./actions";
+import {
+  addSharedMailbox,
+  removeConnection,
+  removeSharedMailbox,
+  setPurpose,
+  setRouting,
+  togglePaused,
+  unlinkWhatsApp,
+} from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -42,12 +50,23 @@ const statusTone: Record<string, string> = {
 export default async function ConnectPage({ searchParams }: { searchParams: Promise<{ connected?: string; error?: string }> }) {
   await verifySession();
   const { connected, error } = await searchParams;
-  const [conns, waRow, routingRow, health] = await Promise.all([
+  const [conns, waRow, routingRow, health, sharedRow, sharedStatusRow] = await Promise.all([
     listConnections(),
     prisma.jarvisSetting.findUnique({ where: { key: "whatsapp_status" } }),
     prisma.jarvisSetting.findUnique({ where: { key: "calendar_routing" } }),
     listenerHealth(),
+    prisma.jarvisSetting.findUnique({ where: { key: "outlook_shared_mailboxes" } }),
+    prisma.jarvisSetting.findUnique({ where: { key: "outlook_shared_status" } }),
   ]);
+  let shared: { mailbox: string; via: string }[] = [];
+  let sharedStatus: Record<string, { lastSyncAt?: string | null; error?: string | null }> = {};
+  try {
+    const v = sharedRow ? JSON.parse(sharedRow.value) : [];
+    shared = Array.isArray(v) ? v : [];
+    sharedStatus = sharedStatusRow ? JSON.parse(sharedStatusRow.value) : {};
+  } catch {
+    // leave the defaults
+  }
   let wa: WaStatus = {};
   try {
     wa = waRow ? (JSON.parse(waRow.value) as WaStatus) : {};
@@ -61,6 +80,7 @@ export default async function ConnectPage({ searchParams }: { searchParams: Prom
     routing = {};
   }
   const mail = conns.filter((c) => c.provider === "google" || c.provider === "microsoft");
+  const outlook = mail.filter((c) => c.provider === "microsoft");
   const missingOAuth = [
     !process.env.GOOGLE_CLIENT_ID && "Google",
     !process.env.MS_CLIENT_ID && "Microsoft",
@@ -185,6 +205,57 @@ export default async function ConnectPage({ searchParams }: { searchParams: Prom
             </li>
           ))}
         </ul>
+
+        {outlook.length > 0 && (
+          <div className="mt-4 rounded-xl bg-zinc-50 p-4">
+            <h3 className="text-sm font-semibold text-zinc-900">Shared mailboxes</h3>
+            <p className="mt-0.5 text-xs text-zinc-500">
+              Read a shared Outlook mailbox (for example ceo@hoppertax.com) through a signed-in account that has Full Access to it.
+            </p>
+            {shared.length > 0 && (
+              <ul className="mt-3 divide-y divide-zinc-200">
+                {shared.map((s) => {
+                  const st = sharedStatus[s.mailbox] ?? {};
+                  const via = outlook.find((c) => c.id === s.via)?.account ?? "a removed account";
+                  return (
+                    <li key={s.mailbox} className="flex flex-wrap items-center justify-between gap-3 py-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-zinc-900">{s.mailbox}</p>
+                        <p className="text-xs text-zinc-500">via {via} · checked {ago(st.lastSyncAt)}</p>
+                        {st.error && <p className="mt-0.5 text-xs text-red-600">{st.error}</p>}
+                      </div>
+                      <form action={removeSharedMailbox}>
+                        <input type="hidden" name="mailbox" value={s.mailbox} />
+                        <SubmitButton className="rounded-full px-2 py-1 text-xs text-red-600 hover:bg-red-50">Remove</SubmitButton>
+                      </form>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            <form action={addSharedMailbox} className="mt-3 flex flex-wrap items-end gap-2">
+              <label className="min-w-0 flex-1 text-xs font-medium text-zinc-600">
+                Mailbox address
+                <input
+                  name="mailbox"
+                  type="email"
+                  required
+                  placeholder="ceo@hoppertax.com"
+                  className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-sm"
+                />
+              </label>
+              <label className="text-xs font-medium text-zinc-600">
+                Read through
+                <select name="via" className="mt-1 block rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-sm">
+                  {outlook.map((c) => (
+                    <option key={c.id} value={c.id}>{c.account}</option>
+                  ))}
+                </select>
+              </label>
+              <SubmitButton className="rounded-full bg-sky-700 px-4 py-2 text-sm font-medium text-white hover:bg-sky-600">Add</SubmitButton>
+            </form>
+          </div>
+        )}
 
         {mail.length > 0 && (
           <form action={setRouting} className="mt-4 grid gap-3 rounded-xl bg-zinc-50 p-4 sm:grid-cols-3 sm:items-end">

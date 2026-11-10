@@ -14,7 +14,19 @@ export const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/gmail.compose",
   "https://www.googleapis.com/auth/calendar.events",
 ];
-export const MICROSOFT_SCOPES = ["offline_access", "openid", "email", "User.Read", "Mail.Read", "Mail.Send", "Calendars.ReadWrite"];
+// Mail.Read.Shared and Mail.Send.Shared let Jarvis read and answer shared mailboxes
+// (for example ceo@hoppertax.com) that the signed-in user has Full Access to.
+export const MICROSOFT_SCOPES = [
+  "offline_access",
+  "openid",
+  "email",
+  "User.Read",
+  "Mail.Read",
+  "Mail.Send",
+  "Mail.Read.Shared",
+  "Mail.Send.Shared",
+  "Calendars.ReadWrite",
+];
 
 export function siteOrigin(req?: Request): string {
   const env = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "");

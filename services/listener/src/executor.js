@@ -57,8 +57,10 @@ async function sendReply(p, mode = 'send') {
     return mode === 'draft' ? gmailDraft(conn, args) : sendGmail(conn, args);
   }
   if (p.channel === 'outlook') {
-    const msgId = String(p.replyToExternalId || '').split(':').slice(2).join(':');
-    const args = { to: p.to, subject: p.subject, body: text, replyToMessageId: msgId || undefined };
+    // externalId is outlook:<mailbox>:<messageId>; a reply to shared mailbox mail goes out from it.
+    const parts = String(p.replyToExternalId || '').split(':');
+    const msgId = parts.slice(2).join(':');
+    const args = { to: p.to, subject: p.subject, body: text, replyToMessageId: msgId || undefined, mailbox: parts[1] || undefined };
     return mode === 'draft' ? outlookDraft(conn, args) : sendOutlook(conn, args);
   }
   throw new Error(`unknown channel ${p.channel}`);

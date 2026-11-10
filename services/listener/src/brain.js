@@ -98,9 +98,15 @@ due_at: ISO time it matters by, or "".
 inbound_ids: the message ids this item comes from. Group several messages about one thing into one item.
 Fill unused sub-objects with empty strings and false. Never invent facts that are not in the messages. Never use em dashes.`;
 
+// Which mailbox an email arrived in (outlook:<mailbox>:<id>, gmail:<mailbox>:<id>).
+function mailboxOf(m) {
+  if (m.source !== 'outlook' && m.source !== 'gmail') return '';
+  return String(m.externalId || '').split(':')[1] || '';
+}
+
 function fmtMessage(m, ctx) {
   const who = m.direction === 'out' ? 'YOU (the owner) wrote' : `${m.senderName || m.sender || 'unknown'}${m.sender && m.senderName !== m.sender ? ` <${m.sender}>` : ''}`;
-  const where = m.source === 'whatsapp' ? `WhatsApp ${m.isGroup ? `group "${m.chatName}"` : `chat${m.chatName ? ` with ${m.chatName}` : ''}`}` : `${m.source} ${m.subject ? `"${clip(m.subject, 120)}"` : ''}`;
+  const where = m.source === 'whatsapp' ? `WhatsApp ${m.isGroup ? `group "${m.chatName}"` : `chat${m.chatName ? ` with ${m.chatName}` : ''}`}` : `${m.source}${mailboxOf(m) ? ` to ${mailboxOf(m)}` : ''} ${m.subject ? `"${clip(m.subject, 120)}"` : ''}`;
   const when = new Date(m.occurredAt).toLocaleString('en-GB', { timeZone: ctx.tz, weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
   return `[${m.id}] ${when} | ${where} | ${who}:\n${clip(m.body, 1500)}`;
 }

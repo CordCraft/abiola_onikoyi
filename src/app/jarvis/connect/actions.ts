@@ -45,6 +45,47 @@ export async function setRouting(f: FormData) {
   revalidatePath("/jarvis/connect");
 }
 
+// Shared Outlook mailboxes (for example ceo@hoppertax.com), read by the listener through a
+// signed-in Microsoft account. Stored as JarvisSetting "outlook_shared_mailboxes".
+const SHARED_KEY = "outlook_shared_mailboxes";
+type SharedBox = { mailbox: string; via: string };
+
+async function readShared(): Promise<SharedBox[]> {
+  const row = await prisma.jarvisSetting.findUnique({ where: { key: SHARED_KEY } });
+  try {
+    const v = row ? JSON.parse(row.value) : [];
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeShared(list: SharedBox[]) {
+  const value = JSON.stringify(list);
+  await prisma.jarvisSetting.upsert({ where: { key: SHARED_KEY }, create: { key: SHARED_KEY, value }, update: { value } });
+}
+
+export async function addSharedMailbox(f: FormData) {
+  await verifySession();
+  await ensureV2Tables();
+  const mailbox = String(f.get("mailbox") ?? "").trim().toLowerCase();
+  const via = String(f.get("via") ?? "");
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mailbox)) return;
+  const conn = await prisma.jarvisConnection.findUnique({ where: { id: via } });
+  if (!conn || conn.provider !== "microsoft" || conn.account.toLowerCase() === mailbox) return;
+  const list = (await readShared()).filter((x) => x.mailbox !== mailbox);
+  list.push({ mailbox, via });
+  await writeShared(list);
+  revalidatePath("/jarvis/connect");
+}
+
+export async function removeSharedMailbox(f: FormData) {
+  await verifySession();
+  const mailbox = String(f.get("mailbox") ?? "").trim().toLowerCase();
+  await writeShared((await readShared()).filter((x) => x.mailbox !== mailbox));
+  revalidatePath("/jarvis/connect");
+}
+
 export async function unlinkWhatsApp() {
   await verifySession();
   await enqueueJob("whatsapp_logout", {});
