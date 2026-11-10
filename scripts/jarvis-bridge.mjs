@@ -303,9 +303,25 @@ async function resolveClaude(cfg) {
     join(HOME, ".local", "bin", IS_WIN ? "claude.exe" : "claude"),
     join(local, "Programs", "claude", "claude.exe"),
   );
+  // Newest version first, compared numerically (2.1.100 is newer than 2.1.99).
+  const newestFirst = (names) =>
+    names
+      .filter((n) => /^\d+(\.\d+)*$/.test(n))
+      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
   try {
     const base = join(appData, "Claude", "claude-code");
-    for (const v of readdirSync(base).sort().reverse()) candidates.push(join(base, v, "claude.exe"));
+    for (const v of newestFirst(readdirSync(base))) candidates.push(join(base, v, "claude.exe"));
+  } catch {}
+  // Microsoft Store build of the Claude desktop app: the CLI it bundles lives under
+  // %LOCALAPPDATA%\Claude-Data\claude_<id>\claude-code\<version>\<hash>\claude.exe.
+  try {
+    const data = join(local, "Claude-Data");
+    for (const pkg of readdirSync(data).filter((n) => n.startsWith("claude_"))) {
+      const base = join(data, pkg, "claude-code");
+      for (const v of newestFirst(readdirSync(base))) {
+        for (const h of readdirSync(join(base, v))) candidates.push(join(base, v, h, "claude.exe"));
+      }
+    }
   } catch {}
   for (const c of candidates.filter(Boolean)) {
     if (c !== "claude" && !existsSync(c)) continue;
