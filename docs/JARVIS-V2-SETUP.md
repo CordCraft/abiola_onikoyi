@@ -109,16 +109,23 @@ Live and verified on 10 Nov 2026:
 
 Secrets: the generated values live only on the laptop used on 9 and 10 Nov 2026 (`C:\Users\abiol\jarvis-v2-secrets.env` and the folder `C:\Users\abiol\jarvis-setup`). None of the next steps need them. If a value is ever needed on another computer, read it from Railway (service, Variables) instead of copying files around.
 
+Progress on 10 Nov 2026 (afternoon, from the HP Omnibook laptop):
+- iPhone Face ID works (passkey saved to iCloud Passwords; a passkey saved into Bitwarden is not offered by the plain Face ID sheet).
+- Shared mailbox support shipped (commit 5713a18) and is deployed to Netlify and the Railway listener. HopperTax is not reading yet: it waits on the four owner steps in item 2.
+- The HP Omnibook laptop (hostname Billionaire-HP-Omnibook) is paired as "HP Omnibook" and its "Jarvis Bridge" logon task is installed and running. It uses the Claude CLI bundled with the Microsoft Store desktop app (commit 72394cf taught the bridge that folder).
+
 Next steps (pick up from any computer):
 1. **Other Gmail accounts.** The owner keeps each Gmail in its own Chrome profile (about eight). Fastest, with no passwords: in each Chrome profile open https://abiolaonikoyi.com/jarvis/connect, sign in to Jarvis, press "Connect a Google account", pick that profile's Gmail, then Advanced, "Go to abiolaonikoyi.com", Select all, Continue. Then set Work or Personal for it on the Connect page. Include the Airbnb / EraView Gmail.
 2. **HopperTax mail** (ceo@hoppertax.com) is a shared mailbox in the Nikstalis tenant. Code is built (Nov 2026): the listener reads shared mailboxes at `/users/{mailbox}` through a signed-in Outlook account and answers from them. To turn it on: (a) Entra, app "Jarvis", API permissions, add Microsoft Graph delegated `Mail.Read.Shared` and `Mail.Send.Shared`, Grant admin consent; (b) Exchange admin centre, the shared mailbox, Delegation: give ceo@nikstalis.com Full Access and Send as; (c) /jarvis/connect, Remove the ceo@nikstalis.com Outlook row and press "Connect Microsoft 365 / Outlook" again so the new scopes are granted; (d) under Shared mailboxes add ceo@hoppertax.com read through ceo@nikstalis.com. The row shows "checked ..." within two minutes, or a plain-English error.
-3. **iPhone**: open Jarvis from the home screen, Settings, "Set up Face ID on this device"; on Today tap the bell to allow notifications; check Settings, My rhythm.
-4. **Computers** (Dhahran home, Kuwait room, Kuwait office, travel laptop): see `docs/JARVIS-BRIDGE.md`. Pair each from /jarvis/machines, run the installer, and turn on Remote Control in the Claude desktop app.
+3. **iPhone**: Face ID done. Still to do: on Today tap the bell to allow notifications; check Settings, My rhythm.
+4. **Computers** (HP Omnibook done; still Dhahran home, Kuwait room, Kuwait office, travel laptop if it is a different machine): see `docs/JARVIS-BRIDGE.md`. Pair each from /jarvis/machines, run the installer, and turn on Remote Control in the Claude desktop app.
 5. **Claude app connector**: see `docs/JARVIS-MCP.md`. The URL token is JARVIS_MCP_TOKEN in Netlify.
 6. **Supabase quota**: the organisation went over its quota last billing cycle, and projects are restricted from 29 Nov 2026 if it stays over. That would take down the site and Jarvis. Check usage in the Supabase dashboard and upgrade or trim before then.
 7. **Tidy**: delete the stray JarvisConnection row "whatsapp / pending" (paused); optionally rename the Railway project to "Jarvis".
 
 Traps learned during setup:
+- Claude Code auto mode refuses to register the bridge's logon task itself. Claude can pair (`node scripts/jarvis-bridge.mjs pair <CODE> --name ...`) but the owner runs `powershell -ExecutionPolicy Bypass -File scripts\install-jarvis-bridge.ps1; Start-ScheduledTask -TaskName "Jarvis Bridge"` from the repo folder.
+- The Supabase MCP connector on the HP Omnibook is signed in to "CordCraft's Org", which does not contain this site's project (vbrwrexbjnwayhohstra), so SQL and quota checks for the site fail there. Use the Supabase dashboard for the quota, and the Connect page or the owner's own SQL for row clean-ups.
 - Netlify: never tick "Contains secret values" for non-secret values (the domain, URLs, client ids). They appear in the build output, trip "Exposed secrets detected" and fail the build. Netlify also skips empty commits, so push a real change or use Trigger deploy.
 - Netlify secret values cannot be read back by anyone. To give another service the database or an API key, create a dedicated credential (as done for Supabase and Anthropic).
 - The Google Cloud console ignores reference clicks on an API's Enable button; click by position and confirm the page changes to "API/Service details".
