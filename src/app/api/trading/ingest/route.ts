@@ -68,6 +68,41 @@ const num = (v: unknown, fallback = 0): number => {
 const FLAT_SNAPSHOT_INTERVAL_MS = 15 * 60_000;
 const SNAPSHOT_RETENTION_DAYS = 120;
 
+const toBigInt = (v: unknown): bigint => {
+  try {
+    return v === null || v === undefined ? BigInt(0) : BigInt(String(v).split(".")[0]);
+  } catch {
+    return BigInt(0);
+  }
+};
+
+// Highest stored deal ticket for an account, as one value computed in the
+// database (CAST ... AS NUMERIC works on Postgres and on the SQLite test db).
+// Falls back to the old scan of the newest 500 tickets if the cast ever fails,
+// for example on a malformed ticket.
+async function highestTicket(accountId: string): Promise<bigint> {
+  try {
+    const rows = await prisma.$queryRaw<{ max: string | null }[]>`
+      SELECT CAST(MAX(CAST("ticket" AS NUMERIC)) AS TEXT) AS "max"
+      FROM "TradingDeal" WHERE "accountId" = ${accountId}`;
+    return toBigInt(rows[0]?.max);
+  } catch (err) {
+    console.error("trading ingest: max ticket query failed, scanning instead", err);
+    const tickets = await prisma.tradingDeal.findMany({
+      where: { accountId },
+      select: { ticket: true },
+      orderBy: { time: "desc" },
+      take: 500,
+    });
+    let best = BigInt(0);
+    for (const t of tickets) {
+      const v = toBigInt(t.ticket);
+      if (v > best) best = v;
+    }
+    return best;
+  }
+}
+
 export async function POST(req: Request) {
   const secret = process.env.TRADING_INGEST_SECRET;
   if (!secret || req.headers.get("x-trading-secret") !== secret) {
@@ -145,10 +180,13 @@ export async function POST(req: Request) {
     lastSeenAt: new Date(),
   };
 
+  // Return only what the alerts need: this runs every 30s per account, and the
+  // full row (with openPositions JSON) was a steady share of Supabase egress.
   const account = await prisma.tradingAccount.upsert({
     where: { accountKey },
     create: { accountKey, ...live },
     update: live,
+    select: { id: true, broker: true, label: true, alertState: true },
   });
 
   // Drawdown and margin alerts against the fresh numbers (never throws).
@@ -259,22 +297,10 @@ export async function POST(req: Request) {
   }
 
   // Highest stored ticket, compared numerically (tickets are ulongs stored as
-  // text, so ORDER BY on the column would be a lexicographic trap).
-  const tickets = await prisma.tradingDeal.findMany({
-    where: { accountId: account.id },
-    select: { ticket: true },
-    orderBy: { time: "desc" },
-    take: 500,
-  });
-  let sinceTicket = BigInt(0);
-  for (const t of tickets) {
-    try {
-      const v = BigInt(t.ticket);
-      if (v > sinceTicket) sinceTicket = v;
-    } catch {
-      // Ignore malformed tickets
-    }
-  }
+  // text, so ORDER BY on the column would be a lexicographic trap). The database
+  // computes the max and sends back one value: pulling the last 500 tickets on
+  // every post was ~90% of the project's Supabase egress (Nov 2026).
+  const sinceTicket = await highestTicket(account.id);
 
   return NextResponse.json({
     ok: true,
