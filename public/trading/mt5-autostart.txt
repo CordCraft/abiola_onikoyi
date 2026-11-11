@@ -1,0 +1,87 @@
+# MT5 autostart for the trading VPS.
+# Run once on the VPS in PowerShell (as the Windows user MT5 runs under):
+#   irm https://abiolaonikoyi.com/trading/mt5-autostart.txt | iex
+#
+# What it does:
+#   1. Finds every MetaTrader 5 terminal (terminal64.exe) on the machine.
+#   2. Adds a scheduled task that opens them at sign-in and every 5 minutes
+#      reopens any that has closed or crashed.
+#   3. Offers Microsoft's Sysinternals Autologon, so Windows signs in by itself
+#      after a reboot (you type the Windows password into its own window).
+# MT5 reopens its last charts with their EAs, so OnikoyiReporter resumes posting.
+# Safe to run again: it replaces its own task and keeps everything else.
+
+$ErrorActionPreference = 'Stop'
+$home5 = 'C:\ProgramData\OnikoyiMT5'
+New-Item -ItemType Directory -Force $home5 | Out-Null
+
+Write-Host '1/3 Looking for MetaTrader 5 terminals...' -ForegroundColor Cyan
+$roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:APPDATA, $env:LOCALAPPDATA, 'C:\') |
+  Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+$found = @()
+foreach ($r in $roots) {
+  $depth = if ($r -eq 'C:\') { 2 } else { 3 }
+  $found += Get-ChildItem -Path $r -Filter terminal64.exe -Recurse -Depth $depth -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -notmatch '\\Windows\\|\\\$Recycle' }
+}
+# Terminals running right now count too (covers unusual install folders).
+$found += Get-Process terminal64 -ErrorAction SilentlyContinue | Where-Object Path | ForEach-Object { Get-Item $_.Path }
+$terminals = $found | Select-Object -ExpandProperty FullName -Unique
+if (-not $terminals) { throw 'No terminal64.exe found. Install or open MT5 first, then run this again.' }
+
+$list = foreach ($t in $terminals) {
+  # A portable install keeps its MQL5 folder next to the exe and must start with /portable.
+  $portable = Test-Path (Join-Path (Split-Path $t) 'MQL5')
+  [pscustomobject]@{ Path = $t; Portable = $portable }
+  Write-Host ("   found {0}{1}" -f $t, $(if ($portable) { '  (portable)' } else { '' }))
+}
+$list | ConvertTo-Json | Set-Content -Encoding utf8 "$home5\terminals.json"
+
+# Watchdog: opens any listed terminal that is not running.
+@'
+$list = Get-Content 'C:\ProgramData\OnikoyiMT5\terminals.json' -Raw | ConvertFrom-Json
+$running = @(Get-Process terminal64 -ErrorAction SilentlyContinue | ForEach-Object { $_.Path })
+foreach ($t in @($list)) {
+  if ($running -notcontains $t.Path) {
+    if ($t.Portable) { Start-Process -FilePath $t.Path -ArgumentList '/portable' } else { Start-Process -FilePath $t.Path }
+    Add-Content 'C:\ProgramData\OnikoyiMT5\watchdog.log' ("{0:u} started {1}" -f (Get-Date), $t.Path)
+    Start-Sleep -Seconds 20
+  }
+}
+'@ | Set-Content -Encoding utf8 "$home5\watchdog.ps1"
+
+Write-Host '2/3 Adding the scheduled task "Onikoyi MT5 watchdog"...' -ForegroundColor Cyan
+$user = "$env:USERDOMAIN\$env:USERNAME"
+$action = New-ScheduledTaskAction -Execute 'powershell.exe' `
+  -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$home5\watchdog.ps1`""
+$atLogon = New-ScheduledTaskTrigger -AtLogOn -User $user
+$atLogon.Delay = 'PT45S'
+$every5 = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
+  -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)
+$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+  -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
+Register-ScheduledTask -TaskName 'Onikoyi MT5 watchdog' -Action $action -Trigger @($atLogon, $every5) `
+  -Principal $principal -Settings $settings -Force | Out-Null
+Write-Host '   done. It also opens any terminal that is closed right now.'
+Start-ScheduledTask -TaskName 'Onikoyi MT5 watchdog'
+
+Write-Host '3/3 Automatic Windows sign-in after a reboot' -ForegroundColor Cyan
+$wl = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -ErrorAction SilentlyContinue
+if ($wl.AutoAdminLogon -eq '1') {
+  Write-Host '   already on, nothing to do.'
+} else {
+  Write-Host '   Without it, MT5 only reopens after you sign in by RDP.'
+  $ans = Read-Host '   Set it up now? Opens Microsoft Autologon; type your Windows password there and click Enable [Y/n]'
+  if ($ans -notmatch '^[nN]') {
+    $zip = "$home5\AutoLogon.zip"
+    Invoke-WebRequest 'https://download.sysinternals.com/files/AutoLogon.zip' -OutFile $zip -UseBasicParsing
+    Expand-Archive $zip -DestinationPath "$home5\AutoLogon" -Force
+    $exe = if ([Environment]::Is64BitOperatingSystem) { 'Autologon64.exe' } else { 'Autologon.exe' }
+    Start-Process "$home5\AutoLogon\$exe" -ArgumentList '-accepteula' -Verb RunAs -Wait
+  }
+}
+
+Write-Host ''
+Write-Host 'All set. When you leave RDP, close the window instead of signing out, so MT5 keeps running.' -ForegroundColor Green
+Write-Host "Log of restarts: $home5\watchdog.log"
