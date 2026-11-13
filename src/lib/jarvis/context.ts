@@ -118,6 +118,28 @@ export async function buildContext(): Promise<string> {
     lines.push(`- ${proj}${doc.name} (${daysSince(doc.createdAt)}d ago) [doc:${doc.id}]${summary}`);
   }
 
+  // Last 7 days of what got done (JarvisLedger) and the current advice; both optional, never fatal.
+  try {
+    const ledger = await prisma.jarvisLedger.findMany({
+      where: { closedAt: { gte: new Date(Date.now() - 7 * 864e5) } },
+      orderBy: { closedAt: "desc" },
+      take: 30,
+    });
+    lines.push("\n## Done in the last 7 days (closed by replies, Jarvis or expiry; do not re-raise these)");
+    if (ledger.length === 0) lines.push("(none)");
+    for (const l of ledger) {
+      lines.push(`- (${daysSince(l.closedAt)}d ago) ${l.title.slice(0, 100)}${l.closedBy ? ` [${l.closedBy}]` : ""}${l.evidence ? `: ${l.evidence.slice(0, 100)}` : ""}`);
+    }
+    const adviceRow = await prisma.jarvisSetting.findUnique({ where: { key: "advice" } });
+    const advice = adviceRow ? (JSON.parse(adviceRow.value) as { items?: { title?: string; why?: string }[] }) : null;
+    if (advice?.items?.length) {
+      lines.push("\n## Current advice shown on Today");
+      for (const a of advice.items.slice(0, 5)) lines.push(`- ${a.title ?? ""}${a.why ? `: ${String(a.why).slice(0, 120)}` : ""}`);
+    }
+  } catch {
+    // ledger table not created yet or bad advice JSON
+  }
+
   const activity = await buildActivitySection();
   if (activity) lines.push(activity);
 

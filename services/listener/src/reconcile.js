@@ -3,7 +3,7 @@ import { q, one, newId, getSetting, setSetting } from './db.js';
 import { structured } from './llm.js';
 import { clip } from './util.js';
 import { pushSignal } from './push.js';
-import { OPEN_STATUSES, selectDeterministicCloses, acceptCloses, findDuplicateGroups } from './pure.js';
+import { OPEN_STATUSES, selectDeterministicCloses, acceptCloses, findDuplicateGroups, selectStalledTasks, isAutoMessage } from './pure.js';
 
 // Closes loops. An outgoing message on a thread closes the reply it answers; a model pass
 // reads recent messages against the open signals and tasks; housekeeping expires what has
@@ -191,7 +191,7 @@ async function evidenceMessages({ sinceHours, limit = 80, signals = [] }) {
     others = rows.filter((m) => !askers.get(m.threadKey).has(String(m.sender || '').toLowerCase()));
   }
   const fmt = (m, who) => `(${m.threadKey || 'no thread'}) ${new Date(m.occurredAt).toISOString().slice(0, 16)} ${who}: ${clip(m.body, 400)}`;
-  return [...out.map((m) => fmt(m, 'YOU')), ...others.map((m) => fmt(m, `${m.senderName || m.sender} (another party)`))]
+  return [...out.map((m) => fmt(m, isAutoMessage(m) ? 'a Hostfully automated message (not him)' : 'YOU')), ...others.map((m) => fmt(m, `${m.senderName || m.sender} (another party)`))]
     .slice(0, limit * 2);
 }
 
@@ -266,22 +266,49 @@ export async function expireSignals() {
   return n;
 }
 
-// Tasks overdue 7 days with no activity get one "still relevant?" card each. Never deleted.
+// Two quiet nudges about tasks nobody is touching, both through the signal table:
+//  - overdue 7 days with no activity: one "still relevant?" card per task, ever;
+//  - open with no activity for 3 days: "Pick this up?", once per task per 3 days, 5 a day at most.
+// Neither deletes anything. threadKey 'task:<id>' is what keeps a task from being nudged twice.
+async function insertTaskNudge(t, { title, detail, why, score }) {
+  const id = newId();
+  await q(
+    `INSERT INTO "JarvisSignal" (id, kind, title, detail, why, score, source, "threadKey", autonomy, status, "updatedAt")
+     VALUES ($1,'nudge',$2,$3,$4,$5,'planner',$6,'ask','new', now())`,
+    [id, clip(title, 140), detail, why, score, `task:${t.id}`],
+  );
+  return id;
+}
+
 export async function nudgeStaleTasks() {
-  const tasks = await q(
+  const overdue = await q(
     `SELECT t.id, t.title FROM "JarvisTask" t
      WHERE t.status <> 'done' AND t."dueDate" < now() - interval '7 days' AND t."updatedAt" < now() - interval '7 days'
        AND NOT EXISTS (SELECT 1 FROM "JarvisSignal" s WHERE s.kind = 'nudge' AND s."threadKey" = 'task:' || t.id)
      LIMIT 10`,
   );
-  for (const t of tasks) {
-    await q(
-      `INSERT INTO "JarvisSignal" (id, kind, title, detail, why, score, source, "threadKey", autonomy, status, "updatedAt")
-       VALUES ($1,'nudge',$2,$3,'An overdue task nobody has touched', 50, 'planner', $4, 'ask', 'new', now())`,
-      [newId(), clip(`Still relevant? ${t.title}`, 140), 'This task is more than a week overdue with no activity. Mark it done, move it, or leave it.', `task:${t.id}`],
-    );
+  for (const t of overdue) {
+    await insertTaskNudge(t, { title: `Still relevant? ${t.title}`, detail: 'This task is more than a week overdue with no activity. Mark it done, move it, or leave it.', why: 'An overdue task nobody has touched', score: 50 });
   }
-  return tasks.length;
+  return overdue.length + (await nudgeStalledTasks());
+}
+
+export async function nudgeStalledTasks({ now = Date.now() } = {}) {
+  const tasks = await q(
+    `SELECT id, title, status, "updatedAt" FROM "JarvisTask"
+     WHERE status <> 'done' AND "updatedAt" < now() - interval '3 days' AND ("dueDate" IS NULL OR "dueDate" >= now() - interval '7 days')
+     ORDER BY "updatedAt" LIMIT 100`,
+  );
+  if (!tasks.length) return 0;
+  const nudges = await q(`SELECT "threadKey", status, "createdAt" FROM "JarvisSignal" WHERE kind = 'nudge' AND "threadKey" LIKE 'task:%' AND "createdAt" > now() - interval '3 days'`);
+  const today = await one(`SELECT count(*)::int AS n FROM "JarvisSignal" WHERE kind = 'nudge' AND why = 'A task with no activity for 3 days' AND "createdAt" > now() - interval '24 hours'`);
+  const picked = selectStalledTasks(tasks, nudges, { now, alreadyToday: today?.n || 0 });
+  for (const t of picked) {
+    const days = Math.floor((now - new Date(t.updatedAt).getTime()) / 864e5);
+    const id = await insertTaskNudge(t, { title: `Pick this up? ${t.title}`, detail: `No activity on this task for ${days} days. Do it, move it, or let it go.`, why: 'A task with no activity for 3 days', score: 55 });
+    await pushSignal(id).catch((e) => console.error('[reconcile] nudge push', e.message));
+  }
+  return picked.length;
 }
 
 // ---------- one-time clean-up proposal ----------

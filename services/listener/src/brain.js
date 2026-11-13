@@ -1,11 +1,12 @@
 import { config } from './config.js';
-import { q, one, newId } from './db.js';
+import { q, one, newId, getSetting } from './db.js';
 import { structured } from './llm.js';
-import { goalsAndProjects, people, openSignals, upcoming, fmtEvents, rhythm, OWNER_BRIEF } from './context.js';
+import { goalsAndProjects, people, openSignals, upcoming, fmtEvents, rhythm, behaviour, OWNER_BRIEF } from './context.js';
 import { clip } from './util.js';
 import { pushSignal } from './push.js';
 import { enqueue } from './jobs.js';
-import { selectMergeTarget, personKeysForOutgoing } from './pure.js';
+import { selectMergeTarget, personKeysForOutgoing, hostfullyHealthy, adjustScore, behaviourText } from './pure.js';
+import { isAirbnbGuestNotification } from './hostfully.js';
 import { reconcileOnce } from './reconcile.js';
 
 // The triage brain: reads new messages in small batches, finds what matters, and turns it
@@ -139,17 +140,28 @@ export async function triageOnce() {
   // Old backlog (more than 3 days) is kept as memory but not triaged.
   const stale = batch.filter((m) => Date.now() - new Date(m.occurredAt).getTime() > 3 * 864e5);
   if (stale.length) await q(`UPDATE "JarvisInbound" SET "triagedAt" = now(), triage = '{"skipped":"old"}' WHERE id = ANY($1)`, [stale.map((m) => m.id)]);
-  const fresh = batch.filter((m) => !stale.includes(m));
+  let fresh = batch.filter((m) => !stale.includes(m));
+
+  // While Hostfully is polling healthily it is the source of truth for guest messages: the
+  // Airbnb notification email about the same message is kept as memory but not triaged.
+  if (fresh.length && hostfullyHealthy(await getSetting('hostfully_status', null))) {
+    const dupes = fresh.filter((m) => m.direction === 'in' && ['gmail', 'outlook'].includes(m.source) && isAirbnbGuestNotification(m));
+    if (dupes.length) {
+      await q(`UPDATE "JarvisInbound" SET "triagedAt" = now(), triage = '{"skipped":"hostfully"}' WHERE id = ANY($1)`, [dupes.map((m) => m.id)]);
+      fresh = fresh.filter((m) => !dupes.includes(m));
+    }
+  }
   if (!fresh.length) return batch.length;
 
   const r = await rhythm();
   const ctx = { tz: r.tz };
-  const [{ goals, projects, ventures }, known, open, events, history] = await Promise.all([
+  const [{ goals, projects, ventures }, known, open, events, history, learned] = await Promise.all([
     goalsAndProjects(),
     people(),
     openSignals(),
     upcoming(10),
     threadContext(fresh),
+    behaviour(),
   ]);
   const nowLocal = new Date().toLocaleString('en-GB', { timeZone: r.tz, dateStyle: 'full', timeStyle: 'short' });
 
@@ -164,6 +176,8 @@ export async function triageOnce() {
         `Projects (id | name | status | priority):\n${projects.map((p) => `- ${p.id} | ${p.name}${p.venture ? ` [${p.venture}]` : ''} | ${p.status} | ${p.priority}`).join('\n') || '(none)'}`,
         `Known people:\n${known.map((p) => `- ${p.key} ${p.name || ''} ${p.relation ? `(${p.relation})` : ''} ${p.org || ''}`.trim()).join('\n') || '(none yet)'}`,
         `Calendar next 10 days:\n${fmtEvents(events, r.tz)}`,
+        ...(behaviourText(learned) ? [`How he works (learned from his own behaviour; let it shape scores, never hide anything urgent):
+${behaviourText(learned)}`] : []),
         `Open signals (id | kind | title):\n${open.map((s) => `- ${s.id} | ${s.kind} | ${s.title}${['applied', 'resolved'].includes(s.status) ? ` [DONE: ${s.status}]` : ''}`).join('\n') || '(none)'}`,
       ].join('\n\n'),
     },
@@ -187,7 +201,7 @@ export async function triageOnce() {
     const ids = (item.inbound_ids || []).filter((id) => freshIds.has(id));
     if (!ids.length) continue;
     await upsertPerson(item, byId.get(ids[0]));
-    await saveSignal(item, ids, byId, r).catch((e) => console.error('[brain] save signal', e.message));
+    await saveSignal(item, ids, byId, r, learned).catch((e) => console.error('[brain] save signal', e.message));
   }
   await q(`UPDATE "JarvisInbound" SET "triagedAt" = now(), triage = '{"ok":true}' WHERE id = ANY($1)`, [fresh.map((m) => m.id)]);
   await touchPeople(fresh);
@@ -202,7 +216,8 @@ function validIso(s) {
   return s && !Number.isNaN(new Date(s).getTime());
 }
 
-async function saveSignal(item, ids, byId, r) {
+// Returns { id, merged } for the signal created or refreshed, or null when nothing was saved.
+export async function saveSignal(item, ids, byId, r, learned = null) {
   const first = byId.get(ids[0]);
   let action = null;
   let autonomy = 'ask';
@@ -244,21 +259,21 @@ async function saveSignal(item, ids, byId, r) {
     };
   }
 
-  const score = Math.max(0, Math.min(100, Math.round(item.score || 0)));
+  const score = adjustScore(Math.max(0, Math.min(100, Math.round(item.score || 0))), item.kind, learned);
   const projectId = item.project_id && (await one('SELECT id FROM "JarvisProject" WHERE id = $1', [item.project_id])) ? item.project_id : null;
 
   // Same thing as an open signal: refresh it rather than nagging twice.
   if (item.same_as_signal_id) {
     const existing = await one(`SELECT id, status, "inboundIds" FROM "JarvisSignal" WHERE id = $1`, [item.same_as_signal_id]);
     // The model matched something already finished: nothing new to raise.
-    if (existing && existing.status === 'resolved') return;
+    if (existing && existing.status === 'resolved') return null;
     if (existing) {
       const merged = [...new Set([...(existing.inboundIds || []), ...ids])];
       await q(
         `UPDATE "JarvisSignal" SET detail = $2, score = GREATEST(score, $3), "inboundIds" = $4, action = COALESCE($5, action), "updatedAt" = now() WHERE id = $1`,
         [existing.id, item.detail, score, JSON.stringify(merged), action ? JSON.stringify(action) : null],
       );
-      return;
+      return { id: existing.id, merged: true };
     }
   }
 
@@ -280,7 +295,7 @@ async function saveSignal(item, ids, byId, r) {
            "expiresAt" = COALESCE($7, "expiresAt"), "updatedAt" = now() WHERE id = $1`,
         [target.id, item.detail, score, JSON.stringify(merged), action ? JSON.stringify(action) : null, open, expiresAt],
       );
-      return;
+      return { id: target.id, merged: true };
     }
   }
 
@@ -296,9 +311,10 @@ async function saveSignal(item, ids, byId, r) {
   } else if (item.kind !== 'fyi') {
     await pushSignal(id).catch((e) => console.error('[brain] push', e.message));
   }
+  return { id, merged: false };
 }
 
-async function upsertPerson(item, msg) {
+export async function upsertPerson(item, msg) {
   const key = String(item.person?.key || '').toLowerCase().trim();
   if (!key) return;
   const importance = item.person.relation === 'family' ? 90 : ['client', 'partner', 'investor'].includes(item.person.relation) ? 70 : item.person.relation === 'team' ? 55 : 30;

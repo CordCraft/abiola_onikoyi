@@ -6,6 +6,8 @@ import { rhythm, goalsAndProjects, upcoming, fmtEvents, OWNER_BRIEF } from './co
 import { expireSignals, nudgeStaleTasks, reconcileOnce } from './reconcile.js';
 import { startOfDay, closedSince } from './digest.js';
 import { closeoutText } from './pure.js';
+import { learnBehaviour } from './learn.js';
+import { adviseOnce, topAdviceLine, weeklyAdvice } from './advisor.js';
 import { minutesIn, dateKeyIn, weekdayIn, parseHm, hm, clip, tzOffsetMinutes } from './util.js';
 
 // The day's rhythm: a morning plan, an evening close-out, nightly learning of the owner's
@@ -95,9 +97,17 @@ You are Jarvis planning his day. Build a realistic, time-blocked plan for today 
 
   const plan = await structured({ model: config.plannerModel, system, user, schema: PLAN_SCHEMA, effort: 'medium' });
 
+  // One fresh suggestion list each morning; its top idea rides in the plan. Never blocks the plan.
+  let idea = '';
+  try {
+    if (await adviseOnce({ mode: 'daily' })) idea = await topAdviceLine();
+  } catch (e) {
+    console.error('[planner] advice', e.message);
+  }
+
   const blocksText = plan.blocks.map((b) => `${b.start}-${b.end} ${b.title}`).join('\n');
   const movesText = plan.top_moves.map((m, i) => `${i + 1}. ${m.title} (${m.why})`).join('\n');
-  const detail = `${plan.summary}\n\nTop moves:\n${movesText}\n\nPlan:\n${blocksText}\n\nStop work at ${plan.stop_at}. ${plan.family_note}`;
+  const detail = `${plan.summary}\n\nTop moves:\n${movesText}\n\nPlan:\n${blocksText}\n\nStop work at ${plan.stop_at}. ${plan.family_note}${idea ? `\n\n${idea}` : ''}`;
 
   const newBlocks = plan.blocks.filter((b) => !b.existing_event && ['focus', 'family', 'admin'].includes(b.kind));
   const id = newId();
@@ -173,10 +183,12 @@ export async function plannerTick() {
   const weekday = weekdayIn(r.tz);
   const wake = parseHm(r.quietEnd, 6 * 60 + 30) + 20;
   if (now >= wake && now < wake + 180) await once(`plan:${day}`, () => morningPlan());
+  if (weekday === 'Sunday' && now >= 15 * 60 && now < 16 * 60) await once(`advice-week:${day}`, () => weeklyAdvice());
   const workEnd = parseHm(r.workEnd, 18 * 60);
   if (r.workdays.includes(weekday) && now >= workEnd && now < workEnd + 60) await once(`stop:${day}`, () => eveningCloseout());
   if (now >= 3 * 60 && now < 4 * 60) {
     await once(`learn:${day}`, () => learnRhythm());
+    await once(`behaviour:${day}`, () => learnBehaviour());
     await once(`clean:${day}`, () => housekeeping());
     await once(`reconcile:${day}`, () => reconcileOnce({ sinceHours: 24 }));
   }

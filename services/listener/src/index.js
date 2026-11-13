@@ -14,6 +14,8 @@ import { flushHeld } from './push.js';
 import { plannerTick, morningPlan } from './planner.js';
 import { reconcileOnce, createCleanupCard } from './reconcile.js';
 import { digestTick } from './digest.js';
+import { nudgeTick } from './nudger.js';
+import { startHostfullyLoop } from './hostfully.js';
 
 const started = new Date();
 const health = { lastTriage: null, lastGmail: null, lastOutlook: null, lastJobs: null, errors: [] };
@@ -79,6 +81,12 @@ async function main() {
   every('reconcile', 10 * 60_000, () => reconcileOnce({ sinceHours: 6 }), { initialDelayMs: 150_000 });
   every('cleanup-proposal', 30 * 60_000, () => createCleanupCard(), { initialDelayMs: 120_000 });
   every('digest', 10 * 60_000, digestTick, { initialDelayMs: 180_000 });
+  // v3 phase 2: threads still waiting on him, and the Hostfully guest-message connector.
+  every('nudger', 20 * 60_000, nudgeTick, { initialDelayMs: 240_000 });
+  startHostfullyLoop().catch((e) => {
+    console.error('[hostfully] start failed', e.message);
+    note(e);
+  });
 
   http
     .createServer(async (req, res) => {

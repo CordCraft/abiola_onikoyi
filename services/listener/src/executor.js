@@ -7,6 +7,7 @@ import { sendOutlook, outlookDraft } from './outlook.js';
 import { sendPush, mayInterrupt } from './push.js';
 import { clip, tzOffsetMinutes } from './util.js';
 import { titleSimilarity, DUPLICATE_THRESHOLD } from './pure.js';
+import { sendHostfullyMessage } from './hostfully.js';
 import { applyCleanup, undoCleanup, reopenSignal, reopenTask } from './reconcile.js';
 
 export { titleSimilarity };
@@ -64,6 +65,10 @@ export async function createTask({ title, dueDate, priority = 'medium', projectI
 async function sendReply(p, mode = 'send') {
   const text = p.text;
   if (!text) throw new Error('nothing to send');
+  if (p.channel === 'hostfully') {
+    if (mode === 'draft') return { draft: true, note: 'Hostfully has no drafts; copy the text from Jarvis' };
+    return sendHostfullyMessage({ threadKey: p.threadKey, text });
+  }
   if (p.channel === 'whatsapp') {
     if (mode === 'draft') return { draft: true, note: 'WhatsApp has no drafts; copy the text from Jarvis' };
     if (!wa) throw new Error('WhatsApp is not running');

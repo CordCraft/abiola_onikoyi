@@ -58,7 +58,20 @@ export default async function ProjectDetailPage({
                     {t.status}
                   </SubmitButton>
                 </form>
-                <span className={`text-sm ${t.status === "done" ? "text-zinc-400 line-through" : "text-zinc-800"}`}>{t.title}</span>
+                <span className="min-w-0">
+                  <span className={`block text-sm ${t.status === "done" ? "text-zinc-400 line-through" : "text-zinc-800"}`}>{t.title}</span>
+                  {t.sourceSignalId ? (
+                    <Link href={`/jarvis/signals/${t.sourceSignalId}`} className="text-[11px] text-indigo-600">
+                      From a Jarvis signal
+                    </Link>
+                  ) : null}
+                  {t.closedBy ? (
+                    <span className="block text-[11px] text-zinc-500">
+                      Closed by {t.closedBy}
+                      {t.closeNote ? `: ${t.closeNote}` : ""}
+                    </span>
+                  ) : null}
+                </span>
               </div>
               <div className="flex items-center gap-3">
                 {t.dueDate ? <span className="text-xs text-zinc-400">{formatDate(t.dueDate)}</span> : null}

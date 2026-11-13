@@ -257,6 +257,176 @@ assert.equal(d.sent, true);
 assert.match(d.body, /done by Jarvis/);
 await eveningCloseout();
 
+// ---------------- v3 phase 2: nudger, stalled tasks, learning, advice, Hostfully ----------------
+const { nudgeOnce } = await import('../src/nudger.js');
+const { nudgeStalledTasks } = await import('../src/reconcile.js');
+const { learnBehaviour } = await import('../src/learn.js');
+const { adviseOnce, weeklyAdvice } = await import('../src/advisor.js');
+const { setSetting, getSetting } = await import('../src/db.js');
+const v3fake = globalThis.__jarvisFakeStructured;
+let nudgeCalls = 0;
+let triageCalls = 0;
+let lastTriageSystem = '';
+globalThis.__jarvisFakeStructured = async (args) => {
+  if (args.schema.required.includes('verdicts')) {
+    nudgeCalls += 1;
+    const keys = [...args.user.matchAll(/\[(t\d+)\][^\n]*/g)].map((m) => ({ id: m[1], line: m[0] }));
+    return { verdicts: keys.map((k) => ({ id: k.id, needs_reply: /Najeeb/.test(k.line), topic: 'the Q4 figures', why: 'He asked for the Q4 figures', score: 74, draft: 'Sending the Q4 figures today — sorry for the wait.' })) };
+  }
+  if (args.schema.required.includes('suggestions')) {
+    return { suggestions: [
+      { title: 'Let Hostfully send check-in details', why: 'Nine guest questions answered by hand this week', how: 'Create a template — send it at booking' },
+      { title: 'Reply to clients before 10:00', why: 'Najeeb waits 6 hours on average', how: 'Block 08:30 to 09:00 daily' },
+      { title: 'Close the overdue board pack task', why: 'It has been open 12 days', how: 'Move it to Friday' },
+    ] };
+  }
+  if (args.schema.required.includes('items')) {
+    triageCalls += 1;
+    lastTriageSystem = JSON.stringify(args.system);
+  }
+  return v3fake(args);
+};
+const ago = (h) => new Date(Date.now() - h * 3600e3);
+
+// Nudger: an unanswered question from a real person becomes one "Still waiting on you" card.
+await storeInbound({ source: 'gmail', externalId: 'gmail:me@x.com:N1', threadKey: 'gmail:me@x.com:THN1', sender: 'najeeb@acme.com', senderName: 'Najeeb', subject: 'Q4 figures', body: 'Hi Abiola, can you send me the Q4 figures when you get a minute?', occurredAt: ago(10) });
+await storeInbound({ source: 'gmail', externalId: 'gmail:me@x.com:N2', threadKey: 'gmail:me@x.com:THN2', sender: 'no-reply@bank.com', senderName: 'Bank', subject: 'Statement', body: 'Your statement is ready', occurredAt: ago(10) });
+await storeInbound({ source: 'whatsapp', externalId: 'wa:N3:g@g.us', threadKey: 'wa:g@g.us', sender: '2348000000009', senderName: 'Chidi', body: 'Who is bringing the chairs on Saturday?', isGroup: true, chatName: 'Alumni', occurredAt: ago(10) });
+await storeInbound({ source: 'gmail', externalId: 'gmail:me@x.com:N4', threadKey: 'gmail:me@x.com:THN4', sender: 'sam@acme.com', senderName: 'Najeeb Sam', subject: 'Lunch', body: 'Are you free for lunch Friday?', occurredAt: ago(10) });
+await storeInbound({ source: 'gmail', externalId: 'gmail:me@x.com:N4o', threadKey: 'gmail:me@x.com:THN4', direction: 'out', sender: 'me@x.com', recipients: 'sam@acme.com', body: 'Yes, Friday works.', occurredAt: ago(9) });
+await storeInbound({ source: 'gmail', externalId: 'gmail:me@x.com:N5', threadKey: 'gmail:me@x.com:THN5', sender: 'ola@acme.com', senderName: 'Ola', subject: 'Hello', body: 'Just checking in on how things are going over there.', occurredAt: ago(10) });
+const n1 = await nudgeOnce();
+assert.equal(n1.candidates, 2, 'newsletter, group chatter and the answered thread are skipped');
+assert.equal(n1.created, 1);
+assert.equal(nudgeCalls, 1);
+const nudgeSig = await one(`SELECT * FROM "JarvisSignal" WHERE "threadKey" = 'gmail:me@x.com:THN1'`);
+assert.equal(nudgeSig.kind, 'reply');
+assert.equal(nudgeSig.title, 'Still waiting on you: Najeeb, the Q4 figures');
+assert.equal(nudgeSig.score, 74);
+assert.equal(nudgeSig.action.type, 'send_reply');
+assert.match(nudgeSig.action.payload.text, /Q4 figures today, sorry/, 'draft kept, em dash removed');
+assert.doesNotMatch(JSON.stringify(nudgeSig), /—/);
+const nc = await getSetting('nudge_counts', {});
+assert.equal(nc['gmail:me@x.com:THN1'].count, 1);
+assert.ok((await one(`SELECT "lastNudgedAt" FROM "JarvisPerson" WHERE key = 'najeeb@acme.com'`)).lastNudgedAt, 'person lastNudgedAt written');
+// Not repeated: an open card on the thread blocks it; dismissing it blocks it too (he decided).
+const n2 = await nudgeOnce();
+assert.equal(n2.created, 0);
+assert.equal((await q(`SELECT id FROM "JarvisSignal" WHERE "threadKey" = 'gmail:me@x.com:THN1'`)).length, 1);
+await q(`UPDATE "JarvisSignal" SET status = 'dismissed', "decidedAt" = now(), "updatedAt" = now() WHERE id = $1`, [nudgeSig.id]);
+const n3 = await nudgeOnce();
+assert.equal(n3.created, 0);
+assert.equal(nudgeCalls, 1, 'the model said no to the other thread once and is not asked about it again');
+assert.equal((await q(`SELECT id FROM "JarvisSignal" WHERE "threadKey" = 'gmail:me@x.com:THN1'`)).length, 1, 'still one card');
+
+// Hostfully guest waiting while only an automated message followed: still a nudge candidate.
+await storeInbound({ source: 'hostfully', externalId: 'hostfully:G1', threadKey: 'hostfully:TH-N', sender: 'Najeeb Guest', senderName: 'Najeeb Guest', subject: 'Flat 3, 2026-11-14-2026-11-16', body: 'What time can we check in?', occurredAt: ago(8) });
+await storeInbound({ source: 'hostfully', externalId: 'hostfully:G1a', threadKey: 'hostfully:TH-N', direction: 'out', sender: 'hostfully-auto', senderName: 'Hostfully automated', body: '[auto] Welcome to Flat 3', occurredAt: ago(7) });
+const n4 = await nudgeOnce();
+assert.equal(n4.created, 1, 'an automated message is not him replying');
+assert.equal((await one(`SELECT action FROM "JarvisSignal" WHERE "threadKey" = 'hostfully:TH-N'`)).action.payload.channel, 'hostfully');
+
+// Stalled tasks: once per 3 days.
+await q(`INSERT INTO "JarvisTask" (id, title, status, priority, "createdAt", "updatedAt") VALUES ('stall1','Draft the supplier terms','todo','medium', now() - interval '6 days', now() - interval '4 days')`);
+assert.equal(await nudgeStalledTasks(), 1);
+assert.equal(await nudgeStalledTasks(), 0);
+const pick = await one(`SELECT title, kind FROM "JarvisSignal" WHERE "threadKey" = 'task:stall1'`);
+assert.equal(pick.kind, 'nudge');
+assert.equal(pick.title, 'Pick this up? Draft the supplier terms');
+assert.equal((await one(`SELECT status FROM "JarvisTask" WHERE id = 'stall1'`)).status, 'todo');
+
+// Learning: latency, answer rate, dismiss rate on the person; summary in settings and in the triage prompt.
+await q(`INSERT INTO "JarvisPerson" (id, key, name, relation, importance, "updatedAt") VALUES ('pl1','lena@x.com','Lena','team',55, now())`);
+for (let i = 0; i < 3; i++) {
+  await storeInbound({ source: 'gmail', externalId: `gmail:me@x.com:LI${i}`, threadKey: `gmail:me@x.com:LRN${i}`, sender: 'lena@x.com', senderName: 'Lena', subject: `Topic ${i}`, body: `Please review item ${i} and revert`, occurredAt: ago(100 + i * 5) });
+  await storeInbound({ source: 'gmail', externalId: `gmail:me@x.com:LO${i}`, threadKey: `gmail:me@x.com:LRN${i}`, direction: 'out', sender: 'me@x.com', recipients: 'lena@x.com', body: 'Done, see attached.', occurredAt: new Date(ago(100 + i * 5).getTime() + (10 + i * 5) * 60e3) });
+}
+for (let i = 0; i < 5; i++) await q(`INSERT INTO "JarvisSignal" (id, kind, title, status, "personKey", "updatedAt") VALUES ($1,'opportunity','Idea ' || $1,'dismissed','lena@x.com', now())`, [`dis${i}`]);
+const learned = await learnBehaviour();
+assert.ok(learned.people >= 1);
+const lena = await one(`SELECT "medianReplyMins", "answerRate", "dismissRate", behaviour FROM "JarvisPerson" WHERE key = 'lena@x.com'`);
+assert.equal(lena.medianReplyMins, 15, 'median of 10, 15 and 20 minutes');
+assert.equal(lena.answerRate, 1);
+assert.equal(lena.dismissRate, 1);
+assert.equal(JSON.parse(lena.behaviour).answered, 3);
+const beh = await getSetting('behaviour', null);
+assert.match(beh.summary.join(' '), /He usually answers Lena within 15 min/);
+assert.match(beh.summary.join(' '), /dismisses opportunity cards 100% of the time/);
+await storeInbound({ source: 'gmail', externalId: 'gmail:me@x.com:LT1', threadKey: 'gmail:me@x.com:LRNT', sender: 'ops@x.com', senderName: 'Ops', subject: 'Hello', body: 'A fresh message to triage', occurredAt: new Date() });
+tripleItems = [];
+await triageOnce();
+assert.match(lastTriageSystem, /How he works/);
+assert.match(lastTriageSystem, /answers Lena within 15 min/);
+
+// Advice: stored, em dashes removed, top idea in the morning plan, Sunday card.
+const adv = await adviseOnce({ mode: 'daily' });
+assert.equal(adv.items.length, 3);
+assert.doesNotMatch(JSON.stringify(adv), /—/);
+assert.equal((await getSetting('advice', null)).items[0].title, 'Let Hostfully send check-in details');
+const plan2 = await morningPlan({ force: true });
+assert.match((await one(`SELECT detail FROM "JarvisSignal" WHERE id = $1`, [plan2.id])).detail, /Idea: Let Hostfully send check-in details/);
+const wk = await weeklyAdvice();
+assert.equal(wk.items, 3);
+const wkSig = await one(`SELECT kind, title, detail FROM "JarvisSignal" WHERE id = $1`, [wk.id]);
+assert.equal(wkSig.kind, 'plan');
+assert.equal(wkSig.title, 'Ideas for this week');
+assert.match(wkSig.detail, /How: Block 08:30/);
+
+// Hostfully: Airbnb notification emails are skipped while the connector is healthy, triaged when it is not.
+await setSetting('hostfully_status', { ok: true, lastRunAt: new Date().toISOString(), lastError: null });
+await storeInbound({ source: 'gmail', externalId: 'gmail:me@x.com:AB1', threadKey: 'gmail:me@x.com:THAB1', sender: 'automated@airbnb.com', senderName: 'Airbnb', subject: 'Message from Sara', body: 'Sara sent you a message: what time is check-in?', occurredAt: new Date() });
+const callsBefore = triageCalls;
+await triageOnce();
+assert.equal((await one(`SELECT triage->>'skipped' AS s FROM "JarvisInbound" WHERE "externalId" = 'gmail:me@x.com:AB1'`)).s, 'hostfully');
+assert.equal(triageCalls, callsBefore, 'no model call for a batch of only Airbnb notifications');
+await setSetting('hostfully_status', { ok: true, lastRunAt: ago(1).toISOString(), lastError: null });
+await storeInbound({ source: 'gmail', externalId: 'gmail:me@x.com:AB2', threadKey: 'gmail:me@x.com:THAB2', sender: 'automated@airbnb.com', senderName: 'Airbnb', subject: 'Message from Omar', body: 'Omar sent you a message', occurredAt: new Date() });
+await triageOnce();
+assert.equal((await one(`SELECT triage->>'ok' AS ok FROM "JarvisInbound" WHERE "externalId" = 'gmail:me@x.com:AB2'`)).ok, 'true', 'stale connector: triaged normally');
+assert.equal(triageCalls, callsBefore + 1);
+
+// Hostfully send path through the job queue, with a mocked API.
+process.env.HOSTFULLY_API_KEY = 'test-key';
+const realFetch = globalThis.fetch;
+const calls = [];
+globalThis.fetch = async (url, init = {}) => {
+  const u = new URL(String(url));
+  calls.push({ method: init.method, path: u.pathname, query: u.search, body: init.body ? JSON.parse(init.body) : null, key: init.headers?.['X-HOSTFULLY-APIKEY'] });
+  const body = init.method === 'POST' ? { uid: 'sent-1' } : { messages: [{ uid: 'm1', threadUid: 'TH-N', leadUid: 'L1', type: 'DIRECT_MESSAGE' }] };
+  return new Response(JSON.stringify(body), { status: 200 });
+};
+try {
+  const hfSig = await one(`SELECT id FROM "JarvisSignal" WHERE "threadKey" = 'hostfully:TH-N'`);
+  await q(`INSERT INTO "JarvisJob" (id, kind, payload) VALUES ('hf1', 'apply_signal', $1)`, [JSON.stringify({ signalId: hfSig.id, text: 'Check-in is from 3pm. See you soon.' })]);
+  await runJobs();
+} finally {
+  globalThis.fetch = realFetch;
+  delete process.env.HOSTFULLY_API_KEY;
+}
+const post = calls.find((c) => c.method === 'POST');
+assert.ok(post, 'posted to Hostfully');
+assert.equal(post.path.endsWith('/messages'), true);
+assert.equal(post.key, 'test-key');
+assert.equal(post.body.leadUid, 'L1');
+assert.equal(post.body.threadUid, 'TH-N');
+assert.equal(post.body.type, 'DIRECT_MESSAGE');
+assert.equal(post.body.content.text, 'Check-in is from 3pm. See you soon.');
+const hfDone = await one(`SELECT status, result FROM "JarvisSignal" WHERE "threadKey" = 'hostfully:TH-N'`);
+assert.equal(hfDone.status, 'applied');
+assert.equal(hfDone.result.sent.messageUid, 'sent-1');
+
+// Reconcile on Hostfully threads: an automated message settles check-in detail items only.
+await q(`INSERT INTO "JarvisSignal" (id, kind, title, status, "threadKey", "updatedAt") VALUES ('hfa','reply','Guest asks for check-in details','new','hostfully:TH-C', now()), ('hfb','reply','Guest wants a late checkout','new','hostfully:TH-D', now())`);
+const later = new Date(Date.now() + 120e3);
+await storeInbound({ source: 'hostfully', externalId: 'hostfully:C1', threadKey: 'hostfully:TH-C', direction: 'out', sender: 'hostfully-auto', body: '[auto] Your door code is 4821', occurredAt: later });
+await storeInbound({ source: 'hostfully', externalId: 'hostfully:D1', threadKey: 'hostfully:TH-D', direction: 'out', sender: 'hostfully-auto', body: '[auto] Your door code is 4821', occurredAt: later });
+await reconcileOnce({ model: false });
+assert.equal((await one(`SELECT status FROM "JarvisSignal" WHERE id = 'hfa'`)).status, 'resolved');
+assert.equal((await one(`SELECT status FROM "JarvisSignal" WHERE id = 'hfb'`)).status, 'new');
+await storeInbound({ source: 'hostfully', externalId: 'hostfully:D2', threadKey: 'hostfully:TH-D', direction: 'out', sender: 'host', body: 'Late checkout at 1pm is fine.', occurredAt: new Date(later.getTime() + 60e3) });
+await reconcileOnce({ model: false });
+assert.equal((await one(`SELECT status FROM "JarvisSignal" WHERE id = 'hfb'`)).status, 'resolved');
+
 console.log('INTEGRATION OK');
 await pool.end();
 process.exit(0);

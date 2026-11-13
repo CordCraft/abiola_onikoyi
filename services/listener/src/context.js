@@ -29,6 +29,11 @@ export async function rhythm() {
   return buildRhythm(DEFAULT_RHYTHM, saved, learned);
 }
 
+// What learn.js worked out about how he behaves (null until the first nightly run).
+export async function behaviour() {
+  return (await getSetting('behaviour', null)) || null;
+}
+
 export async function goalsAndProjects() {
   const [goals, projects, ventures] = await Promise.all([
     q(`SELECT g.id, g.title, g.horizon, g."targetDate",

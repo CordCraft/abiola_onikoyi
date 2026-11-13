@@ -17,6 +17,8 @@ export async function decide(_prev: SignalResult, f: FormData): Promise<SignalRe
       message = await decideSignal(id, { action: "approve", text, mode: action === "draft" ? "draft" : "send" });
     } else if (action === "snooze") {
       message = await decideSignal(id, { action: "snooze", hours: Number(f.get("hours") ?? 3) });
+    } else if (action === "undo_task") {
+      message = await decideSignal(id, { action: "undo_task", taskId: id });
     } else if (action === "dismiss" || action === "undo") {
       message = await decideSignal(id, { action });
     } else {
