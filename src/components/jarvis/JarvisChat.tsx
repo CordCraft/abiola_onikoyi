@@ -14,8 +14,10 @@ import {
   transcribe,
   unlockAudio,
   VoiceUnavailableError,
+  warmVoice,
   voiceServiceAvailable,
   type Listener,
+  type LiveSpeech,
   type VoiceInfo,
 } from "@/lib/jarvis/voice-client";
 
@@ -401,7 +403,7 @@ export function JarvisChat({
     async (mode: "dictation" | "voice" | "meeting") => {
       await stopCloudListening();
       const l = createListener({
-        silenceMs: mode === "meeting" ? 1400 : 800,
+        silenceMs: mode === "meeting" ? 1400 : 550,
         maxUtteranceMs: mode === "meeting" ? 40_000 : 60_000,
         onLevel: (v) => {
           micLevelRef.current = v;
@@ -711,6 +713,7 @@ export function JarvisChat({
       setVoiceMode(true);
       void acquireWakeLock();
       if (cloud) {
+        warmVoice(); // token + service wake-up while the mic permission resolves
         // A tap starts the conversation: listen straight away, no wake word.
         setPhase("capturing");
         try {
@@ -1004,6 +1007,23 @@ export function JarvisChat({
     // Long turns checkpoint server-side and hand back a resume token; the
     // turn continues seamlessly in a fresh request.
     let pendingResume: string | null = null;
+    // Hands-free with the voice service: speech starts on the first clause while
+    // the reply is still streaming in.
+    let live: LiveSpeech | null = null;
+    let liveGen = 0;
+    const startLive = () => {
+      if (live || !isVoice || !voiceModeRef.current || !voiceCloudRef.current) return;
+      liveGen = ++speakGenRef.current;
+      listenerRef.current?.setMode("boost");
+      live = getSpeaker().speakStream({
+        onLevel: (v) => {
+          playLevelRef.current = v;
+        },
+        onStart: () => {
+          if (liveGen === speakGenRef.current) setPhase("speaking");
+        },
+      });
+    };
 
     const handleEvent = (evt: {
       type: string;
@@ -1038,6 +1058,8 @@ export function JarvisChat({
         });
       } else if (evt.type === "delta" && evt.text) {
         streamedText += evt.text;
+        startLive();
+        live?.push(evt.text);
         setItems((it) => {
           const copy = [...it];
           if (assistantIndex === -1) {
@@ -1155,31 +1177,44 @@ export function JarvisChat({
       setWorkStatus(null);
       if (isVoice && voiceModeRef.current) {
         const cloud = voiceCloudRef.current;
-        if (finalReply) {
+        // After Jarvis finishes speaking: back to listening (follow-up window, no wake word).
+        const afterSpeech = () => {
+          if (!voiceModeRef.current) return;
+          setPhase("capturing");
+          captureBufRef.current = "";
+          setVoiceLive("");
+          if (cloud) {
+            // The listener keeps running through speech; only a hidden tab stopped it.
+            if (!listenerRef.current && !document.hidden) {
+              startCloudListening("voice").catch((e) => {
+                setError(micErrorMessage(e));
+                exitVoiceMode();
+              });
+            }
+          } else {
+            setTimeout(() => {
+              // Do not reopen the mic while the tab is hidden; the
+              // visibilitychange handler resumes on return.
+              if (voiceModeRef.current && !document.hidden) startRecognition("voice");
+            }, 300);
+          }
+          armFollowupWindow();
+        };
+        const liveNow = live as LiveSpeech | null;
+        if (liveNow) {
+          // Already speaking as the reply streamed in: flush the tail and wait.
+          liveNow.finish();
+          await liveNow.done;
+          if (liveGen === speakGenRef.current) {
+            // (otherwise: barge-in or newer speech took over)
+            playLevelRef.current = 0;
+            listenerRef.current?.setMode("listen");
+            afterSpeech();
+          }
+        } else if (finalReply) {
           setPhase("speaking");
           if (!cloud) stopRecognition(); // never transcribe our own voice
-          speak(finalReply, () => {
-            if (!voiceModeRef.current) return;
-            setPhase("capturing"); // follow-up window: no wake word needed
-            captureBufRef.current = "";
-            setVoiceLive("");
-            if (cloud) {
-              // The listener keeps running through speech; only a hidden tab stopped it.
-              if (!listenerRef.current && !document.hidden) {
-                startCloudListening("voice").catch((e) => {
-                  setError(micErrorMessage(e));
-                  exitVoiceMode();
-                });
-              }
-            } else {
-              setTimeout(() => {
-                // Do not reopen the mic while the tab is hidden; the
-                // visibilitychange handler resumes on return.
-                if (voiceModeRef.current && !document.hidden) startRecognition("voice");
-              }, 300);
-            }
-            armFollowupWindow();
-          });
+          speak(finalReply, afterSpeech);
         } else {
           setPhase(cloud ? "capturing" : "standby");
           if (cloud) armFollowupWindow();

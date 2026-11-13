@@ -6,6 +6,10 @@ import { sendGmail, gmailDraft } from './gmail.js';
 import { sendOutlook, outlookDraft } from './outlook.js';
 import { sendPush, mayInterrupt } from './push.js';
 import { clip, tzOffsetMinutes } from './util.js';
+import { titleSimilarity, DUPLICATE_THRESHOLD } from './pure.js';
+import { applyCleanup, undoCleanup, reopenSignal, reopenTask } from './reconcile.js';
+
+export { titleSimilarity };
 
 // Runs the jobs: applying an approved signal, undoing it, and direct requests from chat.
 // Nothing here sends a message unless a person approved it (push button, signal page or chat).
@@ -24,12 +28,35 @@ async function connById(id) {
   return null;
 }
 
-async function createTask({ title, dueDate, priority = 'medium', projectId = null }) {
+// Creates a task unless an open one already covers the same thing (same thread, or a title
+// at least DUPLICATE_THRESHOLD similar); then it links to that one instead.
+export async function findOpenDuplicateTask({ title, threadKey }) {
+  if (threadKey) {
+    const same = await one(`SELECT id, title FROM "JarvisTask" WHERE status <> 'done' AND "threadKey" = $1 ORDER BY "createdAt" LIMIT 1`, [threadKey]);
+    if (same) return same;
+  }
+  try {
+    const best = await one(
+      `SELECT id, title, extensions.similarity(lower(title), lower($1)) AS sim FROM "JarvisTask" WHERE status <> 'done' ORDER BY sim DESC LIMIT 1`,
+      [title],
+    );
+    if (best && Number(best.sim) >= DUPLICATE_THRESHOLD) return best;
+    // pg_trgm is character based and can miss reordered words; the word check below is cheap.
+  } catch {
+    // pg_trgm not installed here: fall through to the word-overlap check.
+  }
+  const open = await q(`SELECT id, title FROM "JarvisTask" WHERE status <> 'done' ORDER BY "createdAt" DESC LIMIT 400`);
+  return open.find((t) => titleSimilarity(t.title, title) >= DUPLICATE_THRESHOLD) || null;
+}
+
+export async function createTask({ title, dueDate, priority = 'medium', projectId = null, sourceSignalId = null, threadKey = null }) {
+  const dupe = await findOpenDuplicateTask({ title, threadKey });
+  if (dupe) return { taskId: dupe.id, linked: true, duplicateOf: dupe.title };
   const id = newId();
   await q(
-    `INSERT INTO "JarvisTask" (id, "projectId", title, status, priority, "dueDate", "createdAt", "updatedAt")
-     VALUES ($1, $2, $3, 'todo', $4, $5, now(), now())`,
-    [id, projectId, clip(title, 200), priority, dueDate ? new Date(dueDate) : null],
+    `INSERT INTO "JarvisTask" (id, "projectId", title, status, priority, "dueDate", "sourceSignalId", "threadKey", "createdAt", "updatedAt")
+     VALUES ($1, $2, $3, 'todo', $4, $5, $6, $7, now(), now())`,
+    [id, projectId, clip(title, 200), priority, dueDate ? new Date(dueDate) : null, sourceSignalId, threadKey],
   );
   return { taskId: id };
 }
@@ -75,7 +102,8 @@ async function applySignal({ signalId, auto = false, text, mode = 'send', edits 
   if (text) payload.text = text;
   let result = {};
   if (action.type === 'calendar_event') result = { event: await createEvent(payload) };
-  else if (action.type === 'create_task') result = await createTask(payload);
+  else if (action.type === 'create_task') result = await createTask({ ...payload, sourceSignalId: s.id, threadKey: s.threadKey || payload.threadKey || null });
+  else if (action.type === 'cleanup') result = { cleanup: await applyCleanup(payload, { signalId: s.id }) };
   else if (action.type === 'send_reply') result = { sent: await sendReply(payload, mode), mode };
   else if (action.type === 'plan_blocks') result = { events: await blockPlan(payload) };
   await q(
@@ -116,11 +144,15 @@ async function blockPlan({ day, tz, blocks = [] }) {
 
 async function undoSignal({ signalId }) {
   const s = await one(`SELECT * FROM "JarvisSignal" WHERE id = $1`, [signalId]);
-  if (!s || s.status !== 'applied') return { skipped: true };
+  if (!s) return { skipped: true };
+  // A signal closed by a reply, by reconcile or by expiry comes back to its earlier state.
+  if (['resolved', 'expired'].includes(s.status)) return { reopened: await reopenSignal(s.id) };
+  if (s.status !== 'applied') return { skipped: true };
   const r = s.result || {};
+  if (r.cleanup) await undoCleanup(r.cleanup);
   if (r.event?.eventId) await deleteEvent(r.event);
   for (const ev of r.events || []) if (ev?.eventId) await deleteEvent(ev).catch(() => {});
-  if (r.taskId) await q(`DELETE FROM "JarvisTask" WHERE id = $1`, [r.taskId]);
+  if (r.taskId && !r.linked) await q(`DELETE FROM "JarvisTask" WHERE id = $1`, [r.taskId]);
   if (r.sent) throw new Error('a sent message cannot be unsent');
   await q(`UPDATE "JarvisSignal" SET status = 'undone', "updatedAt" = now() WHERE id = $1`, [s.id]);
   return { undone: true };
@@ -129,6 +161,7 @@ async function undoSignal({ signalId }) {
 const HANDLERS = {
   apply_signal: applySignal,
   undo_signal: undoSignal,
+  undo_task_close: ({ taskId }) => reopenTask(taskId),
   calendar_event: (p) => createEvent(p),
   delete_event: (p) => deleteEvent(p),
   create_task: (p) => createTask(p),

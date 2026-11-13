@@ -1,6 +1,7 @@
 """Jarvis voice service: Whisper (faster-whisper) for listening, Kokoro for speaking.
 
-Endpoints (all but /health need header x-voice-secret == env VOICE_SECRET):
+Endpoints (all but /health need header x-voice-secret == env VOICE_SECRET, or a
+short-lived header x-voice-token minted by the site: base64url(exp).base64url(HMAC-SHA256(VOICE_SECRET, exp))):
   GET  /health
   GET  /voices
   POST /stt   multipart field "audio" (+ optional "prompt", "language")
@@ -9,6 +10,8 @@ Endpoints (all but /health need header x-voice-secret == env VOICE_SECRET):
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import hmac
 import io
 import logging
@@ -18,12 +21,14 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import wave
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import numpy as np
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
@@ -33,7 +38,7 @@ logging.basicConfig(level=logging.INFO)
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "small")
 WHISPER_DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")
 WHISPER_COMPUTE = os.environ.get("WHISPER_COMPUTE", "int8" if WHISPER_DEVICE == "cpu" else "float16")
-WHISPER_BEAM = int(os.environ.get("WHISPER_BEAM", "2"))
+WHISPER_BEAM = int(os.environ.get("WHISPER_BEAM", "1"))
 # "en" is faster and avoids mis-detection on short clips. Use "auto" for any language.
 WHISPER_LANGUAGE = os.environ.get("WHISPER_LANGUAGE", "en")
 KOKORO_MODEL = os.environ.get("KOKORO_MODEL", "/models/kokoro-v1.0.onnx")
@@ -42,10 +47,19 @@ DEFAULT_VOICE = os.environ.get("DEFAULT_VOICE", "bm_george")
 MAX_TTS_CHARS = int(os.environ.get("MAX_TTS_CHARS", "1200"))
 MAX_AUDIO_BYTES = int(os.environ.get("MAX_AUDIO_BYTES", str(25 * 1024 * 1024)))
 
-DEFAULT_PROMPT = (
-    "Names that may appear: Jarvis, Abiola, Onikoyi, Nikstalis, HopperTax, Onterra, "
-    "Kigali, Rwanda, Nigeria, UNILAG, Netlify, Supabase, Railway, Claude, Anthropic."
+# Names the owner says often; fed to Whisper as initial_prompt so they are spelled right.
+WHISPER_HINTS = os.environ.get(
+    "WHISPER_HINTS",
+    "Jarvis, Nikstalis, HopperTax, Onterra, EraView, Najeeb, Hostfully, Deepcrest",
 )
+DEFAULT_PROMPT = f"Names that may appear: {WHISPER_HINTS}."
+CORS_ORIGINS = [
+    o.strip()
+    for o in os.environ.get(
+        "VOICE_CORS_ORIGINS", "https://abiolaonikoyi.com,http://localhost:3000"
+    ).split(",")
+    if o.strip()
+]
 
 state: dict = {"whisper": None, "kokoro": None, "voices": []}
 stt_lock = threading.Lock()
@@ -74,14 +88,47 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Jarvis voice", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["content-type", "x-voice-token", "x-voice-secret"],
+    max_age=86400,
+)
 
 
-def require_secret(x_voice_secret: str | None = Header(default=None)) -> None:
+def _b64url(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+
+def _b64url_decode(s: str) -> bytes:
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+
+def valid_token(token: str, secret: str) -> bool:
+    try:
+        exp_b64, sig_b64 = token.split(".", 1)
+        exp_raw = _b64url_decode(exp_b64)
+        exp = int(exp_raw.decode())
+        want = hmac.new(secret.encode(), exp_raw, hashlib.sha256).digest()
+        got = _b64url_decode(sig_b64)
+    except (ValueError, UnicodeDecodeError):
+        return False
+    return hmac.compare_digest(want, got) and exp > time.time()
+
+
+def require_secret(
+    x_voice_secret: str | None = Header(default=None),
+    x_voice_token: str | None = Header(default=None),
+) -> None:
     expected = os.environ.get("VOICE_SECRET", "")
-    if not expected or not x_voice_secret:
+    if not expected:
         raise HTTPException(status_code=401, detail="unauthorized")
-    if not hmac.compare_digest(x_voice_secret.encode(), expected.encode()):
-        raise HTTPException(status_code=401, detail="unauthorized")
+    if x_voice_token and valid_token(x_voice_token, expected):
+        return
+    if x_voice_secret and hmac.compare_digest(x_voice_secret.encode(), expected.encode()):
+        return
+    raise HTTPException(status_code=401, detail="unauthorized")
 
 
 # ── Voices ───────────────────────────────────────────────────────────────────

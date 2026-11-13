@@ -34,7 +34,7 @@ export async function ensureTables() {
     } catch (e) {
       // The listener's own database login does not own the tables (the site does), so
       // owner-only statements such as ENABLE ROW LEVEL SECURITY are refused. That is fine.
-      if (e.code !== '42501' && e.code !== '42P07') throw e;
+      if (e.code !== '42501' && e.code !== '42P07' && e.code !== '42P01') throw e;
     }
   }
 }

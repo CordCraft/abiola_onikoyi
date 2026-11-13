@@ -11,6 +11,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MODEL = "claude-opus-5-5";
+// Voice turns trade depth for speed: Sonnet 5.5, thinking off between tools
+// (disabled is a 400 on Sonnet 5.5; between_tools is accepted at effort high or
+// below), effort low, no server web tools (they add seconds), short output cap.
+const VOICE_MODEL = "claude-sonnet-5-5";
+const VOICE_MAX_TOKENS = 4000;
 // Whole-turn cap across all invocations (research turns span several).
 const MAX_TOOL_LOOPS = 12;
 // One Netlify invocation must stay safely under the platform's streamed
@@ -94,7 +99,7 @@ Documents named "Playbook: ..." are reusable checklists. To instantiate one, rea
 
 ## Duplicates
 create_task and create_project refuse near-duplicates and tell you what exists. Prefer updating the existing record; only pass allowDuplicate when it is genuinely distinct.
-${voice ? `\n## Voice mode\nThe user is speaking and will hear your reply read aloud. Keep replies short and conversational: a few sentences, no markdown formatting, no headings, no bullet lists, no tables. Spell numbers naturally.\n` : ""}
+${voice ? `\n## Voice mode\nThe user is talking to you out loud and will hear your reply spoken. Answer in one to three short, conversational sentences. No markdown, no headings, no lists, no tables, no links, no citations. Say numbers, dates, times and money the way a person would say them aloud (for example "about twelve thousand dollars", "half past three tomorrow"). Lead with the answer. Use your read tools freely for facts about their day, projects, tasks or messages, and confirm any action in one short sentence. You cannot browse the web in voice mode: if a question needs web research, say so briefly and suggest asking in text chat.\n` : ""}
 ${context}`;
 }
 
@@ -304,7 +309,8 @@ export async function POST(req: Request) {
       usedWriteTool: false,
       // Treat "no write needed" as already-nudged when the message shows no
       // save intent, so the nudge only fires when it should.
-      nudged: !wantsWrite,
+      // Voice turns have no web tools, so the "do it now" nudge would be unanswerable.
+      nudged: !wantsWrite || voice,
       loopIndex: 0,
       voice,
     };
@@ -381,13 +387,15 @@ export async function POST(req: Request) {
           }
 
           const messageStream = client.messages.stream({
-            model: MODEL,
-            max_tokens: 32000,
+            model: turn.voice ? VOICE_MODEL : MODEL,
+            max_tokens: turn.voice ? VOICE_MAX_TOKENS : 32000,
             system,
-            tools: [...jarvisTools, ...serverTools],
-            thinking: { type: "adaptive" as const },
+            tools: turn.voice ? [...jarvisTools] : [...jarvisTools, ...serverTools],
+            thinking: (turn.voice
+              ? { type: "between_tools" }
+              : { type: "adaptive" }) as unknown as Anthropic.ThinkingConfigParam,
             // Opus 5.5 defaults to medium effort; Jarvis chat does real agent work.
-            output_config: { effort: "high" as const },
+            output_config: { effort: turn.voice ? ("low" as const) : ("high" as const) },
             messages: turn.messages,
           });
 

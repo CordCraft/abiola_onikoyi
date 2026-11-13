@@ -2,15 +2,21 @@
 // voice activity detector, Whisper transcription via the site proxy, and a
 // sentence-by-sentence Kokoro speaker with browser speechSynthesis fallback.
 //
-// Server side lives in services/voice (Railway) behind the proxy routes under
-// /jarvis/api/voice/*. A 503 from those routes means "not configured", and the
-// speaker then falls back to speechSynthesis.
+// Server side lives in services/voice (Railway). Requests go straight to it with
+// a short-lived HMAC token from /jarvis/api/voice/token (no Netlify hop); on any
+// failure they fall back to the proxy routes under /jarvis/api/voice/*. A 503
+// from the proxy means "not configured", and the speaker then falls back to
+// speechSynthesis.
 
 export const VOICE_PREF_KEY = "jarvis-tts-voice";
 
-const STT_URL = "/jarvis/api/voice/stt";
-const TTS_URL = "/jarvis/api/voice/tts";
-const VOICES_URL = "/jarvis/api/voice/voices";
+const PROXY_URLS = {
+  stt: "/jarvis/api/voice/stt",
+  tts: "/jarvis/api/voice/tts",
+  voices: "/jarvis/api/voice/voices",
+} as const;
+type VoiceEndpoint = keyof typeof PROXY_URLS;
+const TOKEN_URL = "/jarvis/api/voice/token";
 
 // Netlify caps request bodies near 6 MB; the proxy rejects above 5.5 MB.
 const MAX_UPLOAD_BYTES = 5.2 * 1024 * 1024;
@@ -20,6 +26,75 @@ export class VoiceUnavailableError extends Error {
     super(message);
     this.name = "VoiceUnavailableError";
   }
+}
+
+// ── Direct path to the voice service ─────────────────────────────────────────
+
+type DirectConfig = { url: string; token: string; exp: number };
+
+let direct: DirectConfig | null = null;
+let directInflight: Promise<DirectConfig | null> | null = null;
+let directFailedAt = 0;
+const DIRECT_BACKOFF_MS = 60_000;
+const REFRESH_BEFORE_MS = 60_000;
+
+function fetchDirect(): Promise<DirectConfig | null> {
+  if (directInflight) return directInflight;
+  directInflight = (async () => {
+    try {
+      const res = await fetch(TOKEN_URL, { cache: "no-store" });
+      if (!res.ok) throw new Error(String(res.status));
+      const j = (await res.json()) as Partial<DirectConfig>;
+      if (!j.url || !j.token || typeof j.exp !== "number") throw new Error("bad payload");
+      direct = { url: j.url.replace(/\/+$/, ""), token: j.token, exp: j.exp };
+      return direct;
+    } catch {
+      direct = null;
+      directFailedAt = Date.now();
+      return null;
+    } finally {
+      directInflight = null;
+    }
+  })();
+  return directInflight;
+}
+
+// Returns a usable direct config, refreshing in the background before expiry.
+async function getDirect(): Promise<DirectConfig | null> {
+  const left = direct ? direct.exp * 1000 - Date.now() : -1;
+  if (direct && left > REFRESH_BEFORE_MS) return direct;
+  if (direct && left > 5_000) {
+    void fetchDirect(); // refresh ahead of expiry; keep using the current token meanwhile
+    return direct;
+  }
+  if (Date.now() - directFailedAt < DIRECT_BACKOFF_MS) return null;
+  return fetchDirect();
+}
+
+// Direct first, proxy on any failure (network error, CORS, rejected token).
+async function voiceFetch(name: VoiceEndpoint, init: RequestInit = {}): Promise<Response> {
+  const d = await getDirect();
+  if (d) {
+    try {
+      const headers = new Headers(init.headers);
+      headers.set("x-voice-token", d.token);
+      const res = await fetch(`${d.url}/${name}`, { ...init, headers });
+      if (res.status !== 401 && res.status !== 403) return res;
+    } catch (e) {
+      if ((e as Error)?.name === "AbortError") throw e;
+    }
+    direct = null;
+    directFailedAt = Date.now();
+  }
+  return fetch(PROXY_URLS[name], init);
+}
+
+// Call when voice mode starts: fetches the token and wakes the service so the
+// first real request is not a cold start.
+export function warmVoice(): void {
+  void getDirect().then((d) => {
+    if (d) fetch(`${d.url}/health`, { cache: "no-store" }).catch(() => {});
+  });
 }
 
 // ── Service discovery ────────────────────────────────────────────────────────
@@ -35,7 +110,7 @@ export async function loadVoices(): Promise<VoiceList | null> {
   if (voiceCache) return voiceCache;
   if (Date.now() - voiceFailedAt < 30_000) return null;
   try {
-    const res = await fetch(VOICES_URL, { cache: "no-store" });
+    const res = await voiceFetch("voices", { cache: "no-store" });
     if (!res.ok) throw new Error(String(res.status));
     const data = (await res.json()) as VoiceList;
     if (!Array.isArray(data.voices)) throw new Error("bad payload");
@@ -72,9 +147,44 @@ export function stripMarkdownForSpeech(s: string): string {
     .trim();
 }
 
-// Splits into speakable chunks. The first sentence stands alone so audio
+const FIRST_CLAUSE_MIN = 25;
+const FIRST_CLAUSE_MAX = 60;
+
+// Index just past the end of the first speakable unit of `text`: a sentence end,
+// or a comma/semicolon/colon after at least FIRST_CLAUSE_MIN chars, or a word
+// boundary at FIRST_CLAUSE_MAX chars. Returns 0 when it is not decidable yet.
+export function firstClauseEnd(text: string): number {
+  let cand = -1;
+  const re = /[.!?]+["')\]]*(?=\s)|[,;:](?=\s)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const end = m.index + m[0].length;
+    const isClause = /^[,;:]/.test(m[0]);
+    if (isClause && end < FIRST_CLAUSE_MIN) continue;
+    cand = end;
+    break;
+  }
+  if (cand > 0 && cand <= FIRST_CLAUSE_MAX) return cand;
+  if (text.length >= FIRST_CLAUSE_MAX) {
+    const sp = text.lastIndexOf(" ", FIRST_CLAUSE_MAX);
+    return sp > 0 ? sp : FIRST_CLAUSE_MAX;
+  }
+  return 0;
+}
+
+// Splits into speakable chunks. The first clause stands alone so audio
 // starts quickly; later sentences are merged up to maxLen.
 export function splitSentences(text: string, maxLen = 200): string[] {
+  const head = firstClauseEnd(text);
+  if (head > 0 && head < text.length) {
+    const first = text.slice(0, head).trim();
+    const rest = text.slice(head).trim();
+    if (first && rest) return [first, ...splitSentencesRest(rest, maxLen)];
+  }
+  return splitSentencesRest(text, maxLen);
+}
+
+function splitSentencesRest(text: string, maxLen: number): string[] {
   const raw = text.split(/(?<=[.!?])\s+/).filter(Boolean);
   const pieces: string[] = [];
   for (const s of raw) {
@@ -164,7 +274,7 @@ export async function transcribe(
   const fd = new FormData();
   fd.append("audio", blob, `utterance.${ext}`);
   if (opts?.prompt) fd.append("prompt", opts.prompt);
-  const res = await fetch(STT_URL, { method: "POST", body: fd, signal: opts?.signal });
+  const res = await voiceFetch("stt", { method: "POST", body: fd, signal: opts?.signal });
   if (res.status === 503) throw new VoiceUnavailableError();
   if (!res.ok) {
     let msg = `Transcription failed (HTTP ${res.status})`;
@@ -233,7 +343,7 @@ export interface Listener {
 }
 
 export function createListener(opts: ListenerOptions): Listener {
-  const silenceMs = opts.silenceMs ?? 800;
+  const silenceMs = opts.silenceMs ?? 550;
   const maxUtteranceMs = opts.maxUtteranceMs ?? 60_000;
   const minSpeechMs = opts.minSpeechMs ?? 250;
   const mime = pickRecorderMime();
@@ -453,6 +563,35 @@ export type SpeakOptions = {
 };
 export type SpeakResult = "done" | "stopped" | "failed";
 
+// Speech that starts while the reply is still streaming in. push() text deltas
+// as they arrive, finish() when the reply is complete; done settles when the
+// audio has finished (or was stopped / could not play).
+export type LiveSpeech = {
+  push(delta: string): void;
+  finish(): void;
+  done: Promise<SpeakResult>;
+};
+
+function hasOpenMarkup(t: string): boolean {
+  const open = (t.match(/\[\[/g) ?? []).length;
+  const close = (t.match(/\]\]/g) ?? []).length;
+  return open > close || (t.match(/```/g) ?? []).length % 2 === 1 || /\[saved:[^\]]*$/.test(t);
+}
+
+// Where to cut the next chunk out of streamed text (0 = wait for more).
+function streamCut(text: string, first: boolean): number {
+  if (first) return firstClauseEnd(text);
+  const m = /[.!?]+["')\]]*(?=\s)/.exec(text);
+  if (m) return m.index + m[0].length;
+  if (text.length > 260) {
+    const comma = Math.max(text.lastIndexOf(", ", 240), text.lastIndexOf("; ", 240), text.lastIndexOf(": ", 240));
+    if (comma > 80) return comma + 1;
+    const sp = text.lastIndexOf(" ", 240);
+    return sp > 0 ? sp : 240;
+  }
+  return 0;
+}
+
 export function readVoicePref(): string {
   try {
     return localStorage.getItem(VOICE_PREF_KEY) ?? "";
@@ -471,6 +610,7 @@ class Speaker {
   private browserDone: (() => void) | null = null;
   private onLevel: ((v: number) => void) | undefined;
   private active = false;
+  private streamWake: (() => void) | null = null;
 
   get speaking() {
     return this.active;
@@ -493,6 +633,9 @@ class Speaker {
     done?.();
     this.stopLevels();
     this.active = false;
+    const w = this.streamWake;
+    this.streamWake = null;
+    w?.();
   }
 
   private startLevels(mode: "web" | "fake") {
@@ -526,7 +669,7 @@ class Speaker {
   private async fetchBuffer(text: string, voice: string, speed: number | undefined, signal: AbortSignal) {
     let res: Response;
     try {
-      res = await fetch(TTS_URL, {
+      res = await voiceFetch("tts", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ text, voice: voice || undefined, speed }),
@@ -657,6 +800,119 @@ class Speaker {
         this.abort = null;
       }
     }
+  }
+
+  // Starts speaking before the whole reply exists. The first clause goes to TTS
+  // as soon as it streams in; later chunks are whole sentences, synthesized in
+  // order while the previous one plays.
+  speakStream(opts: SpeakOptions = {}): LiveSpeech {
+    this.stop();
+    const gen = this.gen;
+    const voice = opts.voice ?? readVoicePref();
+    this.onLevel = opts.onLevel;
+    this.active = true;
+    const abort = new AbortController();
+    this.abort = abort;
+
+    const chunks: string[] = [];
+    const fetches: Promise<AudioBuffer>[] = [];
+    let pending = "";
+    let first = true;
+    let ended = false;
+    const notify = () => {
+      const w = this.streamWake;
+      this.streamWake = null;
+      w?.();
+    };
+    const alive = () => gen === this.gen;
+
+    const enqueue = (raw: string) => {
+      const plain = stripMarkdownForSpeech(raw);
+      if (!plain) return;
+      for (const piece of plain.length > 260 ? splitSentencesRest(plain, 200) : [plain]) {
+        const i = chunks.length;
+        chunks.push(piece);
+        // Synthesize in order: a later chunk must never delay an earlier one.
+        const prev = i === 0 ? Promise.resolve() : fetches[i - 1].then(() => undefined, () => undefined);
+        const p = prev.then(() => this.fetchBuffer(piece, voice, opts.speed, abort.signal));
+        p.catch(() => {});
+        fetches.push(p);
+      }
+      notify();
+    };
+
+    const drain = (final: boolean) => {
+      if (!alive()) return;
+      for (;;) {
+        if (!final && hasOpenMarkup(pending)) break;
+        const cut = streamCut(pending, first);
+        if (cut <= 0 || cut >= pending.length) break;
+        enqueue(pending.slice(0, cut));
+        pending = pending.slice(cut).replace(/^\s+/, "");
+        first = false;
+      }
+      if (final && pending.trim()) {
+        enqueue(pending);
+        pending = "";
+      }
+    };
+
+    const run = async (): Promise<SpeakResult> => {
+      let started = false;
+      try {
+        for (let i = 0; ; i++) {
+          while (i >= chunks.length && !ended && alive()) {
+            await new Promise<void>((r) => {
+              this.streamWake = r;
+            });
+          }
+          if (!alive()) return "stopped";
+          if (i >= chunks.length) return "done";
+          let buf: AudioBuffer;
+          try {
+            buf = await fetches[i];
+          } catch (e) {
+            if (!alive() || (e as Error)?.name === "AbortError") return "stopped";
+            while (!ended && alive()) {
+              await new Promise<void>((r) => {
+                this.streamWake = r;
+              });
+            }
+            if (!alive()) return "stopped";
+            return await this.browserSpeak(chunks.slice(i).join(" "), gen, voice);
+          }
+          if (!alive()) return "stopped";
+          if (!started) {
+            started = true;
+            this.startLevels("web");
+            opts.onStart?.();
+          }
+          await this.playBuffer(buf);
+          if (!alive()) return "stopped";
+        }
+      } finally {
+        if (alive()) {
+          this.stopLevels();
+          this.active = false;
+          this.abort = null;
+        }
+      }
+    };
+
+    return {
+      push: (delta) => {
+        if (ended || !alive()) return;
+        pending += delta;
+        drain(false);
+      },
+      finish: () => {
+        if (ended) return;
+        drain(true);
+        ended = true;
+        notify();
+      },
+      done: run(),
+    };
   }
 }
 

@@ -5,6 +5,8 @@ import { goalsAndProjects, people, openSignals, upcoming, fmtEvents, rhythm, OWN
 import { clip } from './util.js';
 import { pushSignal } from './push.js';
 import { enqueue } from './jobs.js';
+import { selectMergeTarget, personKeysForOutgoing } from './pure.js';
+import { reconcileOnce } from './reconcile.js';
 
 // The triage brain: reads new messages in small batches, finds what matters, and turns it
 // into signals with one-tap actions. The model proposes; this code decides what may run
@@ -22,7 +24,7 @@ const SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['inbound_ids', 'kind', 'title', 'detail', 'why', 'score', 'project_id', 'same_as_signal_id', 'due_at', 'person', 'calendar', 'task', 'reply'],
+        required: ['inbound_ids', 'kind', 'title', 'detail', 'why', 'score', 'project_id', 'same_as_signal_id', 'due_at', 'expires_at', 'person', 'calendar', 'task', 'reply'],
         properties: {
           inbound_ids: { type: 'array', items: { type: 'string' } },
           kind: { type: 'string', enum: ['event', 'task', 'reply', 'opportunity', 'followup', 'fyi'] },
@@ -33,6 +35,7 @@ const SCHEMA = {
           project_id: { type: 'string' },
           same_as_signal_id: { type: 'string' },
           due_at: { type: 'string' },
+          expires_at: { type: 'string' },
           person: {
             type: 'object',
             additionalProperties: false,
@@ -95,6 +98,8 @@ title: under 70 characters, starts with the essence (for example "Taslim wants t
 project_id: the id of the matching project from the list, or "". same_as_signal_id: if this is the same thing as an open signal listed below, its id (then it only updates that one), else "".
 person: the main other person (key = phone digits or lowercase email, from the message sender), relation guess, org if known; empty strings if none.
 due_at: ISO time it matters by, or "".
+expires_at: ISO time after which this item no longer matters (the guest's checkout, the meeting start, the deadline, the day an offer lapses), or "" if it stays relevant until done.
+Items in the open list marked [DONE] are already finished: do not create them again. If a new message is the same thing as a [DONE] item, return nothing for it unless it clearly reopens the matter with new facts.
 inbound_ids: the message ids this item comes from. Group several messages about one thing into one item.
 Fill unused sub-objects with empty strings and false. Never invent facts that are not in the messages. Never use em dashes.`;
 
@@ -159,7 +164,7 @@ export async function triageOnce() {
         `Projects (id | name | status | priority):\n${projects.map((p) => `- ${p.id} | ${p.name}${p.venture ? ` [${p.venture}]` : ''} | ${p.status} | ${p.priority}`).join('\n') || '(none)'}`,
         `Known people:\n${known.map((p) => `- ${p.key} ${p.name || ''} ${p.relation ? `(${p.relation})` : ''} ${p.org || ''}`.trim()).join('\n') || '(none yet)'}`,
         `Calendar next 10 days:\n${fmtEvents(events, r.tz)}`,
-        `Open signals (id | kind | title):\n${open.map((s) => `- ${s.id} | ${s.kind} | ${s.title}`).join('\n') || '(none)'}`,
+        `Open signals (id | kind | title):\n${open.map((s) => `- ${s.id} | ${s.kind} | ${s.title}${['applied', 'resolved'].includes(s.status) ? ` [DONE: ${s.status}]` : ''}`).join('\n') || '(none)'}`,
       ].join('\n\n'),
     },
   ];
@@ -186,6 +191,10 @@ export async function triageOnce() {
   }
   await q(`UPDATE "JarvisInbound" SET "triagedAt" = now(), triage = '{"ok":true}' WHERE id = ANY($1)`, [fresh.map((m) => m.id)]);
   await touchPeople(fresh);
+  // Anything the owner wrote may have answered an open item: close those loops now.
+  if (fresh.some((m) => m.direction === 'out')) {
+    await reconcileOnce({ sinceHours: 6 }).catch((e) => console.error('[brain] reconcile', e.message));
+  }
   return batch.length;
 }
 
@@ -240,7 +249,9 @@ async function saveSignal(item, ids, byId, r) {
 
   // Same thing as an open signal: refresh it rather than nagging twice.
   if (item.same_as_signal_id) {
-    const existing = await one(`SELECT id, "inboundIds" FROM "JarvisSignal" WHERE id = $1`, [item.same_as_signal_id]);
+    const existing = await one(`SELECT id, status, "inboundIds" FROM "JarvisSignal" WHERE id = $1`, [item.same_as_signal_id]);
+    // The model matched something already finished: nothing new to raise.
+    if (existing && existing.status === 'resolved') return;
     if (existing) {
       const merged = [...new Set([...(existing.inboundIds || []), ...ids])];
       await q(
@@ -251,11 +262,33 @@ async function saveSignal(item, ids, byId, r) {
     }
   }
 
+  const threadKey = first.threadKey || null;
+  const expiresAt = validIso(item.expires_at) ? new Date(item.expires_at) : null;
+
+  // Same thread, same kind: add to the existing card instead of making a second one.
+  if (threadKey) {
+    const rows = await q(
+      `SELECT id, status, "inboundIds", "updatedAt", "decidedAt" FROM "JarvisSignal" WHERE "threadKey" = $1 AND kind = $2 AND "createdAt" > now() - interval '30 days'`,
+      [threadKey, item.kind],
+    );
+    const target = selectMergeTarget(rows);
+    if (target) {
+      const merged = [...new Set([...(target.inboundIds || []), ...ids])];
+      const open = ['new', 'pushed', 'snoozed', 'approved'].includes(target.status);
+      await q(
+        `UPDATE "JarvisSignal" SET detail = $2, score = GREATEST(score, $3), "inboundIds" = $4, action = CASE WHEN $6 THEN COALESCE($5, action) ELSE action END,
+           "expiresAt" = COALESCE($7, "expiresAt"), "updatedAt" = now() WHERE id = $1`,
+        [target.id, item.detail, score, JSON.stringify(merged), action ? JSON.stringify(action) : null, open, expiresAt],
+      );
+      return;
+    }
+  }
+
   const id = newId();
   await q(
-    `INSERT INTO "JarvisSignal" (id, kind, title, detail, why, score, source, "inboundIds", "projectId", "personKey", action, autonomy, status, "dueAt", "updatedAt")
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'new',$13, now())`,
-    [id, item.kind, clip(item.title, 140), item.detail, item.why, score, first.source, JSON.stringify(ids), projectId, item.person.key || null, action ? JSON.stringify(action) : null, autonomy, validIso(item.due_at) ? new Date(item.due_at) : null],
+    `INSERT INTO "JarvisSignal" (id, kind, title, detail, why, score, source, "inboundIds", "projectId", "personKey", action, autonomy, status, "dueAt", "threadKey", "expiresAt", "updatedAt")
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'new',$13,$14,$15, now())`,
+    [id, item.kind, clip(item.title, 140), item.detail, item.why, score, first.source, JSON.stringify(ids), projectId, item.person.key || null, action ? JSON.stringify(action) : null, autonomy, validIso(item.due_at) ? new Date(item.due_at) : null, threadKey, expiresAt],
   );
 
   if (autonomy === 'auto' && action) {
@@ -285,7 +318,12 @@ async function upsertPerson(item, msg) {
 
 async function touchPeople(messages) {
   for (const m of messages) {
-    const key = String(m.direction === 'out' ? '' : m.sender || '').toLowerCase();
+    if (m.direction === 'out') {
+      const keys = personKeysForOutgoing(m);
+      if (keys.length) await q(`UPDATE "JarvisPerson" SET "lastOutboundAt" = GREATEST(COALESCE("lastOutboundAt", 'epoch'), $2) WHERE key = ANY($1)`, [keys, m.occurredAt]).catch(() => {});
+      continue;
+    }
+    const key = String(m.sender || '').toLowerCase();
     if (!key) continue;
     await q(`UPDATE "JarvisPerson" SET "lastInboundAt" = GREATEST(COALESCE("lastInboundAt", 'epoch'), $2) WHERE key = $1`, [key, m.occurredAt]).catch(() => {});
   }

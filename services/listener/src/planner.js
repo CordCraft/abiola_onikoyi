@@ -3,6 +3,9 @@ import { q, newId, getSetting, setSetting } from './db.js';
 import { structured } from './llm.js';
 import { sendPush } from './push.js';
 import { rhythm, goalsAndProjects, upcoming, fmtEvents, OWNER_BRIEF } from './context.js';
+import { expireSignals, nudgeStaleTasks, reconcileOnce } from './reconcile.js';
+import { startOfDay, closedSince } from './digest.js';
+import { closeoutText } from './pure.js';
 import { minutesIn, dateKeyIn, weekdayIn, parseHm, hm, clip, tzOffsetMinutes } from './util.js';
 
 // The day's rhythm: a morning plan, an evening close-out, nightly learning of the owner's
@@ -120,15 +123,16 @@ You are Jarvis planning his day. Build a realistic, time-blocked plan for today 
 
 export async function eveningCloseout() {
   const r = await rhythm();
-  const [done, open] = await Promise.all([
-    q(`SELECT count(*)::int AS n FROM "JarvisTask" WHERE status = 'done' AND "completedAt" > now() - interval '14 hours'`),
+  const [closed, open] = await Promise.all([
+    closedSince(startOfDay(r.tz)),
     q(`SELECT title FROM "JarvisSignal" WHERE status IN ('new','pushed') AND kind <> 'plan' AND kind <> 'fyi' ORDER BY score DESC LIMIT 3`),
   ]);
-  const carry = open.map((s) => s.title).join('; ');
+  if (!r.stopWorkPush && !closed.length && !open.length) return;
   await sendPush({
-    title: 'Time to stop work',
-    body: clip(`${done[0].n} task${done[0].n === 1 ? '' : 's'} closed today.${carry ? ` Carried to tomorrow: ${carry}.` : ''} Family time from ${r.familyStart}. I will keep watch.`, 230),
-    url: '/jarvis',
+    // The "time to stop work" nudge is opt-in; the close-out itself is always useful.
+    title: r.stopWorkPush ? 'Time to stop work' : 'Close-out for today',
+    body: clip(closeoutText({ closed: closed.map((c) => c.title), open: open.map((o) => o.title), stopWork: r.stopWorkPush, familyStart: r.familyStart }), 230),
+    url: '/jarvis/signals',
     tag: `jarvis-stop-${dateKeyIn(r.tz)}`,
   });
 }
@@ -156,7 +160,9 @@ export async function learnRhythm() {
 export async function housekeeping() {
   await q(`DELETE FROM "JarvisInbound" WHERE "occurredAt" < now() - interval '120 days'`);
   await q(`DELETE FROM "JarvisJob" WHERE status IN ('done','failed','cancelled') AND "createdAt" < now() - interval '30 days'`);
-  await q(`UPDATE "JarvisSignal" SET status = 'dismissed' WHERE status IN ('new','pushed') AND kind IN ('fyi','plan') AND "createdAt" < now() - interval '3 days'`);
+  await q(`UPDATE "JarvisSignal" SET status = 'dismissed' WHERE status IN ('new','pushed') AND kind IN ('fyi','plan') AND COALESCE(action->>'type','') <> 'cleanup' AND "createdAt" < now() - interval '3 days'`);
+  await expireSignals();
+  await nudgeStaleTasks();
 }
 
 // Called every minute.
@@ -172,5 +178,6 @@ export async function plannerTick() {
   if (now >= 3 * 60 && now < 4 * 60) {
     await once(`learn:${day}`, () => learnRhythm());
     await once(`clean:${day}`, () => housekeeping());
+    await once(`reconcile:${day}`, () => reconcileOnce({ sinceHours: 24 }));
   }
 }

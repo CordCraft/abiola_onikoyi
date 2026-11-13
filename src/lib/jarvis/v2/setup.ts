@@ -103,6 +103,23 @@ const DDL: string[] = [
 
     CONSTRAINT "JarvisPerson_pkey" PRIMARY KEY ("id")
 )`,
+  `CREATE TABLE IF NOT EXISTS "JarvisLedger" (
+    "id" TEXT NOT NULL,
+    "kind" TEXT NOT NULL,
+    "title" TEXT NOT NULL,
+    "summary" TEXT,
+    "personKey" TEXT,
+    "threadKey" TEXT,
+    "signalId" TEXT,
+    "taskId" TEXT,
+    "closedBy" TEXT,
+    "evidence" TEXT,
+    "closedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "JarvisLedger_pkey" PRIMARY KEY ("id")
+)`,
   `CREATE TABLE IF NOT EXISTS "JarvisPasskey" (
     "id" TEXT NOT NULL,
     "credentialId" TEXT NOT NULL,
@@ -144,6 +161,24 @@ const DDL: string[] = [
   `ALTER TABLE "JarvisPerson" ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE "JarvisPasskey" ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE "JarvisMachine" ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE "JarvisSignal" ADD COLUMN IF NOT EXISTS "threadKey" TEXT`,
+  `ALTER TABLE "JarvisSignal" ADD COLUMN IF NOT EXISTS "expiresAt" TIMESTAMP(3)`,
+  `ALTER TABLE "JarvisSignal" ADD COLUMN IF NOT EXISTS "resolvedAt" TIMESTAMP(3)`,
+  `ALTER TABLE "JarvisSignal" ADD COLUMN IF NOT EXISTS "resolvedBy" TEXT`,
+  `ALTER TABLE "JarvisSignal" ADD COLUMN IF NOT EXISTS "resolution" TEXT`,
+  `ALTER TABLE "JarvisTask" ADD COLUMN IF NOT EXISTS "sourceSignalId" TEXT`,
+  `ALTER TABLE "JarvisTask" ADD COLUMN IF NOT EXISTS "threadKey" TEXT`,
+  `ALTER TABLE "JarvisTask" ADD COLUMN IF NOT EXISTS "closedBy" TEXT`,
+  `ALTER TABLE "JarvisTask" ADD COLUMN IF NOT EXISTS "closeNote" TEXT`,
+  `ALTER TABLE "JarvisPerson" ADD COLUMN IF NOT EXISTS "medianReplyMins" INTEGER`,
+  `ALTER TABLE "JarvisPerson" ADD COLUMN IF NOT EXISTS "answerRate" DOUBLE PRECISION`,
+  `ALTER TABLE "JarvisPerson" ADD COLUMN IF NOT EXISTS "dismissRate" DOUBLE PRECISION`,
+  `ALTER TABLE "JarvisPerson" ADD COLUMN IF NOT EXISTS "behaviour" TEXT`,
+  `ALTER TABLE "JarvisPerson" ADD COLUMN IF NOT EXISTS "lastNudgedAt" TIMESTAMP(3)`,
+  `CREATE INDEX IF NOT EXISTS "JarvisSignal_threadKey_idx" ON "JarvisSignal"("threadKey")`,
+  `CREATE INDEX IF NOT EXISTS "JarvisTask_threadKey_idx" ON "JarvisTask"("threadKey")`,
+  `CREATE INDEX IF NOT EXISTS "JarvisLedger_closedAt_idx" ON "JarvisLedger"("closedAt")`,
+  `ALTER TABLE "JarvisLedger" ENABLE ROW LEVEL SECURITY`,
 ];
 
 let ensured: Promise<void> | null = null;

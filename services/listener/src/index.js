@@ -12,6 +12,8 @@ import { triageOnce } from './brain.js';
 import { runJobs, attachWhatsApp } from './executor.js';
 import { flushHeld } from './push.js';
 import { plannerTick, morningPlan } from './planner.js';
+import { reconcileOnce, createCleanupCard } from './reconcile.js';
+import { digestTick } from './digest.js';
 
 const started = new Date();
 const health = { lastTriage: null, lastGmail: null, lastOutlook: null, lastJobs: null, errors: [] };
@@ -72,6 +74,11 @@ async function main() {
 
   every('held-pushes', 10 * 60_000, flushHeld, { initialDelayMs: 60_000 });
   every('planner', 60_000, plannerTick, { initialDelayMs: 20_000 });
+
+  // v3: close loops, propose the one-time clean-up, and bundle held items into a digest.
+  every('reconcile', 10 * 60_000, () => reconcileOnce({ sinceHours: 6 }), { initialDelayMs: 150_000 });
+  every('cleanup-proposal', 30 * 60_000, () => createCleanupCard(), { initialDelayMs: 120_000 });
+  every('digest', 10 * 60_000, digestTick, { initialDelayMs: 180_000 });
 
   http
     .createServer(async (req, res) => {
