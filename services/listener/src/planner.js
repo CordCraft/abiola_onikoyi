@@ -1,9 +1,9 @@
 import { config } from './config.js';
-import { q, newId, getSetting, setSetting } from './db.js';
+import { q, newId, getSetting, setSetting, v3State } from './db.js';
 import { structured } from './llm.js';
 import { sendPush } from './push.js';
 import { rhythm, goalsAndProjects, upcoming, fmtEvents, OWNER_BRIEF } from './context.js';
-import { expireSignals, nudgeStaleTasks, reconcileOnce } from './reconcile.js';
+import { expireSignals, nudgeStaleTasks, reconcileOnce, cleanupGate, CUTOFF_SQL, cutoffParam } from './reconcile.js';
 import { startOfDay, closedSince } from './digest.js';
 import { closeoutText } from './pure.js';
 import { learnBehaviour } from './learn.js';
@@ -49,14 +49,27 @@ const PLAN_SCHEMA = {
   },
 };
 
+const MAX_TRIES_PER_DAY = 3;
+
+// A daily job is marked done only after it succeeds. A failure is logged and retried on the
+// next tick, at most 3 attempts a day (the key carries the date).
 async function once(key, fn) {
   const done = (await getSetting('planner_runs', {})) || {};
   if (done[key]) return;
-  done[key] = new Date().toISOString();
+  const tries = (await getSetting('planner_tries', {})) || {};
+  const n = Number(tries[key] || 0);
+  if (n >= MAX_TRIES_PER_DAY) return;
+  tries[key] = n + 1;
   // Keep only the last 30 keys.
-  const trimmed = Object.fromEntries(Object.entries(done).sort((a, b) => b[1].localeCompare(a[1])).slice(0, 30));
-  await setSetting('planner_runs', trimmed);
-  await fn();
+  await setSetting('planner_tries', Object.fromEntries(Object.entries(tries).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 30)));
+  try {
+    await fn();
+  } catch (e) {
+    console.error(`[planner] ${key} failed (attempt ${n + 1} of ${MAX_TRIES_PER_DAY}):`, e?.message || e);
+    return;
+  }
+  done[key] = new Date().toISOString();
+  await setSetting('planner_runs', Object.fromEntries(Object.entries(done).sort((a, b) => b[1].localeCompare(a[1])).slice(0, 30)));
 }
 
 export async function morningPlan({ force = false } = {}) {
@@ -100,7 +113,7 @@ You are Jarvis planning his day. Build a realistic, time-blocked plan for today 
   // One fresh suggestion list each morning; its top idea rides in the plan. Never blocks the plan.
   let idea = '';
   try {
-    if (await adviseOnce({ mode: 'daily' })) idea = await topAdviceLine();
+    if (v3State.ready && (await adviseOnce({ mode: 'daily' }))) idea = await topAdviceLine();
   } catch (e) {
     console.error('[planner] advice', e.message);
   }
@@ -170,9 +183,19 @@ export async function learnRhythm() {
 export async function housekeeping() {
   await q(`DELETE FROM "JarvisInbound" WHERE "occurredAt" < now() - interval '120 days'`);
   await q(`DELETE FROM "JarvisJob" WHERE status IN ('done','failed','cancelled') AND "createdAt" < now() - interval '30 days'`);
-  await q(`UPDATE "JarvisSignal" SET status = 'dismissed' WHERE status IN ('new','pushed') AND kind IN ('fyi','plan') AND COALESCE(action->>'type','') <> 'cleanup' AND "createdAt" < now() - interval '3 days'`);
-  await expireSignals();
-  await nudgeStaleTasks();
+  // Auto-closing waits for the owner's approval of the clean-up card: nothing older than the card is touched before.
+  const gate = v3State.ready ? await cleanupGate() : { cutoff: null };
+  if (!gate.blocked) {
+    await q(
+      `UPDATE "JarvisSignal" SET status = 'dismissed' WHERE status IN ('new','pushed') AND kind IN ('fyi','plan') AND COALESCE(action->>'type','') <> 'cleanup'
+         AND "createdAt" < now() - interval '3 days' AND ${CUTOFF_SQL('"createdAt"', 1)}`,
+      [cutoffParam(gate.cutoff)],
+    );
+  }
+  if (v3State.ready) {
+    await expireSignals();
+    await nudgeStaleTasks();
+  }
 }
 
 // Called every minute.
@@ -183,13 +206,13 @@ export async function plannerTick() {
   const weekday = weekdayIn(r.tz);
   const wake = parseHm(r.quietEnd, 6 * 60 + 30) + 20;
   if (now >= wake && now < wake + 180) await once(`plan:${day}`, () => morningPlan());
-  if (weekday === 'Sunday' && now >= 15 * 60 && now < 16 * 60) await once(`advice-week:${day}`, () => weeklyAdvice());
+  if (v3State.ready && weekday === 'Sunday' && now >= 15 * 60 && now < 16 * 60) await once(`advice-week:${day}`, () => weeklyAdvice());
   const workEnd = parseHm(r.workEnd, 18 * 60);
   if (r.workdays.includes(weekday) && now >= workEnd && now < workEnd + 60) await once(`stop:${day}`, () => eveningCloseout());
   if (now >= 3 * 60 && now < 4 * 60) {
     await once(`learn:${day}`, () => learnRhythm());
-    await once(`behaviour:${day}`, () => learnBehaviour());
+    if (v3State.ready) await once(`behaviour:${day}`, () => learnBehaviour());
     await once(`clean:${day}`, () => housekeeping());
-    await once(`reconcile:${day}`, () => reconcileOnce({ sinceHours: 24 }));
+    if (v3State.ready) await once(`reconcile:${day}`, () => reconcileOnce({ sinceHours: 24 }));
   }
 }

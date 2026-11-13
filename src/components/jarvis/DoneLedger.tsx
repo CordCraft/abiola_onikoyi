@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { ensureV2Tables } from "@/lib/jarvis/v2/setup";
-import { resolvedByLabel } from "@/components/jarvis/SignalCard";
+import { resolvedByLabel } from "@/lib/jarvis/labels";
 
 const TZ = process.env.OWNER_TZ || "Asia/Kuwait";
 

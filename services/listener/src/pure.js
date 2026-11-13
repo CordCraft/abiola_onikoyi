@@ -24,7 +24,7 @@ export function inWindow(nowMin, startMin, endMin) {
 // Whether a signal of this score may interrupt right now. counts = pushes in the last hour / day.
 export function gateDecision(r, { nowMin, score, counts = { hour: 0, day: 0 } }) {
   const quiet = inWindow(nowMin, parseHm(r.quietStart, 22 * 60 + 30), parseHm(r.quietEnd, 6 * 60 + 30));
-  const quietThreshold = Number(r.quietThreshold ?? 80);
+  const quietThreshold = Number(r.quietThreshold ?? 70);
   if (quiet && score < quietThreshold) return { ok: false, reason: 'quiet hours' };
   const family = inWindow(nowMin, parseHm(r.familyStart, 18 * 60 + 30), parseHm(r.familyEnd, 21 * 60 + 30));
   const familyThreshold = Number(r.familyThreshold ?? 70);
@@ -48,6 +48,13 @@ export function digestDue({ now = new Date(), nowMin, r, lastSentAt, waiting }) 
     if (sinceEnd < 45 && last < now.getTime() - sinceEnd * 60e3) return true;
   }
   return !last || now.getTime() - last >= 2 * 3600e3;
+}
+
+// The digest goes out only when the waiting set changed since the last one, or 6 hours passed.
+export const DIGEST_REPEAT_MS = 6 * 3600e3;
+export function digestChanged({ hash, lastHash, lastSentAt, now = Date.now() }) {
+  if (!lastSentAt || !lastHash) return true;
+  return hash !== lastHash || now - new Date(lastSentAt).getTime() >= DIGEST_REPEAT_MS;
 }
 
 export function digestText({ replies = 0, other = 0, closed = 0 }) {
@@ -91,46 +98,70 @@ export function titleSimilarity(a, b) {
   return (2 * shared) / (A.length + B.length);
 }
 
-export const DUPLICATE_THRESHOLD = 0.55;
+export const DUPLICATE_THRESHOLD = 0.7;
+export const SAME_THREAD_MIN_SIMILARITY = 0.4;
 
-// Groups of open tasks that are really one thing (same thread, or similar titles).
-// The oldest (then highest priority) is kept, the rest are the duplicates to merge into it.
+const wordsOf = (s) => String(s || '').split(/[^A-Za-z0-9]+/).filter(Boolean);
+const normWord = (w) => {
+  const l = w.toLowerCase();
+  return l.length > 3 && l.endsWith('s') ? l.slice(0, -1) : l;
+};
+
+// Differing words that carry identity: a number, or a capitalised word that is not just the
+// first word of the title. "Send invoice to Taslim" and "Send invoice to Bola" are different jobs.
+function differsOnNameOrNumber(a, b) {
+  const side = (title) => {
+    const m = new Map();
+    wordsOf(title).forEach((w, i) => {
+      if (STOP.has(w.toLowerCase())) return;
+      const n = normWord(w);
+      const ident = /\d/.test(w) || (i > 0 && /^[A-Z]/.test(w));
+      m.set(n, (m.get(n) || false) || ident);
+    });
+    return m;
+  };
+  const A = side(a);
+  const B = side(b);
+  for (const [n, ident] of A) if (!B.has(n) && ident) return true;
+  for (const [n, ident] of B) if (!A.has(n) && ident) return true;
+  return false;
+}
+
+// Whether two open tasks are really one thing. Same thread needs a loosely similar title;
+// otherwise the titles must be very similar and not differ on a name or a number.
+export function isDuplicateTask(a, b, threshold = DUPLICATE_THRESHOLD) {
+  const sim = titleSimilarity(a.title, b.title);
+  if (a.threadKey && a.threadKey === b.threadKey) return sim >= SAME_THREAD_MIN_SIMILARITY;
+  return sim >= threshold && !differsOnNameOrNumber(a.title, b.title);
+}
+
+// Groups of open tasks that are really one thing. Each task is compared only with the first
+// (oldest) member of a group, never transitively, so a chain of near matches cannot snowball.
 export function findDuplicateGroups(tasks, threshold = DUPLICATE_THRESHOLD) {
-  const parent = tasks.map((_, i) => i);
-  const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
-  for (let i = 0; i < tasks.length; i++) {
-    for (let j = i + 1; j < tasks.length; j++) {
-      const sameThread = tasks[i].threadKey && tasks[i].threadKey === tasks[j].threadKey;
-      if (sameThread || titleSimilarity(tasks[i].title, tasks[j].title) >= threshold) parent[find(i)] = find(j);
-    }
+  const sorted = [...tasks].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  const groups = [];
+  for (const t of sorted) {
+    const g = groups.find((x) => isDuplicateTask(x[0], t, threshold));
+    if (g) g.push(t);
+    else groups.push([t]);
   }
-  const groups = new Map();
-  tasks.forEach((t, i) => {
-    const root = find(i);
-    if (!groups.has(root)) groups.set(root, []);
-    groups.get(root).push(t);
-  });
   const rank = { high: 0, medium: 1, low: 2 };
   const out = [];
-  for (const g of groups.values()) {
+  for (const g of groups) {
     if (g.length < 2) continue;
-    g.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt) || (rank[a.priority] ?? 1) - (rank[b.priority] ?? 1));
-    out.push({ keep: { id: g[0].id, title: g[0].title }, drop: g.slice(1).map((t) => ({ id: t.id, title: t.title })) });
+    const [first, ...rest] = g;
+    rest.sort((a, b) => (rank[a.priority] ?? 1) - (rank[b.priority] ?? 1));
+    out.push({ keep: { id: first.id, title: first.title }, drop: rest.map((t) => ({ id: t.id, title: t.title })) });
   }
   return out;
 }
 
-// Which existing signal a new item on the same thread and kind should merge into: an open
-// one first (newest), else one applied in the last 7 days. Resolved, expired, dismissed and
-// undone signals are never merged into, so genuinely new activity starts a fresh card.
-export function selectMergeTarget(rows, now = new Date()) {
+// Which existing signal a new item on the same thread and kind should merge into: only an
+// open one (newest). Applied, resolved, expired, dismissed and undone signals are never merged
+// into, so genuinely new activity on the thread starts a fresh card that pushes normally.
+export function selectMergeTarget(rows) {
   const byNewest = (a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
-  const open = rows.filter((r) => OPEN_STATUSES.includes(r.status)).sort(byNewest);
-  if (open.length) return open[0];
-  const applied = rows
-    .filter((r) => r.status === 'applied' && now.getTime() - new Date(r.decidedAt || r.updatedAt || 0).getTime() <= 7 * 864e5)
-    .sort(byNewest);
-  return applied[0] || null;
+  return rows.filter((r) => OPEN_STATUSES.includes(r.status)).sort(byNewest)[0] || null;
 }
 
 // ---------- closing ----------
@@ -140,17 +171,32 @@ export const AUTO_PREFIX = '[auto] ';
 export const isAutoMessage = (m) => String(m?.body || '').startsWith(AUTO_PREFIX);
 export const CHECKIN_RE = /check-?\s?in|door ?code|access (code|details|instructions)|lock ?box|wi-?fi|directions|arrival (details|instructions)|house rules|key (pick|handover|collect)/i;
 
-// An outgoing message on the same thread after a reply or follow-up signal's trigger time
-// closes that signal. signal.since is the latest inbound it came from (falls back to createdAt).
-export function selectDeterministicCloses(signals, outgoing) {
+export const MIN_CLOSE_BODY = 12;
+export const isWhatsAppGroup = (threadKey) => /^wa:.*@g\.us$/.test(String(threadKey || ''));
+const substantive = (o) => {
+  const body = String(o.body || '').replace(AUTO_PREFIX, '').trim();
+  return body.length >= MIN_CLOSE_BODY && !isAckOnly(body);
+};
+
+// A substantive outgoing message on the same thread after a reply or follow-up signal's
+// trigger time closes that signal. signal.since is the latest inbound it came from (falls back
+// to createdAt). Not decided here (the model pass handles them): WhatsApp groups, and follow-ups
+// that came from his own promise (signal.ownPromise), where a later message proves little.
+// overrides.reopenedAt(signal) returns the time the owner undid a close, if any: only evidence
+// after it counts.
+export function selectDeterministicCloses(signals, outgoing, { reopenedAt = () => null } = {}) {
   const out = [];
   for (const s of signals) {
     if (!['reply', 'followup'].includes(s.kind) || !s.threadKey) continue;
-    const since = new Date(s.since || s.createdAt).getTime();
+    if (isWhatsAppGroup(s.threadKey) || s.isGroup) continue;
+    if (s.kind === 'followup' && s.ownPromise) continue;
+    const reopened = reopenedAt(s);
+    const since = Math.max(new Date(s.since || s.createdAt).getTime(), reopened ? new Date(reopened).getTime() : 0);
     const checkin = CHECKIN_RE.test(`${s.title || ''} ${s.detail || ''}`);
     const hit = outgoing
       // Hostfully's automated messages are not him replying; they only settle check-in detail items.
       .filter((o) => !isAutoMessage(o) || checkin)
+      .filter((o) => substantive(o))
       .filter((o) => o.threadKey === s.threadKey && new Date(o.occurredAt).getTime() > since)
       .sort((a, b) => new Date(a.occurredAt) - new Date(b.occurredAt))[0];
     if (hit) out.push({ signal: s, outgoing: hit });
@@ -333,16 +379,31 @@ export const nudgeTitle = (who, topic) => `Still waiting on you: ${who || 'someo
 export const STALL_DAYS = 3;
 export const STALL_MAX_PER_DAY = 5;
 
-// Open tasks untouched for 3 days that have no nudge in the last 3 days (any status) and no open nudge.
+export const STALL_MAX_PER_TASK = 2;
+export const STALL_ACTIVE_DAYS = 14;
+
+// Open tasks untouched for 3 days that are overdue or had activity in the last 14 days (the
+// rest have been abandoned quietly), with no nudge in the last 3 days (any status), no open
+// nudge, and fewer than two nudges since the task last changed. tasks: { id, status, updatedAt, dueDate }.
 export function selectStalledTasks(tasks, nudges, { now = Date.now(), alreadyToday = 0 } = {}) {
   const room = Math.max(0, STALL_MAX_PER_DAY - alreadyToday);
   const blocked = new Set();
+  const byTask = new Map();
   for (const n of nudges) {
     const open = OPEN_STATUSES.includes(n.status);
-    if (open || now - new Date(n.createdAt).getTime() < STALL_DAYS * DAY) blocked.add(n.threadKey);
+    const at = new Date(n.createdAt).getTime();
+    if (open || now - at < STALL_DAYS * DAY) blocked.add(n.threadKey);
+    (byTask.get(n.threadKey) || byTask.set(n.threadKey, []).get(n.threadKey)).push(at);
   }
   return tasks
-    .filter((t) => t.status !== 'done' && now - new Date(t.updatedAt).getTime() >= STALL_DAYS * DAY && !blocked.has(`task:${t.id}`))
+    .filter((t) => {
+      if (t.status === 'done') return false;
+      const touched = new Date(t.updatedAt).getTime();
+      if (now - touched < STALL_DAYS * DAY || blocked.has(`task:${t.id}`)) return false;
+      const overdue = t.dueDate && new Date(t.dueDate).getTime() < now;
+      if (!overdue && now - touched > STALL_ACTIVE_DAYS * DAY) return false;
+      return (byTask.get(`task:${t.id}`) || []).filter((at) => at > touched).length < STALL_MAX_PER_TASK;
+    })
     .sort((a, b) => new Date(a.updatedAt) - new Date(b.updatedAt))
     .slice(0, room);
 }

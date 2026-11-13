@@ -7,18 +7,20 @@ process.env.JARVIS_ENCRYPTION_KEY ||= 'test';
 process.env.ANTHROPIC_API_KEY ||= 'test';
 process.env.DATA_DIR ||= './.data';
 
-const { ensureTables, q, one, pool } = await import('../src/db.js');
+const { ensureTables, q, one, pool, probeV3, v3State, getSetting, setSetting } = await import('../src/db.js');
 const { storeInbound } = await import('../src/accounts.js');
 const { triageOnce } = await import('../src/brain.js');
 const { runJobs } = await import('../src/executor.js');
 const { morningPlan, learnRhythm, housekeeping, plannerTick } = await import('../src/planner.js');
 const { flushHeld, mayInterrupt } = await import('../src/push.js');
-const { reconcileOnce, createCleanupCard, expireSignals } = await import('../src/reconcile.js');
+const { reconcileOnce, createCleanupCard, cleanupTick, expireSignals, reconcileFromTriage } = await import('../src/reconcile.js');
 const { digestTick, waitingCounts } = await import('../src/digest.js');
 const { eveningCloseout } = await import('../src/planner.js');
 
 await ensureTables();
 await ensureTables(); // idempotent
+assert.equal(await probeV3(), true, 'the test database has every v3 column');
+assert.equal(v3State.ready, true);
 
 const now = new Date();
 const waId = await storeInbound({ source: 'whatsapp', externalId: 'wa:T1:2348000000000@s.whatsapp.net', threadKey: 'wa:2348000000000@s.whatsapp.net', sender: '2348000000000', senderName: 'Taslim', body: 'Can we meet Tuesday 10am at your office to close the PEL bid? Also please send the doc by Friday.', occurredAt: now });
@@ -134,8 +136,18 @@ const t1 = await createTask({ title: 'Prepare Q4 board pack', threadKey: 'th-boa
 const t2 = await createTask({ title: 'Q4 board pack prepare please' });
 assert.equal(t2.taskId, t1.taskId);
 assert.equal(t2.linked, true);
-const t3 = await createTask({ title: 'Totally different words here', threadKey: 'th-board' });
-assert.equal(t3.taskId, t1.taskId, 'same thread key links');
+const t3 = await createTask({ title: 'Board pack Q4 numbers', threadKey: 'th-board' });
+assert.equal(t3.taskId, t1.taskId, 'same thread key and a loosely similar title links');
+const t3b = await createTask({ title: 'Totally different words here', threadKey: 'th-board' });
+assert.notEqual(t3b.taskId, t1.taskId, 'same thread alone is not enough: the title must be at least 0.4 similar');
+const n1a = await createTask({ title: 'Send invoice to Taslim' });
+const n1b = await createTask({ title: 'Send invoice to Bola' });
+assert.notEqual(n1b.taskId, n1a.taskId, 'a different capitalised name is a different task');
+const n2a = await createTask({ title: 'Pay supplier invoice 2041 this week' });
+const n2b = await createTask({ title: 'Pay supplier invoice 2042 this week' });
+assert.notEqual(n2b.taskId, n2a.taskId, 'a different number is a different task');
+const n3b = await createTask({ title: 'Send the invoice to Taslim' });
+assert.equal(n3b.taskId, n1a.taskId, 'same words still link');
 const t4 = await createTask({ title: 'Book flight to Dhahran' });
 assert.notEqual(t4.taskId, t1.taskId);
 
@@ -146,11 +158,12 @@ await ins('w2', 'Saudi Eagles water delivery', { age: 40 });
 await ins('w3', 'Pay Saudi Eagles water', { age: 30 });
 await ins('agr', 'Send draft agreement to Upstream group');
 await ins('lnk', 'Confirm invoice 2041 amount', { sig: replyBefore.id });
+await q(`INSERT INTO "JarvisSignal" (id, kind, title, status, "expiresAt", "updatedAt") VALUES ('gx','event','Pre-card expired event','new', now() - interval '1 hour', now())`);
 closeIds = ['agr'];
 const person0 = (await one(`SELECT "openLoops" FROM "JarvisPerson" WHERE key = 'cfo@client.com'`)).openLoops;
 
 // The owner answered the CFO (outgoing, after the inbound), not yet triaged.
-const outId = await storeInbound({ source: 'gmail', externalId: 'gmail:me@x.com:SENT1', threadKey: 'gmail:me@x.com:TH1', direction: 'out', sender: 'me@x.com', recipients: 'Client CFO <cfo@client.com>', subject: 'Re: Invoice 2041', body: 'Confirmed, the amount on invoice 2041 is correct.', occurredAt: new Date(Date.now() + 60e3) });
+const outId = await storeInbound({ source: 'gmail', externalId: 'gmail:me@x.com:SENT1', threadKey: 'gmail:me@x.com:TH1', direction: 'out', sender: 'me@x.com', recipients: 'Client CFO <cfo@client.com>', subject: 'Re: Invoice 2041', body: 'Confirmed, the amount on invoice 2041 is correct.', occurredAt: new Date(t0.getTime() + 1) });
 assert.ok(outId);
 
 // Before the clean-up is decided, reconcile does nothing.
@@ -201,14 +214,53 @@ for (const id of ['agr', 'lnk', 'w2', 'w3']) assert.equal((await one(`SELECT sta
 assert.equal((await one(`SELECT "openLoops" FROM "JarvisPerson" WHERE key = 'cfo@client.com'`)).openLoops, person0);
 assert.equal((await one(`SELECT count(*)::int AS n FROM "JarvisLedger" WHERE "signalId" = $1`, [replyBefore.id])).n, 0, 'ledger row removed on undo');
 
-// Deterministic close through the triage hook: triaging the outgoing mail closes the reply and its task.
+// Undo sticks, and the gate shuts again: nothing from before the card is closed or expired.
+const gate1 = await getSetting('v3_cleanup_proposed', null);
+assert.equal(gate1.approvedAt, null, 'undo of the clean-up shuts the gate');
+closeIds = ['agr'];
+const afterUndo = await reconcileOnce({});
+assert.equal(afterUndo.deterministic, 0, 'shut gate: nothing from before the card is closed');
+assert.equal(afterUndo.model ?? 0, 0);
+assert.equal((await one(`SELECT status FROM "JarvisSignal" WHERE id = $1`, [replyBefore.id])).status, 'new', 'reply stays open although he already answered it (undone)');
+assert.equal((await one(`SELECT status FROM "JarvisTask" WHERE id = 'agr'`)).status, 'todo');
+assert.equal(await expireSignals(), 0, 'expiry waits for the owner too');
+assert.equal((await one(`SELECT status FROM "JarvisSignal" WHERE id = 'gx'`)).status, 'new');
+await housekeeping();
+assert.equal((await one(`SELECT status FROM "JarvisSignal" WHERE id = 'gx'`)).status, 'new', 'housekeeping respects the gate');
+
+// A dismissed card is rebuilt no sooner than 3 days later.
+await q(`UPDATE "JarvisSignal" SET status = 'dismissed', "decidedAt" = now() - interval '1 day', "updatedAt" = now() - interval '1 day' WHERE id = $1`, [card.id]);
+assert.equal(await cleanupTick(), null, 'dismissed yesterday: too soon');
+assert.equal((await one(`SELECT count(*)::int AS n FROM "JarvisSignal" WHERE action->>'type' = 'cleanup'`)).n, 1);
+await q(`UPDATE "JarvisSignal" SET "decidedAt" = now() - interval '4 days', "updatedAt" = now() - interval '4 days' WHERE id = $1`, [card.id]);
 closeIds = [];
+const card2 = await cleanupTick();
+assert.ok(card2 && card2.id !== card.id, 'a fresh proposal after 3 days');
+assert.deepEqual(card2.proposal.close, [], 'the undone items are not proposed again without new evidence');
+assert.equal((await getSetting('v3_cleanup_proposed', null)).cardId, card2.id);
+assert.equal((await one(`SELECT status FROM "JarvisSignal" WHERE id = 'gx'`)).status, 'new');
+await q(`INSERT INTO "JarvisJob" (id, kind, payload) VALUES ('cl4', 'apply_signal', $1)`, [JSON.stringify({ signalId: card2.id })]);
+await runJobs();
+assert.equal((await one(`SELECT status FROM "JarvisSignal" WHERE id = $1`, [card2.id])).status, 'applied');
+assert.ok((await getSetting('v3_cleanup_proposed', null)).approvedAt, 'approval opens the gate');
+
+// Gate open, but what the owner undid stays undone until newer evidence arrives.
+closeIds = ['agr'];
+const stuck = await reconcileOnce({});
+assert.equal(stuck.deterministic, 0);
+assert.equal(stuck.model, 0);
+assert.equal((await one(`SELECT status FROM "JarvisSignal" WHERE id = $1`, [replyBefore.id])).status, 'new', 'undone reply is not closed by the old outgoing mail');
+assert.equal((await one(`SELECT status FROM "JarvisTask" WHERE id = 'agr'`)).status, 'todo', 'undone task is not offered to the model again');
+
+// New evidence after the undo: he writes again. Triage of the outgoing mail closes the reply, and the model closes the task.
+await storeInbound({ source: 'gmail', externalId: 'gmail:me@x.com:SENT2', threadKey: 'gmail:me@x.com:TH1', direction: 'out', sender: 'me@x.com', recipients: 'Client CFO <cfo@client.com>', subject: 'Re: Invoice 2041', body: 'Confirmed again, the amount on invoice 2041 is correct.', occurredAt: new Date() });
+await storeInbound({ source: 'whatsapp', externalId: 'wa:SENT3:up@g.us', threadKey: 'wa:up@g.us', direction: 'out', sender: 'me', body: 'Here is the draft agreement for the Upstream group', isGroup: true, occurredAt: new Date() });
 closeCalls = 0;
 await triageOnce();
 const closedSig = await one(`SELECT status, "resolvedBy", resolution FROM "JarvisSignal" WHERE id = $1`, [replyBefore.id]);
 assert.equal(closedSig.status, 'resolved');
 assert.equal(closedSig.resolvedBy, 'reply');
-assert.match(closedSig.resolution, /Confirmed, the amount/);
+assert.match(closedSig.resolution, /Confirmed again, the amount/);
 const lnk = await one(`SELECT status, "closedBy" FROM "JarvisTask" WHERE id = 'lnk'`);
 assert.equal(lnk.status, 'done');
 assert.equal(lnk.closedBy, 'reply');
@@ -216,34 +268,43 @@ const led = await one(`SELECT * FROM "JarvisLedger" WHERE "signalId" = $1`, [rep
 assert.equal(led.closedBy, 'reply');
 assert.equal(led.taskId, 'lnk');
 assert.ok(closeCalls >= 1, 'model close pass ran after a batch with outgoing mail');
+assert.equal((await one(`SELECT "closedBy" FROM "JarvisTask" WHERE id = 'agr'`)).closedBy, 'reconcile', 'model closes the task once newer evidence exists');
+assert.ok(await one(`SELECT id FROM "JarvisLedger" WHERE "taskId" = 'agr' AND "closedBy" = 'reconcile'`));
 assert.equal((await one(`SELECT "openLoops" FROM "JarvisPerson" WHERE key = 'cfo@client.com'`)).openLoops, person0 - 1);
 assert.ok((await one(`SELECT "lastOutboundAt" FROM "JarvisPerson" WHERE key = 'cfo@client.com'`)).lastOutboundAt, 'lastOutboundAt written for outgoing mail');
-// Undo of a reply close brings it back.
+// Triage-triggered reconcile is debounced, and the model pass skips when nothing new was written.
+assert.deepEqual(await reconcileFromTriage(), { skipped: 'debounced' });
+const callsNow = closeCalls;
+const idle = await reconcileOnce({});
+assert.equal(closeCalls, callsNow, 'no model call without a new outgoing message');
+assert.equal(idle.modelSkipped, 'no new outgoing message');
+closeIds = [];
+// Undo of a reply close brings it back, and it stays back.
 await q(`INSERT INTO "JarvisJob" (id, kind, payload) VALUES ('cl3', 'undo_signal', $1)`, [JSON.stringify({ signalId: replyBefore.id })]);
 await runJobs();
 assert.notEqual((await one(`SELECT status FROM "JarvisSignal" WHERE id = $1`, [replyBefore.id])).status, 'resolved');
 assert.equal((await one(`SELECT status FROM "JarvisTask" WHERE id = 'lnk'`)).status, 'todo');
 await reconcileOnce({});
-assert.equal((await one(`SELECT status FROM "JarvisSignal" WHERE id = $1`, [replyBefore.id])).status, 'resolved');
-
-// Model close of a task from messages (accepts the offered id, ignores the invented one).
-closeIds = ['agr'];
-const m = await reconcileOnce({ sinceHours: 24 });
-assert.equal(m.model, 1);
-assert.equal((await one(`SELECT "closedBy" FROM "JarvisTask" WHERE id = 'agr'`)).closedBy, 'reconcile');
-assert.ok(await one(`SELECT id FROM "JarvisLedger" WHERE "taskId" = 'agr' AND "closedBy" = 'reconcile'`));
-closeIds = [];
+assert.notEqual((await one(`SELECT status FROM "JarvisSignal" WHERE id = $1`, [replyBefore.id])).status, 'resolved', 'undo sticks');
+assert.equal((await one(`SELECT status FROM "JarvisTask" WHERE id = 'lnk'`)).status, 'todo');
 
 // Expiry and stale-task nudges.
 await q(`INSERT INTO "JarvisSignal" (id, kind, title, status, "expiresAt", "updatedAt") VALUES ('exp1','event','Guest checks out','new', now() - interval '1 hour', now())`);
-await q(`INSERT INTO "JarvisSignal" (id, kind, title, status, "updatedAt") VALUES ('stale1','reply','Old question','pushed', now() - interval '6 days')`);
-await q(`INSERT INTO "JarvisSignal" (id, kind, title, status, "updatedAt") VALUES ('fresh1','reply','Recent question','pushed', now() - interval '1 day')`);
+await q(`INSERT INTO "JarvisSignal" (id, kind, title, status, "createdAt", "updatedAt") VALUES ('stale1','reply','Old question','pushed', now() - interval '6 days', now())`);
+await q(`INSERT INTO "JarvisSignal" (id, kind, title, status, "createdAt", "updatedAt") VALUES ('fresh1','reply','Recent question','pushed', now() - interval '1 day', now() - interval '6 days')`);
+// Snoozed into the future: never expired. A thread with a recent inbound message is not stale either (updatedAt does not count).
+await q(`INSERT INTO "JarvisSignal" (id, kind, title, status, "createdAt", "updatedAt", "snoozeUntil", "expiresAt") VALUES ('snz1','reply','Snoozed question','snoozed', now() - interval '6 days', now() - interval '6 days', now() + interval '1 day', now() - interval '1 hour')`);
+await q(`INSERT INTO "JarvisSignal" (id, kind, title, status, "threadKey", "createdAt", "updatedAt") VALUES ('live1','reply','Active thread','pushed','gmail:me@x.com:LIVE', now() - interval '6 days', now() - interval '6 days')`);
+await storeInbound({ source: 'gmail', externalId: 'gmail:me@x.com:LIVE1', threadKey: 'gmail:me@x.com:LIVE', sender: 'x@y.com', body: 'Still waiting on this, any news at all?', occurredAt: new Date() });
 await q(`INSERT INTO "JarvisTask" (id, title, status, priority, "dueDate", "createdAt", "updatedAt") VALUES ('old1','Renew trade licence','todo','medium', now() - interval '10 days', now() - interval '20 days', now() - interval '10 days')`);
 await housekeeping();
 await housekeeping();
 assert.equal((await one(`SELECT status FROM "JarvisSignal" WHERE id = 'exp1'`)).status, 'expired');
 assert.equal((await one(`SELECT "resolvedBy" FROM "JarvisSignal" WHERE id = 'stale1'`)).resolvedBy, 'expired');
 assert.equal((await one(`SELECT status FROM "JarvisSignal" WHERE id = 'fresh1'`)).status, 'pushed');
+assert.equal((await one(`SELECT status FROM "JarvisSignal" WHERE id = 'snz1'`)).status, 'snoozed', 'snoozed into the future is never expired');
+assert.equal((await one(`SELECT status FROM "JarvisSignal" WHERE id = 'live1'`)).status, 'pushed', 'recent inbound on the thread keeps it alive');
+assert.equal((await one(`SELECT status FROM "JarvisSignal" WHERE id = 'gx'`)).status, 'expired', 'after approval the pre-card item expires');
 assert.ok(await one(`SELECT id FROM "JarvisLedger" WHERE "signalId" = 'exp1' AND "closedBy" = 'expired'`));
 assert.equal((await q(`SELECT id FROM "JarvisSignal" WHERE kind = 'nudge' AND "threadKey" = 'task:old1'`)).length, 1, 'one still-relevant card per task');
 assert.equal((await one(`SELECT status FROM "JarvisTask" WHERE id = 'old1'`)).status, 'todo', 'tasks are never deleted');
@@ -262,7 +323,6 @@ const { nudgeOnce } = await import('../src/nudger.js');
 const { nudgeStalledTasks } = await import('../src/reconcile.js');
 const { learnBehaviour } = await import('../src/learn.js');
 const { adviseOnce, weeklyAdvice } = await import('../src/advisor.js');
-const { setSetting, getSetting } = await import('../src/db.js');
 const v3fake = globalThis.__jarvisFakeStructured;
 let nudgeCalls = 0;
 let triageCalls = 0;
@@ -326,10 +386,27 @@ const n4 = await nudgeOnce();
 assert.equal(n4.created, 1, 'an automated message is not him replying');
 assert.equal((await one(`SELECT action FROM "JarvisSignal" WHERE "threadKey" = 'hostfully:TH-N'`)).action.payload.channel, 'hostfully');
 
+// A card dismissed long before the latest message does not hide it just because its row was touched since.
+await storeInbound({ source: 'gmail', externalId: 'gmail:me@x.com:N6', threadKey: 'gmail:me@x.com:THN6', sender: 'tola@acme.com', senderName: 'Najeeb Tola', subject: 'Contract', body: 'Hi Abiola, can you look at the contract draft today please?', occurredAt: ago(10) });
+await q(`INSERT INTO "JarvisSignal" (id, kind, title, status, "threadKey", "decidedAt", "updatedAt") VALUES ('dd6','reply','Old decision','dismissed','gmail:me@x.com:THN6', now() - interval '3 days', now())`);
+const n5 = await nudgeOnce();
+assert.equal(n5.created, 1, 'decided before the message, so it is raised again');
+
 // Stalled tasks: once per 3 days.
 await q(`INSERT INTO "JarvisTask" (id, title, status, priority, "createdAt", "updatedAt") VALUES ('stall1','Draft the supplier terms','todo','medium', now() - interval '6 days', now() - interval '4 days')`);
 assert.equal(await nudgeStalledTasks(), 1);
 assert.equal(await nudgeStalledTasks(), 0);
+// A second reminder after 3 days, never a third until the task changes.
+await q(`UPDATE "JarvisSignal" SET "createdAt" = now() - interval '4 days', status = 'dismissed' WHERE "threadKey" = 'task:stall1'`);
+assert.equal(await nudgeStalledTasks(), 1, 'second nudge after 3 days');
+await q(`UPDATE "JarvisSignal" SET "createdAt" = now() - interval '4 days', status = 'dismissed' WHERE "threadKey" = 'task:stall1'`);
+assert.equal(await nudgeStalledTasks(), 0, 'at most two nudges per task');
+await q(`UPDATE "JarvisTask" SET "updatedAt" = now() - interval '3 days 1 hour' WHERE id = 'stall1'`);
+assert.equal(await nudgeStalledTasks(), 1, 'a change to the task restarts the count');
+// Long-abandoned tasks (idle > 14 days, not overdue) get no reminder.
+await q(`INSERT INTO "JarvisTask" (id, title, status, priority, "createdAt", "updatedAt") VALUES ('abandoned1','Learn the harp','todo','low', now() - interval '60 days', now() - interval '30 days')`);
+assert.equal(await nudgeStalledTasks(), 0);
+assert.equal(await one(`SELECT id FROM "JarvisSignal" WHERE "threadKey" = 'task:abandoned1'`), null);
 const pick = await one(`SELECT title, kind FROM "JarvisSignal" WHERE "threadKey" = 'task:stall1'`);
 assert.equal(pick.kind, 'nudge');
 assert.equal(pick.title, 'Pick this up? Draft the supplier terms');
@@ -426,6 +503,81 @@ assert.equal((await one(`SELECT status FROM "JarvisSignal" WHERE id = 'hfb'`)).s
 await storeInbound({ source: 'hostfully', externalId: 'hostfully:D2', threadKey: 'hostfully:TH-D', direction: 'out', sender: 'host', body: 'Late checkout at 1pm is fine.', occurredAt: new Date(later.getTime() + 60e3) });
 await reconcileOnce({ model: false });
 assert.equal((await one(`SELECT status FROM "JarvisSignal" WHERE id = 'hfb'`)).status, 'resolved');
+
+// Deterministic close ignores acknowledgements, short replies, WhatsApp groups and his own promises.
+const tlater = (ms) => new Date(Date.now() + ms);
+await q(`INSERT INTO "JarvisSignal" (id, kind, title, status, "threadKey", "updatedAt") VALUES ('ack1','reply','Tola wants the figures','new','wa:5550001@s.whatsapp.net', now()), ('grp1','reply','Group asks for the deck','new','wa:77@g.us', now())`);
+await storeInbound({ source: 'whatsapp', externalId: 'wa:ACK1', threadKey: 'wa:5550001@s.whatsapp.net', direction: 'out', sender: 'me', body: 'ok thanks', occurredAt: tlater(1000) });
+await storeInbound({ source: 'whatsapp', externalId: 'wa:ACK2', threadKey: 'wa:5550001@s.whatsapp.net', direction: 'out', sender: 'me', body: 'Sent!', occurredAt: tlater(2000) });
+await storeInbound({ source: 'whatsapp', externalId: 'wa:GRP1', threadKey: 'wa:77@g.us', direction: 'out', sender: 'me', body: 'Here is the deck for everyone in the group', isGroup: true, occurredAt: tlater(1000) });
+const ownOut = await storeInbound({ source: 'whatsapp', externalId: 'wa:OWN0', threadKey: 'wa:5550002@s.whatsapp.net', direction: 'out', sender: 'me', body: 'I will send you the deck on Monday', occurredAt: tlater(0) });
+await q(`INSERT INTO "JarvisSignal" (id, kind, title, status, "threadKey", "inboundIds", "updatedAt") VALUES ('fu1','followup','Send Ola the deck','new','wa:5550002@s.whatsapp.net', $1, now())`, [JSON.stringify([ownOut])]);
+await storeInbound({ source: 'whatsapp', externalId: 'wa:OWN1', threadKey: 'wa:5550002@s.whatsapp.net', direction: 'out', sender: 'me', body: 'Here is the deck as promised, let me know', occurredAt: tlater(3000) });
+await reconcileOnce({ model: false });
+assert.equal((await one(`SELECT status FROM "JarvisSignal" WHERE id = 'ack1'`)).status, 'new', 'acknowledgements and short replies do not close');
+assert.equal((await one(`SELECT status FROM "JarvisSignal" WHERE id = 'grp1'`)).status, 'new', 'WhatsApp groups are left to the model');
+assert.equal((await one(`SELECT status FROM "JarvisSignal" WHERE id = 'fu1'`)).status, 'new', 'his own promise is left to the model');
+await storeInbound({ source: 'whatsapp', externalId: 'wa:ACK3', threadKey: 'wa:5550001@s.whatsapp.net', direction: 'out', sender: 'me', body: 'I will send the figures tomorrow morning', occurredAt: tlater(4000) });
+await reconcileOnce({ model: false });
+assert.equal((await one(`SELECT status FROM "JarvisSignal" WHERE id = 'ack1'`)).status, 'resolved', 'a substantive reply closes');
+
+// Fresh signal when new activity arrives on a thread whose card is already applied or resolved.
+const sameThread = async (id, threadKey, status) => {
+  await q(`INSERT INTO "JarvisSignal" (id, kind, title, status, "threadKey", "decidedAt", "resolvedAt", "updatedAt") VALUES ($1,'reply','Earlier question',$2,$3, now(), now(), now())`, [id, status, threadKey]);
+};
+await sameThread('mg1', 'gmail:me@x.com:THR1', 'resolved');
+await sameThread('mg2', 'gmail:me@x.com:THR2', 'applied');
+await sameThread('mg3', 'gmail:me@x.com:THR3', 'expired');
+await sameThread('mg4', 'gmail:me@x.com:THR4', 'pushed');
+const mIds = [];
+for (const [i, th] of ['THR1', 'THR2', 'THR3', 'THR4'].entries()) {
+  mIds.push(await storeInbound({ source: 'gmail', externalId: `gmail:me@x.com:MG${i}`, threadKey: `gmail:me@x.com:${th}`, sender: `p${i}@y.com`, senderName: `Pat ${i}`, subject: 'Question', body: `Another question number ${i}, can you answer today please?`, occurredAt: new Date() }));
+}
+tripleItems = mIds.map((id, i) => ({ inbound_ids: [id], kind: 'reply', title: `New question ${i}`, detail: 'Needs an answer.', why: 'Client', score: 70, project_id: '', same_as_signal_id: '', due_at: '', expires_at: '', person: { key: `p${i}@y.com`, name: `Pat ${i}`, relation: 'client', org: '' }, calendar: noCal, task: noTask, reply: { text: 'On it.' } }));
+await triageOnce();
+tripleItems = [];
+for (const [id, th] of [['mg1', 'THR1'], ['mg2', 'THR2'], ['mg3', 'THR3']]) {
+  const rows = await q(`SELECT id, status FROM "JarvisSignal" WHERE "threadKey" = $1 ORDER BY "createdAt"`, [`gmail:me@x.com:${th}`]);
+  assert.equal(rows.length, 2, `${th}: a finished card is not merged into`);
+  assert.equal(rows[0].id, id);
+  assert.ok(['new', 'pushed'].includes(rows[1].status), 'the new card is open');
+}
+assert.equal((await q(`SELECT id FROM "JarvisSignal" WHERE "threadKey" = 'gmail:me@x.com:THR4'`)).length, 1, 'an open card is still merged into');
+assert.equal((await one(`SELECT status FROM "JarvisSignal" WHERE id = 'mg1'`)).status, 'resolved');
+
+// A clean-up card is applied only to items untouched since it was made; closing a task keeps its status for undo.
+await q(`INSERT INTO "JarvisTask" (id, title, status, priority, "createdAt", "updatedAt") VALUES ('c1','Settle the generator bill','doing','medium', now(), now()), ('c2','Renew the gym membership','todo','medium', now(), now()), ('c3','Water the office plants','todo','medium', now(), now())`);
+await q(`UPDATE "JarvisTask" SET recurrence = 'weekly' WHERE id = 'c3'`);
+closeIds = ['c1', 'c2', 'c3'];
+const card3 = await createCleanupCard({ force: true });
+assert.deepEqual(card3.proposal.close.map((c) => c.id).sort(), ['c1', 'c2'], 'recurring tasks are never proposed');
+await q(`UPDATE "JarvisTask" SET title = 'Renew the gym membership (annual)', "updatedAt" = now() WHERE id = 'c2'`);
+await q(`INSERT INTO "JarvisJob" (id, kind, payload) VALUES ('cl5', 'apply_signal', $1)`, [JSON.stringify({ signalId: card3.id })]);
+await runJobs();
+assert.equal((await one(`SELECT status FROM "JarvisTask" WHERE id = 'c1'`)).status, 'done');
+assert.equal((await one(`SELECT status FROM "JarvisTask" WHERE id = 'c2'`)).status, 'todo', 'changed since the card was made: skipped');
+const res3 = (await one(`SELECT result FROM "JarvisSignal" WHERE id = $1`, [card3.id])).result;
+assert.deepEqual(res3.cleanup.skipped, ['c2']);
+await q(`INSERT INTO "JarvisJob" (id, kind, payload) VALUES ('cl6', 'undo_signal', $1)`, [JSON.stringify({ signalId: card3.id })]);
+await runJobs();
+assert.equal((await one(`SELECT status FROM "JarvisTask" WHERE id = 'c1'`)).status, 'doing', 'undo restores the previous status, not just todo');
+closeIds = [];
+// A recurring task is never closed by reconcile either.
+closeIds = ['c3'];
+await setSetting('v3_cleanup_proposed', { ...(await getSetting('v3_cleanup_proposed', {})), approvedAt: new Date().toISOString() });
+await storeInbound({ source: 'whatsapp', externalId: 'wa:REC1', threadKey: 'wa:5550009@s.whatsapp.net', direction: 'out', sender: 'me', body: 'Watered the office plants this morning', occurredAt: new Date() });
+await reconcileOnce({});
+assert.equal((await one(`SELECT status FROM "JarvisTask" WHERE id = 'c3'`)).status, 'todo', 'recurring tasks are skipped');
+closeIds = [];
+
+// A signal closed while its tap was queued is cancelled, not run.
+await q(`INSERT INTO "JarvisSignal" (id, kind, title, status, action, "updatedAt") VALUES ('late1','task','Closed meanwhile','resolved', '{"type":"create_task","payload":{"title":"Should not appear"}}', now())`);
+await q(`INSERT INTO "JarvisJob" (id, kind, payload) VALUES ('lj1', 'apply_signal', $1)`, [JSON.stringify({ signalId: 'late1' })]);
+await runJobs();
+const lj = await one(`SELECT status, error FROM "JarvisJob" WHERE id = 'lj1'`);
+assert.equal(lj.status, 'cancelled');
+assert.match(lj.error, /already resolved/);
+assert.equal(await one(`SELECT id FROM "JarvisTask" WHERE title = 'Should not appear'`), null);
 
 console.log('INTEGRATION OK');
 await pool.end();

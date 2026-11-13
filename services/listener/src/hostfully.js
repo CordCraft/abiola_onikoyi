@@ -205,8 +205,11 @@ export async function sendHostfullyMessage({ threadKey, text }, deps = {}) {
   const client = deps.client || makeClient();
   const uid = String(threadKey || '').replace(/^hostfully:/, '');
   if (!uid || !text || !String(text).trim()) throw new Error('hostfully send needs a threadKey and text');
-  let msgs = await client.listMessages({ threadUid: uid }, 1);
-  if (!msgs.length) msgs = await client.listMessages({ leadUid: uid }, 1);
+  // Only messages that really belong to this thread or lead: a filter the API ignored must never
+  // let a reply go to the wrong guest.
+  const belongs = (m) => m && (m.threadUid === uid || m.leadUid === uid);
+  let msgs = (await client.listMessages({ threadUid: uid }, 1)).filter(belongs);
+  if (!msgs.length) msgs = (await client.listMessages({ leadUid: uid }, 1)).filter(belongs);
   const ref = msgs[0];
   if (!ref) throw new Error(`Hostfully thread ${uid} not found`);
   const channel = String(ref.type || '').toUpperCase();

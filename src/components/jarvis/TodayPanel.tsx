@@ -64,7 +64,13 @@ export async function TodayPanel() {
     listAllEvents(from, endOfDay).catch(() => ({ events: [], connected: 0, errors: [] as string[] })),
   ]);
   const isCleanup = (s: { action: unknown }) => (s.action as { type?: string } | null)?.type === "cleanup";
-  const plan = plans.find((p) => !isCleanup(p)) ?? null;
+  // Today's plan is the morning planner's card (source "planner", a plan_blocks action carrying the plan),
+  // never the weekly ideas card or the clean-up card.
+  const isMorningPlan = (s: { source: string | null; action: unknown }) => {
+    const a = s.action as { type?: string; payload?: { plan?: unknown } } | null;
+    return s.source === "planner" && a?.type === "plan_blocks" && !!a.payload?.plan;
+  };
+  const plan = plans.find(isMorningPlan) ?? null;
   const cleanup = cleanups.find(isCleanup) ?? null;
   const advice = parseAdvice(adviceRow?.value);
   const planPayload = (plan?.action as { payload?: { plan?: { summary?: string; top_moves?: { title: string; why: string }[]; stop_at?: string; blocks?: { start: string; end: string; title: string; kind: string }[] } } } | null)?.payload?.plan;

@@ -1,13 +1,13 @@
 import { config } from './config.js';
-import { q, one, newId, getSetting } from './db.js';
+import { q, one, newId, getSetting, v3State } from './db.js';
 import { structured } from './llm.js';
 import { goalsAndProjects, people, openSignals, upcoming, fmtEvents, rhythm, behaviour, OWNER_BRIEF } from './context.js';
 import { clip } from './util.js';
 import { pushSignal } from './push.js';
 import { enqueue } from './jobs.js';
-import { selectMergeTarget, personKeysForOutgoing, hostfullyHealthy, adjustScore, behaviourText } from './pure.js';
+import { selectMergeTarget, OPEN_STATUSES, personKeysForOutgoing, hostfullyHealthy, adjustScore, behaviourText } from './pure.js';
 import { isAirbnbGuestNotification } from './hostfully.js';
-import { reconcileOnce } from './reconcile.js';
+import { reconcileFromTriage } from './reconcile.js';
 
 // The triage brain: reads new messages in small batches, finds what matters, and turns it
 // into signals with one-tap actions. The model proposes; this code decides what may run
@@ -207,7 +207,7 @@ ${behaviourText(learned)}`] : []),
   await touchPeople(fresh);
   // Anything the owner wrote may have answered an open item: close those loops now.
   if (fresh.some((m) => m.direction === 'out')) {
-    await reconcileOnce({ sinceHours: 6 }).catch((e) => console.error('[brain] reconcile', e.message));
+    await reconcileFromTriage().catch((e) => console.error('[brain] reconcile', e.message));
   }
   return batch.length;
 }
@@ -267,7 +267,8 @@ export async function saveSignal(item, ids, byId, r, learned = null) {
     const existing = await one(`SELECT id, status, "inboundIds" FROM "JarvisSignal" WHERE id = $1`, [item.same_as_signal_id]);
     // The model matched something already finished: nothing new to raise.
     if (existing && existing.status === 'resolved') return null;
-    if (existing) {
+    // Only an open signal is refreshed; anything else falls through to a fresh card.
+    if (existing && OPEN_STATUSES.includes(existing.status)) {
       const merged = [...new Set([...(existing.inboundIds || []), ...ids])];
       await q(
         `UPDATE "JarvisSignal" SET detail = $2, score = GREATEST(score, $3), "inboundIds" = $4, action = COALESCE($5, action), "updatedAt" = now() WHERE id = $1`,
@@ -280,31 +281,42 @@ export async function saveSignal(item, ids, byId, r, learned = null) {
   const threadKey = first.threadKey || null;
   const expiresAt = validIso(item.expires_at) ? new Date(item.expires_at) : null;
 
-  // Same thread, same kind: add to the existing card instead of making a second one.
-  if (threadKey) {
+  // Same thread, same kind, still open: add to the existing card instead of making a second one.
+  // A finished card (applied, resolved, expired, dismissed) is never merged into: new activity
+  // on the thread gets a fresh card that pushes normally.
+  if (threadKey && v3State.ready) {
     const rows = await q(
-      `SELECT id, status, "inboundIds", "updatedAt", "decidedAt" FROM "JarvisSignal" WHERE "threadKey" = $1 AND kind = $2 AND "createdAt" > now() - interval '30 days'`,
-      [threadKey, item.kind],
+      `SELECT id, status, "inboundIds", "updatedAt" FROM "JarvisSignal" WHERE "threadKey" = $1 AND kind = $2 AND status = ANY($3) AND "createdAt" > now() - interval '30 days'`,
+      [threadKey, item.kind, OPEN_STATUSES],
     );
     const target = selectMergeTarget(rows);
     if (target) {
       const merged = [...new Set([...(target.inboundIds || []), ...ids])];
-      const open = ['new', 'pushed', 'snoozed', 'approved'].includes(target.status);
       await q(
-        `UPDATE "JarvisSignal" SET detail = $2, score = GREATEST(score, $3), "inboundIds" = $4, action = CASE WHEN $6 THEN COALESCE($5, action) ELSE action END,
-           "expiresAt" = COALESCE($7, "expiresAt"), "updatedAt" = now() WHERE id = $1`,
-        [target.id, item.detail, score, JSON.stringify(merged), action ? JSON.stringify(action) : null, open, expiresAt],
+        `UPDATE "JarvisSignal" SET detail = $2, score = GREATEST(score, $3), "inboundIds" = $4, action = COALESCE($5, action),
+           "expiresAt" = COALESCE($6, "expiresAt"), "updatedAt" = now() WHERE id = $1`,
+        [target.id, item.detail, score, JSON.stringify(merged), action ? JSON.stringify(action) : null, expiresAt],
       );
       return { id: target.id, merged: true };
     }
   }
 
   const id = newId();
-  await q(
-    `INSERT INTO "JarvisSignal" (id, kind, title, detail, why, score, source, "inboundIds", "projectId", "personKey", action, autonomy, status, "dueAt", "threadKey", "expiresAt", "updatedAt")
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'new',$13,$14,$15, now())`,
-    [id, item.kind, clip(item.title, 140), item.detail, item.why, score, first.source, JSON.stringify(ids), projectId, item.person.key || null, action ? JSON.stringify(action) : null, autonomy, validIso(item.due_at) ? new Date(item.due_at) : null, threadKey, expiresAt],
-  );
+  const base = [id, item.kind, clip(item.title, 140), item.detail, item.why, score, first.source, JSON.stringify(ids), projectId, item.person.key || null, action ? JSON.stringify(action) : null, autonomy, validIso(item.due_at) ? new Date(item.due_at) : null];
+  if (v3State.ready) {
+    await q(
+      `INSERT INTO "JarvisSignal" (id, kind, title, detail, why, score, source, "inboundIds", "projectId", "personKey", action, autonomy, status, "dueAt", "threadKey", "expiresAt", "updatedAt")
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'new',$13,$14,$15, now())`,
+      [...base, threadKey, expiresAt],
+    );
+  } else {
+    // The v3 columns are not there yet (the site adds them): save the card the old way.
+    await q(
+      `INSERT INTO "JarvisSignal" (id, kind, title, detail, why, score, source, "inboundIds", "projectId", "personKey", action, autonomy, status, "dueAt", "updatedAt")
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'new',$13, now())`,
+      base,
+    );
+  }
 
   if (autonomy === 'auto' && action) {
     await enqueue('apply_signal', { signalId: id, auto: true });

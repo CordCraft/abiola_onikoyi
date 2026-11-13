@@ -4,6 +4,7 @@ import { useActionState, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { decide, type SignalResult } from "@/app/jarvis/signals/actions";
 import { SubmitButton } from "@/components/SubmitButton";
+import { resolvedByLabel } from "@/lib/jarvis/labels";
 
 export type SignalView = {
   id: string;
@@ -25,15 +26,6 @@ export type SignalView = {
   resolution: string | null;
   resolvedAt: string | null;
   cleanup: { close: { title: string; evidence: string }[]; merge: { keep: string; drop: string[] }[] } | null;
-};
-
-export const resolvedByLabel: Record<string, string> = {
-  reply: "You replied",
-  reconcile: "Jarvis found it was done",
-  expired: "It expired",
-  manual: "Closed by hand",
-  other_party: "Someone else handled it",
-  cleanup: "Clean-up",
 };
 
 const kindTone: Record<string, string> = {

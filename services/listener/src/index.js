@@ -3,7 +3,7 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { config, missing } from './config.js';
-import { ensureTables, q, getSetting } from './db.js';
+import { ensureTables, q, getSetting, probeV3, v3State } from './db.js';
 import { every } from './util.js';
 import { WhatsApp } from './whatsapp.js';
 import { pollGmail } from './gmail.js';
@@ -12,7 +12,7 @@ import { triageOnce } from './brain.js';
 import { runJobs, attachWhatsApp } from './executor.js';
 import { flushHeld } from './push.js';
 import { plannerTick, morningPlan } from './planner.js';
-import { reconcileOnce, createCleanupCard } from './reconcile.js';
+import { reconcileOnce, cleanupTick } from './reconcile.js';
 import { digestTick } from './digest.js';
 import { nudgeTick } from './nudger.js';
 import { startHostfullyLoop } from './hostfully.js';
@@ -40,6 +40,11 @@ async function main() {
     console.error('table setup failed', e.message);
     note(e);
   });
+
+  // v3 needs columns the site adds; until they exist the v3 loops idle and the old loops run.
+  await probeV3();
+  every('v3-probe', 5 * 60_000, probeV3, { initialDelayMs: 5 * 60_000 });
+  const v3every = (name, ms, fn, opts) => every(name, ms, async () => { if (v3State.ready) await fn(); }, opts);
 
   const wa = new WhatsApp();
   attachWhatsApp(wa);
@@ -78,11 +83,11 @@ async function main() {
   every('planner', 60_000, plannerTick, { initialDelayMs: 20_000 });
 
   // v3: close loops, propose the one-time clean-up, and bundle held items into a digest.
-  every('reconcile', 10 * 60_000, () => reconcileOnce({ sinceHours: 6 }), { initialDelayMs: 150_000 });
-  every('cleanup-proposal', 30 * 60_000, () => createCleanupCard(), { initialDelayMs: 120_000 });
-  every('digest', 10 * 60_000, digestTick, { initialDelayMs: 180_000 });
+  v3every('reconcile', 10 * 60_000, () => reconcileOnce({ sinceHours: 6 }), { initialDelayMs: 150_000 });
+  v3every('cleanup-proposal', 30 * 60_000, () => cleanupTick(), { initialDelayMs: 120_000 });
+  v3every('digest', 10 * 60_000, digestTick, { initialDelayMs: 180_000 });
   // v3 phase 2: threads still waiting on him, and the Hostfully guest-message connector.
-  every('nudger', 20 * 60_000, nudgeTick, { initialDelayMs: 240_000 });
+  v3every('nudger', 20 * 60_000, nudgeTick, { initialDelayMs: 240_000 });
   startHostfullyLoop().catch((e) => {
     console.error('[hostfully] start failed', e.message);
     note(e);
@@ -96,7 +101,7 @@ async function main() {
           const wa = await getSetting('whatsapp_status', {});
           const pending = await q(`SELECT count(*)::int AS n FROM "JarvisInbound" WHERE "triagedAt" IS NULL`).catch(() => [{ n: null }]);
           res.writeHead(200, { 'content-type': 'application/json' });
-          res.end(JSON.stringify({ ok: true, startedAt: started, whatsapp: wa?.state || 'unknown', untriaged: pending[0].n, missingEnv: missing(), ...health, errors: health.errors.slice(0, 5) }));
+          res.end(JSON.stringify({ ok: true, startedAt: started, whatsapp: wa?.state || 'unknown', untriaged: pending[0].n, missingEnv: missing(), v3: v3State, ...health, errors: health.errors.slice(0, 5) }));
           return;
         }
         if (!authorised(req, url)) {

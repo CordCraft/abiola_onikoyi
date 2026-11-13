@@ -139,3 +139,12 @@ test('Airbnb notification detector', () => {
   assert.equal(yes('automated@airbnb.com', 'Your payout is on the way'), false);
   assert.equal(h.isAirbnbGuestNotification(null), false);
 });
+
+test('send: ignores messages that are not from the requested thread', async () => {
+  const sent = [];
+  const mk = (rows) => ({ listMessages: async () => rows, sendRaw: async (b) => { sent.push(b); return { uid: 'x' }; } });
+  await assert.rejects(h.sendHostfullyMessage({ threadKey: 'hostfully:t1', text: 'Hi' }, { client: mk([{ uid: 'm', threadUid: 'other', leadUid: 'L9', type: 'DIRECT_MESSAGE' }]) }), /not found/);
+  assert.equal(sent.length, 0, 'nothing is sent to an unrelated guest');
+  await h.sendHostfullyMessage({ threadKey: 'hostfully:t1', text: 'Hi' }, { client: mk([{ uid: 'a', threadUid: 'other', leadUid: 'L9' }, { uid: 'b', threadUid: 't1', leadUid: 'L1', type: 'DIRECT_MESSAGE' }]) });
+  assert.equal(sent[0].leadUid, 'L1');
+});

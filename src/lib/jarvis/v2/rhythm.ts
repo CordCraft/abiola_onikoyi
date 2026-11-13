@@ -30,6 +30,6 @@ export const RHYTHM_DEFAULTS: Rhythm = {
   maxPushesPerHour: 8,
   alwaysOn: true,
   familyThreshold: 70,
-  quietThreshold: 80,
+  quietThreshold: 70,
   stopWorkPush: false,
 };

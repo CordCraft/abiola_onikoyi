@@ -18,6 +18,7 @@ import {
   fmtWithin,
   noDash,
   NUDGE_WINDOW_MS,
+  NUDGE_FAST_MS,
 } from './pure.js';
 
 // Watches his back: threads whose last message is from a real person, unanswered past a
@@ -83,10 +84,26 @@ export async function nudgeOnce({ now = Date.now() } = {}) {
   if (!config.anthropicKey && !globalThis.__jarvisFakeStructured) return summary;
 
   const since = new Date(now - NUDGE_WINDOW_MS - 3600e3);
+  const sinceIso = since.toISOString();
+  // Step 1, one aggregate query: threads whose latest hand-written or inbound message is
+  // inbound and already older than the shortest threshold. Hostfully's automated messages do not count as him replying.
+  const waiting = await q(
+    `SELECT "threadKey" FROM (
+       SELECT DISTINCT ON ("threadKey") "threadKey", direction, "occurredAt" FROM "JarvisInbound"
+       WHERE "threadKey" IS NOT NULL AND "occurredAt" > (($1::text)::timestamptz AT TIME ZONE current_setting('TimeZone')) AND NOT (direction = 'out' AND body LIKE '[auto] %')
+       ORDER BY "threadKey", "occurredAt" DESC
+     ) t WHERE direction = 'in' AND "occurredAt" < (($2::text)::timestamptz AT TIME ZONE current_setting('TimeZone')) ORDER BY "occurredAt" DESC LIMIT 200`,
+    [sinceIso, new Date(now - NUDGE_FAST_MS).toISOString()],
+  );
+  if (!waiting.length) return summary;
+  // Step 2: only those threads' last few rows.
   const rows = await q(
-    `SELECT id, "threadKey", direction, sender, "senderName", subject, body, source, "isGroup", "chatName", "occurredAt", "connectionId", "externalId"
-     FROM "JarvisInbound" WHERE "threadKey" IS NOT NULL AND "occurredAt" > $1 ORDER BY "occurredAt" ASC LIMIT 6000`,
-    [since],
+    `SELECT id, "threadKey", direction, sender, "senderName", subject, left(body, 1200) AS body, source, "isGroup", "chatName", "occurredAt", "connectionId", "externalId"
+     FROM (
+       SELECT i.*, row_number() OVER (PARTITION BY i."threadKey" ORDER BY i."occurredAt" DESC) AS rn
+       FROM "JarvisInbound" i WHERE i."threadKey" = ANY($1) AND i."occurredAt" > (($2::text)::timestamptz AT TIME ZONE current_setting('TimeZone'))
+     ) t WHERE rn <= 8 ORDER BY "occurredAt" ASC`,
+    [waiting.map((w) => w.threadKey), sinceIso],
   );
   const byThread = new Map();
   for (const m of rows) (byThread.get(m.threadKey) || byThread.set(m.threadKey, []).get(m.threadKey)).push(m);
@@ -96,8 +113,10 @@ export async function nudgeOnce({ now = Date.now() } = {}) {
   const [peopleRows, openSignals, decided, counts0, hostStatus, addrs, learned] = await Promise.all([
     q(`SELECT key, name, relation, importance, "medianReplyMins" FROM "JarvisPerson"`).catch(() => []),
     q(`SELECT DISTINCT "threadKey" FROM "JarvisSignal" WHERE "threadKey" IS NOT NULL AND status = ANY($1)`, [OPEN_STATUSES]),
-    q(`SELECT "threadKey", max(GREATEST(COALESCE("decidedAt", 'epoch'), COALESCE("resolvedAt", 'epoch'), "updatedAt")) AS at FROM "JarvisSignal"
-       WHERE "threadKey" IS NOT NULL AND status IN ('dismissed','resolved','applied','expired') AND "updatedAt" > $1 GROUP BY "threadKey"`, [since]),
+    // When the owner (or a close) decided it, never when the row was last touched.
+    q(`SELECT "threadKey", max(GREATEST(COALESCE("decidedAt", 'epoch'), COALESCE("resolvedAt", 'epoch'))) AS at FROM "JarvisSignal"
+       WHERE "threadKey" IS NOT NULL AND status IN ('dismissed','resolved','applied','expired')
+         AND GREATEST(COALESCE("decidedAt", 'epoch'), COALESCE("resolvedAt", 'epoch')) > (($1::text)::timestamptz AT TIME ZONE current_setting('TimeZone')) GROUP BY "threadKey"`, [sinceIso]),
     getSetting(COUNTS_KEY, {}),
     getSetting('hostfully_status', null),
     ownAddresses(),

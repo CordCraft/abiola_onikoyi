@@ -18,6 +18,9 @@ const VOICE_MODEL = "claude-sonnet-5-5";
 const VOICE_MAX_TOKENS = 4000;
 // Whole-turn cap across all invocations (research turns span several).
 const MAX_TOOL_LOOPS = 12;
+// Voice turns never send or approve anything: sending needs a tap on the screen, where the text can be read first.
+const VOICE_BLOCKED_TOOLS = new Set(["send_message", "act_on_signal"]);
+const voiceTools = jarvisTools.filter((t) => !VOICE_BLOCKED_TOOLS.has(t.name));
 // One Netlify invocation must stay safely under the platform's streamed
 // response limit; when the budget is spent the turn checkpoints and the
 // client resumes it in a fresh invocation.
@@ -99,7 +102,7 @@ Documents named "Playbook: ..." are reusable checklists. To instantiate one, rea
 
 ## Duplicates
 create_task and create_project refuse near-duplicates and tell you what exists. Prefer updating the existing record; only pass allowDuplicate when it is genuinely distinct.
-${voice ? `\n## Voice mode\nThe user is talking to you out loud and will hear your reply spoken. Answer in one to three short, conversational sentences. No markdown, no headings, no lists, no tables, no links, no citations. Say numbers, dates, times and money the way a person would say them aloud (for example "about twelve thousand dollars", "half past three tomorrow"). Lead with the answer. Use your read tools freely for facts about their day, projects, tasks or messages, and confirm any action in one short sentence. You cannot browse the web in voice mode: if a question needs web research, say so briefly and suggest asking in text chat.\n` : ""}
+${voice ? `\n## Voice mode\nThe user is talking to you out loud and will hear your reply spoken. Answer in one to three short, conversational sentences. No markdown, no headings, no lists, no tables, no links, no citations. Say numbers, dates, times and money the way a person would say them aloud (for example "about twelve thousand dollars", "half past three tomorrow"). Lead with the answer. Use your read tools freely for facts about their day, projects, tasks or messages, and confirm any action in one short sentence. You can never send a message or approve a signal by voice: sending needs a tap on the screen, so say the draft is ready on the signal card and ask him to tap Do it. You cannot browse the web in voice mode: if a question needs web research, say so briefly and suggest asking in text chat.\n` : ""}
 ${context}`;
 }
 
@@ -390,7 +393,7 @@ export async function POST(req: Request) {
             model: turn.voice ? VOICE_MODEL : MODEL,
             max_tokens: turn.voice ? VOICE_MAX_TOKENS : 32000,
             system,
-            tools: turn.voice ? [...jarvisTools] : [...jarvisTools, ...serverTools],
+            tools: turn.voice ? [...voiceTools] : [...jarvisTools, ...serverTools],
             thinking: (turn.voice
               ? { type: "between_tools" }
               : { type: "adaptive" }) as unknown as Anthropic.ThinkingConfigParam,
@@ -456,7 +459,9 @@ export async function POST(req: Request) {
                 }
                 let out: string;
                 try {
-                  out = await executeTool(block.name, block.input, { onSaved });
+                  out = turn.voice && VOICE_BLOCKED_TOOLS.has(block.name)
+                    ? "Not available by voice. Sending or approving needs a tap on the screen; tell the owner to open the signal and tap Do it."
+                    : await executeTool(block.name, block.input, { onSaved });
                 } catch (e) {
                   console.error(`jarvis/chat: tool ${block.name} failed`, e);
                   out = `Tool failed: ${e instanceof Error ? e.message : String(e)}`;

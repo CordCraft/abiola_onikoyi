@@ -1,5 +1,5 @@
 import { closedSignals, closedTasks } from "@/lib/jarvis/v2/signals";
-import { resolvedByLabel } from "@/components/jarvis/SignalCard";
+import { resolvedByLabel } from "@/lib/jarvis/labels";
 import { UndoButton } from "@/components/jarvis/UndoButton";
 
 const TZ = process.env.OWNER_TZ || "Asia/Kuwait";

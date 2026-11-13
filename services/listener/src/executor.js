@@ -1,12 +1,12 @@
-import { q, one, newId } from './db.js';
-import { claim, finish, fail, recoverStuck } from './jobs.js';
+import { q, one, newId, v3State } from './db.js';
+import { claim, finish, fail, cancel, recoverStuck } from './jobs.js';
 import { createEvent, deleteEvent } from './calendar.js';
 import { listConnections, api } from './accounts.js';
 import { sendGmail, gmailDraft } from './gmail.js';
 import { sendOutlook, outlookDraft } from './outlook.js';
 import { sendPush, mayInterrupt } from './push.js';
 import { clip, tzOffsetMinutes } from './util.js';
-import { titleSimilarity, DUPLICATE_THRESHOLD } from './pure.js';
+import { titleSimilarity, DUPLICATE_THRESHOLD, isDuplicateTask } from './pure.js';
 import { sendHostfullyMessage } from './hostfully.js';
 import { applyCleanup, undoCleanup, reopenSignal, reopenTask } from './reconcile.js';
 
@@ -29,36 +29,44 @@ async function connById(id) {
   return null;
 }
 
-// Creates a task unless an open one already covers the same thing (same thread, or a title
-// at least DUPLICATE_THRESHOLD similar); then it links to that one instead.
+// A job that should not run any more (the item was closed meanwhile); it is marked cancelled, not failed.
+class JobCancelled extends Error {}
+
+// Creates a task unless an open one already covers the same thing: same thread with a loosely
+// similar title, or a very similar title that does not differ on a name or a number
+// (isDuplicateTask); then it links to that one instead.
 export async function findOpenDuplicateTask({ title, threadKey }) {
-  if (threadKey) {
-    const same = await one(`SELECT id, title FROM "JarvisTask" WHERE status <> 'done' AND "threadKey" = $1 ORDER BY "createdAt" LIMIT 1`, [threadKey]);
-    if (same) return same;
+  const probe = { title, threadKey: threadKey || null };
+  if (threadKey && v3State.ready) {
+    const same = await q(`SELECT id, title, "threadKey" FROM "JarvisTask" WHERE status <> 'done' AND "threadKey" = $1 ORDER BY "createdAt" LIMIT 50`, [threadKey]);
+    const hit = same.find((t) => isDuplicateTask(probe, t));
+    if (hit) return hit;
   }
-  try {
-    const best = await one(
-      `SELECT id, title, extensions.similarity(lower(title), lower($1)) AS sim FROM "JarvisTask" WHERE status <> 'done' ORDER BY sim DESC LIMIT 1`,
-      [title],
-    );
-    if (best && Number(best.sim) >= DUPLICATE_THRESHOLD) return best;
-    // pg_trgm is character based and can miss reordered words; the word check below is cheap.
-  } catch {
-    // pg_trgm not installed here: fall through to the word-overlap check.
-  }
-  const open = await q(`SELECT id, title FROM "JarvisTask" WHERE status <> 'done' ORDER BY "createdAt" DESC LIMIT 400`);
-  return open.find((t) => titleSimilarity(t.title, title) >= DUPLICATE_THRESHOLD) || null;
+  const open = await q(
+    v3State.ready
+      ? `SELECT id, title, "threadKey" FROM "JarvisTask" WHERE status <> 'done' ORDER BY "createdAt" DESC LIMIT 400`
+      : `SELECT id, title, NULL AS "threadKey" FROM "JarvisTask" WHERE status <> 'done' ORDER BY "createdAt" DESC LIMIT 400`,
+  );
+  return open.find((t) => isDuplicateTask(probe, t)) || null;
 }
 
 export async function createTask({ title, dueDate, priority = 'medium', projectId = null, sourceSignalId = null, threadKey = null }) {
   const dupe = await findOpenDuplicateTask({ title, threadKey });
   if (dupe) return { taskId: dupe.id, linked: true, duplicateOf: dupe.title };
   const id = newId();
-  await q(
-    `INSERT INTO "JarvisTask" (id, "projectId", title, status, priority, "dueDate", "sourceSignalId", "threadKey", "createdAt", "updatedAt")
-     VALUES ($1, $2, $3, 'todo', $4, $5, $6, $7, now(), now())`,
-    [id, projectId, clip(title, 200), priority, dueDate ? new Date(dueDate) : null, sourceSignalId, threadKey],
-  );
+  if (v3State.ready) {
+    await q(
+      `INSERT INTO "JarvisTask" (id, "projectId", title, status, priority, "dueDate", "sourceSignalId", "threadKey", "createdAt", "updatedAt")
+       VALUES ($1, $2, $3, 'todo', $4, $5, $6, $7, now(), now())`,
+      [id, projectId, clip(title, 200), priority, dueDate ? new Date(dueDate) : null, sourceSignalId, threadKey],
+    );
+  } else {
+    await q(
+      `INSERT INTO "JarvisTask" (id, "projectId", title, status, priority, "dueDate", "createdAt", "updatedAt")
+       VALUES ($1, $2, $3, 'todo', $4, $5, now(), now())`,
+      [id, projectId, clip(title, 200), priority, dueDate ? new Date(dueDate) : null],
+    );
+  }
   return { taskId: id };
 }
 
@@ -102,6 +110,8 @@ async function applySignal({ signalId, auto = false, text, mode = 'send', edits 
   const s = await one(`SELECT * FROM "JarvisSignal" WHERE id = $1`, [signalId]);
   if (!s) throw new Error('signal not found');
   if (['applied', 'dismissed', 'undone'].includes(s.status)) return { skipped: s.status };
+  // Closed (a reply was sent, it expired, it was resolved) while the tap was queued: do not act on it.
+  if (['resolved', 'expired'].includes(s.status)) throw new JobCancelled(`signal already ${s.status}, nothing was done`);
   const action = s.action || {};
   const payload = { ...(action.payload || {}), ...(edits || {}) };
   if (text) payload.text = text;
@@ -154,7 +164,7 @@ async function undoSignal({ signalId }) {
   if (['resolved', 'expired'].includes(s.status)) return { reopened: await reopenSignal(s.id) };
   if (s.status !== 'applied') return { skipped: true };
   const r = s.result || {};
-  if (r.cleanup) await undoCleanup(r.cleanup);
+  if (r.cleanup) await undoCleanup(r.cleanup, { signalId: s.id });
   if (r.event?.eventId) await deleteEvent(r.event);
   for (const ev of r.events || []) if (ev?.eventId) await deleteEvent(ev).catch(() => {});
   if (r.taskId && !r.linked) await q(`DELETE FROM "JarvisTask" WHERE id = $1`, [r.taskId]);
@@ -191,6 +201,10 @@ export async function runJobs() {
       const result = await handler(job.payload || {});
       await finish(job.id, result);
     } catch (e) {
+      if (e instanceof JobCancelled) {
+        await cancel(job.id, e.message);
+        continue;
+      }
       console.error(`[jobs] ${job.kind} failed:`, e.message);
       const retry = /rate limited|ECONNRESET|ETIMEDOUT|fetch failed|5\d\d/.test(e.message);
       await fail(job.id, e.message, retry);

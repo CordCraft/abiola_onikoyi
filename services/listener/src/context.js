@@ -19,7 +19,7 @@ export const DEFAULT_RHYTHM = {
   // v3: always on. Important items get through at any hour; the rest wait for the digest.
   alwaysOn: true,
   familyThreshold: 70,
-  quietThreshold: 80,
+  quietThreshold: 70,
   stopWorkPush: false,
 };
 

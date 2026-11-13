@@ -443,7 +443,33 @@ function titleSimilarity(a: string, b: string): number {
   return (2 * shared) / (A.length + B.length);
 }
 
-// Near-duplicate open task: normalised token overlap >= 0.55 first, then trigram similarity; ILIKE fallback.
+// Differing words that carry identity: a number, or a capitalised word that is not the first
+// word of the title (same rule as isDuplicateTask in services/listener/src/pure.js, copied).
+function differsOnNameOrNumber(a: string, b: string): boolean {
+  const side = (title: string) => {
+    const m = new Map<string, boolean>();
+    title
+      .split(/[^A-Za-z0-9]+/)
+      .filter(Boolean)
+      .forEach((w, i) => {
+        if (TITLE_STOP.has(w.toLowerCase())) return;
+        const l = w.toLowerCase();
+        const n = l.length > 3 && l.endsWith("s") ? l.slice(0, -1) : l;
+        const ident = /\d/.test(w) || (i > 0 && /^[A-Z]/.test(w));
+        m.set(n, (m.get(n) || false) || ident);
+      });
+    return m;
+  };
+  const A = side(a);
+  const B = side(b);
+  for (const [n, ident] of A) if (!B.has(n) && ident) return true;
+  for (const [n, ident] of B) if (!A.has(n) && ident) return true;
+  return false;
+}
+
+// Near-duplicate open task: normalised word overlap >= 0.7 and no differing name or number.
+// (The old trigram stage is gone: character similarity flagged "Send invoice to Bola" against
+// "Send invoice to Tola".)
 async function findDuplicateTask(
   title: string,
 ): Promise<{ id: string; title: string; projectName: string | null } | null> {
@@ -457,27 +483,12 @@ async function findDuplicateTask(
   let bestScore = 0;
   for (const t of open) {
     const sc = titleSimilarity(title, t.title);
-    if (sc >= 0.55 && sc > bestScore) {
+    if (sc >= 0.7 && sc > bestScore && !differsOnNameOrNumber(title, t.title)) {
       best = t;
       bestScore = sc;
     }
   }
-  if (best) return { id: best.id, title: best.title, projectName: best.project?.name ?? null };
-  try {
-    const rows = await prisma.$queryRaw<{ id: string; title: string; projectName: string | null }[]>`
-      SELECT t.id, t.title, p.name AS "projectName"
-      FROM "JarvisTask" t LEFT JOIN "JarvisProject" p ON p.id = t."projectId"
-      WHERE t.status <> 'done' AND similarity(t.title, ${title}) > 0.55
-      ORDER BY similarity(t.title, ${title}) DESC LIMIT 1`;
-    if (rows[0]) return rows[0];
-  } catch {
-    const t = await prisma.jarvisTask.findFirst({
-      where: { title: { equals: title, mode: "insensitive" }, status: { not: "done" } },
-      include: { project: { select: { name: true } } },
-    });
-    if (t) return { id: t.id, title: t.title, projectName: t.project?.name ?? null };
-  }
-  return null;
+  return best ? { id: best.id, title: best.title, projectName: best.project?.name ?? null } : null;
 }
 
 const MAX_DOC_READ = 60_000; // chars returned to the model per read_document
