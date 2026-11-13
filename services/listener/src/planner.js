@@ -1,8 +1,13 @@
 import { config } from './config.js';
-import { q, newId, getSetting, setSetting } from './db.js';
+import { q, newId, getSetting, setSetting, v3State } from './db.js';
 import { structured } from './llm.js';
 import { sendPush } from './push.js';
 import { rhythm, goalsAndProjects, upcoming, fmtEvents, OWNER_BRIEF } from './context.js';
+import { expireSignals, nudgeStaleTasks, reconcileOnce, cleanupGate, CUTOFF_SQL, cutoffParam } from './reconcile.js';
+import { startOfDay, closedSince } from './digest.js';
+import { closeoutText } from './pure.js';
+import { learnBehaviour } from './learn.js';
+import { adviseOnce, topAdviceLine, weeklyAdvice } from './advisor.js';
 import { minutesIn, dateKeyIn, weekdayIn, parseHm, hm, clip, tzOffsetMinutes } from './util.js';
 
 // The day's rhythm: a morning plan, an evening close-out, nightly learning of the owner's
@@ -44,14 +49,27 @@ const PLAN_SCHEMA = {
   },
 };
 
+const MAX_TRIES_PER_DAY = 3;
+
+// A daily job is marked done only after it succeeds. A failure is logged and retried on the
+// next tick, at most 3 attempts a day (the key carries the date).
 async function once(key, fn) {
   const done = (await getSetting('planner_runs', {})) || {};
   if (done[key]) return;
-  done[key] = new Date().toISOString();
+  const tries = (await getSetting('planner_tries', {})) || {};
+  const n = Number(tries[key] || 0);
+  if (n >= MAX_TRIES_PER_DAY) return;
+  tries[key] = n + 1;
   // Keep only the last 30 keys.
-  const trimmed = Object.fromEntries(Object.entries(done).sort((a, b) => b[1].localeCompare(a[1])).slice(0, 30));
-  await setSetting('planner_runs', trimmed);
-  await fn();
+  await setSetting('planner_tries', Object.fromEntries(Object.entries(tries).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 30)));
+  try {
+    await fn();
+  } catch (e) {
+    console.error(`[planner] ${key} failed (attempt ${n + 1} of ${MAX_TRIES_PER_DAY}):`, e?.message || e);
+    return;
+  }
+  done[key] = new Date().toISOString();
+  await setSetting('planner_runs', Object.fromEntries(Object.entries(done).sort((a, b) => b[1].localeCompare(a[1])).slice(0, 30)));
 }
 
 export async function morningPlan({ force = false } = {}) {
@@ -92,9 +110,17 @@ You are Jarvis planning his day. Build a realistic, time-blocked plan for today 
 
   const plan = await structured({ model: config.plannerModel, system, user, schema: PLAN_SCHEMA, effort: 'medium' });
 
+  // One fresh suggestion list each morning; its top idea rides in the plan. Never blocks the plan.
+  let idea = '';
+  try {
+    if (v3State.ready && (await adviseOnce({ mode: 'daily' }))) idea = await topAdviceLine();
+  } catch (e) {
+    console.error('[planner] advice', e.message);
+  }
+
   const blocksText = plan.blocks.map((b) => `${b.start}-${b.end} ${b.title}`).join('\n');
   const movesText = plan.top_moves.map((m, i) => `${i + 1}. ${m.title} (${m.why})`).join('\n');
-  const detail = `${plan.summary}\n\nTop moves:\n${movesText}\n\nPlan:\n${blocksText}\n\nStop work at ${plan.stop_at}. ${plan.family_note}`;
+  const detail = `${plan.summary}\n\nTop moves:\n${movesText}\n\nPlan:\n${blocksText}\n\nStop work at ${plan.stop_at}. ${plan.family_note}${idea ? `\n\n${idea}` : ''}`;
 
   const newBlocks = plan.blocks.filter((b) => !b.existing_event && ['focus', 'family', 'admin'].includes(b.kind));
   const id = newId();
@@ -120,15 +146,16 @@ You are Jarvis planning his day. Build a realistic, time-blocked plan for today 
 
 export async function eveningCloseout() {
   const r = await rhythm();
-  const [done, open] = await Promise.all([
-    q(`SELECT count(*)::int AS n FROM "JarvisTask" WHERE status = 'done' AND "completedAt" > now() - interval '14 hours'`),
+  const [closed, open] = await Promise.all([
+    closedSince(startOfDay(r.tz)),
     q(`SELECT title FROM "JarvisSignal" WHERE status IN ('new','pushed') AND kind <> 'plan' AND kind <> 'fyi' ORDER BY score DESC LIMIT 3`),
   ]);
-  const carry = open.map((s) => s.title).join('; ');
+  if (!r.stopWorkPush && !closed.length && !open.length) return;
   await sendPush({
-    title: 'Time to stop work',
-    body: clip(`${done[0].n} task${done[0].n === 1 ? '' : 's'} closed today.${carry ? ` Carried to tomorrow: ${carry}.` : ''} Family time from ${r.familyStart}. I will keep watch.`, 230),
-    url: '/jarvis',
+    // The "time to stop work" nudge is opt-in; the close-out itself is always useful.
+    title: r.stopWorkPush ? 'Time to stop work' : 'Close-out for today',
+    body: clip(closeoutText({ closed: closed.map((c) => c.title), open: open.map((o) => o.title), stopWork: r.stopWorkPush, familyStart: r.familyStart }), 230),
+    url: '/jarvis/signals',
     tag: `jarvis-stop-${dateKeyIn(r.tz)}`,
   });
 }
@@ -156,7 +183,19 @@ export async function learnRhythm() {
 export async function housekeeping() {
   await q(`DELETE FROM "JarvisInbound" WHERE "occurredAt" < now() - interval '120 days'`);
   await q(`DELETE FROM "JarvisJob" WHERE status IN ('done','failed','cancelled') AND "createdAt" < now() - interval '30 days'`);
-  await q(`UPDATE "JarvisSignal" SET status = 'dismissed' WHERE status IN ('new','pushed') AND kind IN ('fyi','plan') AND "createdAt" < now() - interval '3 days'`);
+  // Auto-closing waits for the owner's approval of the clean-up card: nothing older than the card is touched before.
+  const gate = v3State.ready ? await cleanupGate() : { cutoff: null };
+  if (!gate.blocked) {
+    await q(
+      `UPDATE "JarvisSignal" SET status = 'dismissed' WHERE status IN ('new','pushed') AND kind IN ('fyi','plan') AND COALESCE(action->>'type','') <> 'cleanup'
+         AND "createdAt" < now() - interval '3 days' AND ${CUTOFF_SQL('"createdAt"', 1)}`,
+      [cutoffParam(gate.cutoff)],
+    );
+  }
+  if (v3State.ready) {
+    await expireSignals();
+    await nudgeStaleTasks();
+  }
 }
 
 // Called every minute.
@@ -167,10 +206,13 @@ export async function plannerTick() {
   const weekday = weekdayIn(r.tz);
   const wake = parseHm(r.quietEnd, 6 * 60 + 30) + 20;
   if (now >= wake && now < wake + 180) await once(`plan:${day}`, () => morningPlan());
+  if (v3State.ready && weekday === 'Sunday' && now >= 15 * 60 && now < 16 * 60) await once(`advice-week:${day}`, () => weeklyAdvice());
   const workEnd = parseHm(r.workEnd, 18 * 60);
   if (r.workdays.includes(weekday) && now >= workEnd && now < workEnd + 60) await once(`stop:${day}`, () => eveningCloseout());
   if (now >= 3 * 60 && now < 4 * 60) {
     await once(`learn:${day}`, () => learnRhythm());
+    if (v3State.ready) await once(`behaviour:${day}`, () => learnBehaviour());
     await once(`clean:${day}`, () => housekeeping());
+    if (v3State.ready) await once(`reconcile:${day}`, () => reconcileOnce({ sinceHours: 24 }));
   }
 }

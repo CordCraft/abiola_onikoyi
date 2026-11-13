@@ -36,16 +36,43 @@ function clock() {
   };
 }
 
+type AdviceItem = { title: string; why?: string; how?: string };
+
+// JarvisSetting "advice" is written by the listener: {generatedAt, items:[{title, why, how}]}.
+function parseAdvice(raw?: string | null): { generatedAt: string | null; items: AdviceItem[] } | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw) as { generatedAt?: string; items?: AdviceItem[] };
+    const items = Array.isArray(v.items) ? v.items.filter((i) => i && typeof i.title === "string").slice(0, 5) : [];
+    return items.length ? { generatedAt: v.generatedAt ?? null, items } : null;
+  } catch {
+    return null;
+  }
+}
+
 // The top of Jarvis: what matters now, without having to type anything.
 export async function TodayPanel() {
   await ensureV2Tables();
   const { now, from, endOfDay, planSince, nowHm } = clock();
 
-  const [needs, plan, cal] = await Promise.all([
+  const [needs, plans, cleanups, adviceRow, cal] = await Promise.all([
     openSignals(30).then((all) => all.filter((s) => s.kind !== "plan").slice(0, 6)),
-    prisma.jarvisSignal.findFirst({ where: { kind: "plan", createdAt: { gte: planSince } }, orderBy: { createdAt: "desc" } }),
+    prisma.jarvisSignal.findMany({ where: { kind: "plan", createdAt: { gte: planSince } }, orderBy: { createdAt: "desc" }, take: 8 }),
+    // The one-time clean-up card is a plan-kind signal too; it is shown as a card, never as today's plan.
+    prisma.jarvisSignal.findMany({ where: { kind: "plan", status: { in: ["new", "pushed", "snoozed", "failed"] } }, orderBy: { createdAt: "desc" }, take: 8 }),
+    prisma.jarvisSetting.findUnique({ where: { key: "advice" } }),
     listAllEvents(from, endOfDay).catch(() => ({ events: [], connected: 0, errors: [] as string[] })),
   ]);
+  const isCleanup = (s: { action: unknown }) => (s.action as { type?: string } | null)?.type === "cleanup";
+  // Today's plan is the morning planner's card (source "planner", a plan_blocks action carrying the plan),
+  // never the weekly ideas card or the clean-up card.
+  const isMorningPlan = (s: { source: string | null; action: unknown }) => {
+    const a = s.action as { type?: string; payload?: { plan?: unknown } } | null;
+    return s.source === "planner" && a?.type === "plan_blocks" && !!a.payload?.plan;
+  };
+  const plan = plans.find(isMorningPlan) ?? null;
+  const cleanup = cleanups.find(isCleanup) ?? null;
+  const advice = parseAdvice(adviceRow?.value);
   const planPayload = (plan?.action as { payload?: { plan?: { summary?: string; top_moves?: { title: string; why: string }[]; stop_at?: string; blocks?: { start: string; end: string; title: string; kind: string }[] } } } | null)?.payload?.plan;
   const nextEvent = cal.events.find((e) => !e.allDay && new Date(e.end || e.start).getTime() > now);
   const currentBlock = planPayload?.blocks?.find((b) => b.start <= nowHm && b.end > nowHm);
@@ -99,6 +126,7 @@ export async function TodayPanel() {
               Everything Jarvis noticed
             </Link>
           </div>
+          {cleanup && <SignalCard s={toView(cleanup)} compact />}
           {needs.length === 0 ? (
             <p className="rounded-2xl border border-dashed border-zinc-300 p-5 text-sm text-zinc-500">
               Nothing waiting on you. {cal.connected === 0 && <Link href="/jarvis/connect" className="font-medium text-indigo-600">Connect WhatsApp and your mailboxes</Link>}
@@ -114,6 +142,22 @@ export async function TodayPanel() {
         </div>
 
         <aside className="space-y-3">
+          {advice && (
+            <div className="space-y-2">
+              <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-500">Ideas</h2>
+              <div className="rounded-2xl border border-white/60 bg-white/80 p-4">
+                <ul className="space-y-3">
+                  {advice.items.map((a, i) => (
+                    <li key={i} className="text-sm">
+                      <p className="font-medium text-zinc-800">{a.title}</p>
+                      {a.why && <p className="mt-0.5 text-xs text-zinc-500">{a.why}</p>}
+                      {a.how && <p className="mt-0.5 text-xs text-indigo-700">{a.how}</p>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
           <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-500">Today</h2>
           <div className="rounded-2xl border border-white/60 bg-white/80 p-4">
             {cal.connected === 0 ? (

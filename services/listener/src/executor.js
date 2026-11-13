@@ -1,11 +1,16 @@
-import { q, one, newId } from './db.js';
-import { claim, finish, fail, recoverStuck } from './jobs.js';
+import { q, one, newId, v3State } from './db.js';
+import { claim, finish, fail, cancel, recoverStuck } from './jobs.js';
 import { createEvent, deleteEvent } from './calendar.js';
 import { listConnections, api } from './accounts.js';
 import { sendGmail, gmailDraft } from './gmail.js';
 import { sendOutlook, outlookDraft } from './outlook.js';
 import { sendPush, mayInterrupt } from './push.js';
 import { clip, tzOffsetMinutes } from './util.js';
+import { titleSimilarity, DUPLICATE_THRESHOLD, isDuplicateTask } from './pure.js';
+import { sendHostfullyMessage } from './hostfully.js';
+import { applyCleanup, undoCleanup, reopenSignal, reopenTask } from './reconcile.js';
+
+export { titleSimilarity };
 
 // Runs the jobs: applying an approved signal, undoing it, and direct requests from chat.
 // Nothing here sends a message unless a person approved it (push button, signal page or chat).
@@ -24,19 +29,54 @@ async function connById(id) {
   return null;
 }
 
-async function createTask({ title, dueDate, priority = 'medium', projectId = null }) {
-  const id = newId();
-  await q(
-    `INSERT INTO "JarvisTask" (id, "projectId", title, status, priority, "dueDate", "createdAt", "updatedAt")
-     VALUES ($1, $2, $3, 'todo', $4, $5, now(), now())`,
-    [id, projectId, clip(title, 200), priority, dueDate ? new Date(dueDate) : null],
+// A job that should not run any more (the item was closed meanwhile); it is marked cancelled, not failed.
+class JobCancelled extends Error {}
+
+// Creates a task unless an open one already covers the same thing: same thread with a loosely
+// similar title, or a very similar title that does not differ on a name or a number
+// (isDuplicateTask); then it links to that one instead.
+export async function findOpenDuplicateTask({ title, threadKey }) {
+  const probe = { title, threadKey: threadKey || null };
+  if (threadKey && v3State.ready) {
+    const same = await q(`SELECT id, title, "threadKey" FROM "JarvisTask" WHERE status <> 'done' AND "threadKey" = $1 ORDER BY "createdAt" LIMIT 50`, [threadKey]);
+    const hit = same.find((t) => isDuplicateTask(probe, t));
+    if (hit) return hit;
+  }
+  const open = await q(
+    v3State.ready
+      ? `SELECT id, title, "threadKey" FROM "JarvisTask" WHERE status <> 'done' ORDER BY "createdAt" DESC LIMIT 400`
+      : `SELECT id, title, NULL AS "threadKey" FROM "JarvisTask" WHERE status <> 'done' ORDER BY "createdAt" DESC LIMIT 400`,
   );
+  return open.find((t) => isDuplicateTask(probe, t)) || null;
+}
+
+export async function createTask({ title, dueDate, priority = 'medium', projectId = null, sourceSignalId = null, threadKey = null }) {
+  const dupe = await findOpenDuplicateTask({ title, threadKey });
+  if (dupe) return { taskId: dupe.id, linked: true, duplicateOf: dupe.title };
+  const id = newId();
+  if (v3State.ready) {
+    await q(
+      `INSERT INTO "JarvisTask" (id, "projectId", title, status, priority, "dueDate", "sourceSignalId", "threadKey", "createdAt", "updatedAt")
+       VALUES ($1, $2, $3, 'todo', $4, $5, $6, $7, now(), now())`,
+      [id, projectId, clip(title, 200), priority, dueDate ? new Date(dueDate) : null, sourceSignalId, threadKey],
+    );
+  } else {
+    await q(
+      `INSERT INTO "JarvisTask" (id, "projectId", title, status, priority, "dueDate", "createdAt", "updatedAt")
+       VALUES ($1, $2, $3, 'todo', $4, $5, now(), now())`,
+      [id, projectId, clip(title, 200), priority, dueDate ? new Date(dueDate) : null],
+    );
+  }
   return { taskId: id };
 }
 
 async function sendReply(p, mode = 'send') {
   const text = p.text;
   if (!text) throw new Error('nothing to send');
+  if (p.channel === 'hostfully') {
+    if (mode === 'draft') return { draft: true, note: 'Hostfully has no drafts; copy the text from Jarvis' };
+    return sendHostfullyMessage({ threadKey: p.threadKey, text });
+  }
   if (p.channel === 'whatsapp') {
     if (mode === 'draft') return { draft: true, note: 'WhatsApp has no drafts; copy the text from Jarvis' };
     if (!wa) throw new Error('WhatsApp is not running');
@@ -70,12 +110,15 @@ async function applySignal({ signalId, auto = false, text, mode = 'send', edits 
   const s = await one(`SELECT * FROM "JarvisSignal" WHERE id = $1`, [signalId]);
   if (!s) throw new Error('signal not found');
   if (['applied', 'dismissed', 'undone'].includes(s.status)) return { skipped: s.status };
+  // Closed (a reply was sent, it expired, it was resolved) while the tap was queued: do not act on it.
+  if (['resolved', 'expired'].includes(s.status)) throw new JobCancelled(`signal already ${s.status}, nothing was done`);
   const action = s.action || {};
   const payload = { ...(action.payload || {}), ...(edits || {}) };
   if (text) payload.text = text;
   let result = {};
   if (action.type === 'calendar_event') result = { event: await createEvent(payload) };
-  else if (action.type === 'create_task') result = await createTask(payload);
+  else if (action.type === 'create_task') result = await createTask({ ...payload, sourceSignalId: s.id, threadKey: s.threadKey || payload.threadKey || null });
+  else if (action.type === 'cleanup') result = { cleanup: await applyCleanup(payload, { signalId: s.id }) };
   else if (action.type === 'send_reply') result = { sent: await sendReply(payload, mode), mode };
   else if (action.type === 'plan_blocks') result = { events: await blockPlan(payload) };
   await q(
@@ -116,11 +159,15 @@ async function blockPlan({ day, tz, blocks = [] }) {
 
 async function undoSignal({ signalId }) {
   const s = await one(`SELECT * FROM "JarvisSignal" WHERE id = $1`, [signalId]);
-  if (!s || s.status !== 'applied') return { skipped: true };
+  if (!s) return { skipped: true };
+  // A signal closed by a reply, by reconcile or by expiry comes back to its earlier state.
+  if (['resolved', 'expired'].includes(s.status)) return { reopened: await reopenSignal(s.id) };
+  if (s.status !== 'applied') return { skipped: true };
   const r = s.result || {};
+  if (r.cleanup) await undoCleanup(r.cleanup, { signalId: s.id });
   if (r.event?.eventId) await deleteEvent(r.event);
   for (const ev of r.events || []) if (ev?.eventId) await deleteEvent(ev).catch(() => {});
-  if (r.taskId) await q(`DELETE FROM "JarvisTask" WHERE id = $1`, [r.taskId]);
+  if (r.taskId && !r.linked) await q(`DELETE FROM "JarvisTask" WHERE id = $1`, [r.taskId]);
   if (r.sent) throw new Error('a sent message cannot be unsent');
   await q(`UPDATE "JarvisSignal" SET status = 'undone', "updatedAt" = now() WHERE id = $1`, [s.id]);
   return { undone: true };
@@ -129,6 +176,7 @@ async function undoSignal({ signalId }) {
 const HANDLERS = {
   apply_signal: applySignal,
   undo_signal: undoSignal,
+  undo_task_close: ({ taskId }) => reopenTask(taskId),
   calendar_event: (p) => createEvent(p),
   delete_event: (p) => deleteEvent(p),
   create_task: (p) => createTask(p),
@@ -153,6 +201,10 @@ export async function runJobs() {
       const result = await handler(job.payload || {});
       await finish(job.id, result);
     } catch (e) {
+      if (e instanceof JobCancelled) {
+        await cancel(job.id, e.message);
+        continue;
+      }
       console.error(`[jobs] ${job.kind} failed:`, e.message);
       const retry = /rate limited|ECONNRESET|ETIMEDOUT|fetch failed|5\d\d/.test(e.message);
       await fail(job.id, e.message, retry);

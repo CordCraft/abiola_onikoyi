@@ -4,12 +4,37 @@ import { verifySession } from "@/lib/dal";
 import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/format";
 import { deleteNote, deleteDecision, deleteDocument } from "@/app/jarvis/actions";
+import { DoneLedger } from "@/components/jarvis/DoneLedger";
 import { SettingForm } from "@/components/jarvis/SettingForm";
+
+function MemoryTabs({ active }: { active: "knows" | "done" }) {
+  const tab = (on: boolean) => `rounded-full px-3 py-1 text-sm ${on ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-100"}`;
+  return (
+    <nav className="mt-2 flex gap-2">
+      <Link href="/jarvis/memory" className={tab(active === "knows")}>Knowledge</Link>
+      <Link href="/jarvis/memory?tab=done" className={tab(active === "done")}>Done</Link>
+    </nav>
+  );
+}
 
 // "What Jarvis knows": every piece of stored knowledge in one transparent,
 // editable place, plus the settings that shape Jarvis's behavior.
-export default async function MemoryPage() {
+export default async function MemoryPage({ searchParams }: { searchParams: Promise<{ tab?: string; q?: string }> }) {
   await verifySession();
+  const { tab, q } = await searchParams;
+  const showDone = tab === "done";
+
+  if (showDone) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-zinc-900">What Jarvis knows</h1>
+          <MemoryTabs active="done" />
+        </div>
+        <DoneLedger q={q ?? ""} />
+      </div>
+    );
+  }
 
   const [projects, decisions, notes, documents, settings] = await Promise.all([
     prisma.jarvisProject.findMany({
@@ -41,7 +66,8 @@ export default async function MemoryPage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-zinc-900">What Jarvis knows</h1>
-          <p className="mt-1 text-sm text-zinc-500">
+          <MemoryTabs active="knows" />
+          <p className="mt-3 text-sm text-zinc-500">
             Everything in the knowledge base, in one place. Delete anything; Jarvis forgets it immediately.
           </p>
         </div>

@@ -36,7 +36,7 @@ export async function POST(req: Request) {
 
   // The Railway listener's planner sends a fuller morning plan; when it already ran today, stay quiet.
   const planned = await prisma.jarvisSignal
-    .findFirst({ where: { kind: "plan", createdAt: { gte: new Date(Date.now() - 12 * 3600e3) } } })
+    .findFirst({ where: { kind: "plan", OR: [{ source: null }, { source: { not: "reconcile" } }], createdAt: { gte: new Date(Date.now() - 12 * 3600e3) } } })
     .catch(() => null);
   if (planned) {
     return NextResponse.json({ ok: true, skipped: "Listener planner already sent today's plan" });

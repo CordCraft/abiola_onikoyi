@@ -24,6 +24,12 @@ export async function loadRhythm(): Promise<{ rhythm: Rhythm; learned: Record<st
 
 const hm = (v: FormDataEntryValue | null, fallback: string) => (/^\d{2}:\d{2}$/.test(String(v ?? "")) ? String(v) : fallback);
 
+// Only the three offered levels are accepted: urgent 80, important 70, most things 50.
+const threshold = (v: FormDataEntryValue | null, fallback: number) => {
+  const n = Number(v);
+  return [80, 70, 50].includes(n) ? n : fallback;
+};
+
 export async function saveRhythm(_prev: { ok?: boolean } | undefined, f: FormData): Promise<{ ok?: boolean }> {
   await verifySession();
   const r: Rhythm = {
@@ -37,6 +43,10 @@ export async function saveRhythm(_prev: { ok?: boolean } | undefined, f: FormDat
     quietEnd: hm(f.get("quietEnd"), DEFAULTS.quietEnd),
     maxPushesPerDay: Math.min(Math.max(Number(f.get("maxPushesPerDay")) || DEFAULTS.maxPushesPerDay, 1), 60),
     maxPushesPerHour: Math.min(Math.max(Number(f.get("maxPushesPerHour")) || DEFAULTS.maxPushesPerHour, 1), 20),
+    alwaysOn: f.get("alwaysOn") === "on",
+    familyThreshold: threshold(f.get("familyThreshold"), DEFAULTS.familyThreshold),
+    quietThreshold: threshold(f.get("quietThreshold"), DEFAULTS.quietThreshold),
+    stopWorkPush: f.get("stopWorkPush") === "on",
   };
   const value = JSON.stringify(r);
   await prisma.jarvisSetting.upsert({ where: { key: "rhythm" }, create: { key: "rhythm", value }, update: { value } });

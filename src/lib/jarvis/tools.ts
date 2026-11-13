@@ -420,25 +420,75 @@ export async function respawnRecurringTask(task: {
   return nextDue;
 }
 
-// Near-duplicate open task by trigram similarity; ILIKE fallback.
+// Same normalisation and Dice score as titleSimilarity in services/listener/src/pure.js (copied, not imported).
+const TITLE_STOP = new Set(["a", "an", "the", "to", "of", "for", "and", "or", "on", "in", "at", "by", "with", "from", "please", "is", "are", "be", "it", "this", "that", "my", "me", "his", "her", "their"]);
+function titleTokens(s: string): string[] {
+  return [
+    ...new Set(
+      s
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, " ")
+        .split(/\s+/)
+        .filter((w) => w && !TITLE_STOP.has(w))
+        .map((w) => (w.length > 3 && w.endsWith("s") ? w.slice(0, -1) : w)),
+    ),
+  ];
+}
+function titleSimilarity(a: string, b: string): number {
+  const A = titleTokens(a);
+  const B = titleTokens(b);
+  if (!A.length || !B.length) return 0;
+  const setB = new Set(B);
+  const shared = A.filter((t) => setB.has(t)).length;
+  return (2 * shared) / (A.length + B.length);
+}
+
+// Differing words that carry identity: a number, or a capitalised word that is not the first
+// word of the title (same rule as isDuplicateTask in services/listener/src/pure.js, copied).
+function differsOnNameOrNumber(a: string, b: string): boolean {
+  const side = (title: string) => {
+    const m = new Map<string, boolean>();
+    title
+      .split(/[^A-Za-z0-9]+/)
+      .filter(Boolean)
+      .forEach((w, i) => {
+        if (TITLE_STOP.has(w.toLowerCase())) return;
+        const l = w.toLowerCase();
+        const n = l.length > 3 && l.endsWith("s") ? l.slice(0, -1) : l;
+        const ident = /\d/.test(w) || (i > 0 && /^[A-Z]/.test(w));
+        m.set(n, (m.get(n) || false) || ident);
+      });
+    return m;
+  };
+  const A = side(a);
+  const B = side(b);
+  for (const [n, ident] of A) if (!B.has(n) && ident) return true;
+  for (const [n, ident] of B) if (!A.has(n) && ident) return true;
+  return false;
+}
+
+// Near-duplicate open task: normalised word overlap >= 0.7 and no differing name or number.
+// (The old trigram stage is gone: character similarity flagged "Send invoice to Bola" against
+// "Send invoice to Tola".)
 async function findDuplicateTask(
   title: string,
 ): Promise<{ id: string; title: string; projectName: string | null } | null> {
-  try {
-    const rows = await prisma.$queryRaw<{ id: string; title: string; projectName: string | null }[]>`
-      SELECT t.id, t.title, p.name AS "projectName"
-      FROM "JarvisTask" t LEFT JOIN "JarvisProject" p ON p.id = t."projectId"
-      WHERE t.status <> 'done' AND similarity(t.title, ${title}) > 0.55
-      ORDER BY similarity(t.title, ${title}) DESC LIMIT 1`;
-    if (rows[0]) return rows[0];
-  } catch {
-    const t = await prisma.jarvisTask.findFirst({
-      where: { title: { equals: title, mode: "insensitive" }, status: { not: "done" } },
-      include: { project: { select: { name: true } } },
-    });
-    if (t) return { id: t.id, title: t.title, projectName: t.project?.name ?? null };
+  const open = await prisma.jarvisTask.findMany({
+    where: { status: { not: "done" } },
+    orderBy: { createdAt: "desc" },
+    take: 500,
+    include: { project: { select: { name: true } } },
+  });
+  let best: (typeof open)[number] | null = null;
+  let bestScore = 0;
+  for (const t of open) {
+    const sc = titleSimilarity(title, t.title);
+    if (sc >= 0.7 && sc > bestScore && !differsOnNameOrNumber(title, t.title)) {
+      best = t;
+      bestScore = sc;
+    }
   }
-  return null;
+  return best ? { id: best.id, title: best.title, projectName: best.project?.name ?? null } : null;
 }
 
 const MAX_DOC_READ = 60_000; // chars returned to the model per read_document
@@ -756,7 +806,7 @@ export async function executeTool(
       if (input.allowDuplicate !== true) {
         const dup = await findDuplicateTask(title);
         if (dup) {
-          return `DUPLICATE GUARD: an open task "${dup.title}"${dup.projectName ? ` on ${dup.projectName}` : ""} (id:${dup.id}) already exists. Nothing was created. Update or complete that task instead, or call create_task again with allowDuplicate: true if this is genuinely a different task.`;
+          return `DUPLICATE GUARD: an open task "${dup.title}"${dup.projectName ? ` on ${dup.projectName}` : ""} (id:${dup.id}) already exists. Nothing was created; tell the owner it is already on the list. Update or complete that task instead, or call create_task again with allowDuplicate: true if this is genuinely a different task.`;
         }
       }
       const ref = await resolveProject(input);

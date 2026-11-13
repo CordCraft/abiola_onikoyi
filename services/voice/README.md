@@ -8,7 +8,7 @@ FastAPI service that gives Jarvis its ears and its voice.
 
 ## Endpoints
 
-All except `/health` need the header `x-voice-secret: <VOICE_SECRET>` (timing-safe compare).
+All except `/health` need either the header `x-voice-secret: <VOICE_SECRET>` (timing-safe compare) or a short-lived `x-voice-token`. The token is minted by the site route `/jarvis/api/voice/token` (session protected) as `base64url(exp).base64url(HMAC-SHA256(VOICE_SECRET, exp))`, where `exp` is unix seconds as a decimal string and the token is valid for 5 minutes. The browser uses it to call this service directly (no Netlify hop) and falls back to the site proxy on any failure. CORS allows `https://abiolaonikoyi.com` and `http://localhost:3000` (override with `VOICE_CORS_ORIGINS`, comma separated).
 
 | Method | Path | Body | Returns |
 | --- | --- | --- | --- |
@@ -17,7 +17,7 @@ All except `/health` need the header `x-voice-secret: <VOICE_SECRET>` (timing-sa
 | POST | `/stt` | multipart `audio` (webm/opus, mp4/aac, ogg, wav), optional `prompt`, `language` | `{text, language, durationSec}` |
 | POST | `/tts` | json `{text, voice?, speed?, format?}` | audio bytes (markdown stripped, capped at `MAX_TTS_CHARS`) |
 
-The default STT prompt lists Abiola, Onikoyi, Nikstalis, HopperTax, Onterra and similar names so they are spelled correctly. Send a `prompt` form field to override it.
+The default STT `initial_prompt` is built from `WHISPER_HINTS` (default `Jarvis, Nikstalis, HopperTax, Onterra, EraView, Najeeb, Hostfully, Deepcrest`) so those names are spelled correctly. Send a `prompt` form field to override it per request. Decoding uses beam size 1 (`WHISPER_BEAM`, default 1) for speed.
 
 ## Railway setup
 
@@ -25,12 +25,12 @@ The default STT prompt lists Abiola, Onikoyi, Nikstalis, HopperTax, Onterra and 
 2. Variables:
    - `VOICE_SECRET` (required): long random string. The same value goes on Netlify.
    - `WHISPER_MODEL` (default `small`): also used as a build arg, so the weights are baked into the image. Changing it needs a redeploy.
-   - Optional: `WHISPER_LANGUAGE` (default `en`, use `auto` for any language), `WHISPER_BEAM` (default 2), `DEFAULT_VOICE` (default `bm_george`), `MAX_TTS_CHARS` (default 1200).
+   - Optional: `WHISPER_LANGUAGE` (default `en`, `auto` = detect the language per utterance, slightly slower and less accurate on short clips), `WHISPER_BEAM` (default 1), `WHISPER_HINTS` (comma separated names, see above), `VOICE_CORS_ORIGINS`, `DEFAULT_VOICE` (default `bm_george`), `MAX_TTS_CHARS` (default 1200).
 3. Memory and CPU: `small` int8 plus Kokoro needs about 2 GB RAM and 2 vCPU to feel responsive (a 5 second utterance transcribes in roughly 1 to 2 seconds, a sentence of speech renders in 1 to 2 seconds). `base` or `tiny` fit in 1 GB. `medium` wants 4 GB.
 4. Generate a public domain for the service and put it in Netlify as `VOICE_SERVICE_URL` (no trailing slash).
 5. GPU: set `WHISPER_MODEL=large-v3-turbo`, `WHISPER_DEVICE=cuda` and use a CUDA base image with cuDNN 9 (`nvidia/cuda:12.x-cudnn-runtime`). On CPU, `large-v3-turbo` is too slow for conversation.
 
-Netlify variables: `VOICE_SERVICE_URL`, `VOICE_SECRET`. Without `VOICE_SERVICE_URL` the site proxy answers 503 and Jarvis falls back to the browser voice.
+Netlify variables: `VOICE_SERVICE_URL`, `VOICE_SECRET`, and optionally `VOICE_PUBLIC_URL` (the URL handed to the browser for the direct path; defaults to `VOICE_SERVICE_URL`). Without `VOICE_SERVICE_URL` the site proxy answers 503 and Jarvis falls back to the browser voice.
 
 ## Local run
 

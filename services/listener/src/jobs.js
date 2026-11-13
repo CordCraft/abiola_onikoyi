@@ -32,6 +32,10 @@ export async function fail(id, error, retry = false) {
   );
 }
 
+export async function cancel(id, reason) {
+  await q(`UPDATE "JarvisJob" SET status = 'cancelled', error = $2, "finishedAt" = now() WHERE id = $1`, [id, String(reason).slice(0, 500)]);
+}
+
 // Jobs stuck in "running" after a restart are put back.
 export async function recoverStuck() {
   await q(`UPDATE "JarvisJob" SET status = 'queued' WHERE target = 'listener' AND status = 'running' AND "startedAt" < now() - interval '10 minutes' AND attempts < 3`);

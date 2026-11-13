@@ -4,6 +4,7 @@ import { useActionState, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { decide, type SignalResult } from "@/app/jarvis/signals/actions";
 import { SubmitButton } from "@/components/SubmitButton";
+import { resolvedByLabel } from "@/lib/jarvis/labels";
 
 export type SignalView = {
   id: string;
@@ -21,6 +22,10 @@ export type SignalView = {
   when: string | null;
   createdAt: string;
   resultNote: string | null;
+  resolvedBy: string | null;
+  resolution: string | null;
+  resolvedAt: string | null;
+  cleanup: { close: { title: string; evidence: string }[]; merge: { keep: string; drop: string[] }[] } | null;
 };
 
 const kindTone: Record<string, string> = {
@@ -41,6 +46,9 @@ export function SignalCard({ s, compact = false }: { s: SignalView; compact?: bo
   const [state, action] = useActionState<SignalResult, FormData>(decide, undefined);
   const [text, setText] = useState(s.replyText ?? "");
   const open = ["new", "pushed", "snoozed", "failed"].includes(s.status);
+  const closedByJarvis = s.status === "resolved" || s.status === "expired";
+  const isCleanup = s.cleanup !== null;
+  const mergeCount = s.cleanup ? s.cleanup.merge.reduce((n, g) => n + g.drop.length, 0) : 0;
 
   // The listener applies approved actions within seconds; refresh to show the outcome.
   useEffect(() => {
@@ -66,10 +74,60 @@ export function SignalCard({ s, compact = false }: { s: SignalView; compact?: bo
           {s.score}
         </span>
       </div>
-      {s.detail && <p className={`mt-1.5 whitespace-pre-line text-sm text-zinc-600 ${compact ? "line-clamp-3" : ""}`}>{s.detail}</p>}
+      {s.cleanup ? (
+        <div className="mt-2">
+          <p className="text-sm text-zinc-600">
+            {s.cleanup.close.length} item{s.cleanup.close.length === 1 ? "" : "s"} to close, {mergeCount} duplicate{mergeCount === 1 ? "" : "s"} to merge. Nothing changes until you approve, and Undo works afterwards.
+          </p>
+          {!compact && (
+            <div className="mt-3 max-h-80 space-y-3 overflow-y-auto rounded-xl bg-zinc-50 p-3 ring-1 ring-zinc-200">
+              {s.cleanup.close.length > 0 && (
+                <div>
+                  <h4 className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">To close</h4>
+                  <ul className="mt-1 space-y-1.5">
+                    {s.cleanup.close.map((c, i) => (
+                      <li key={i} className="text-sm">
+                        <span className="font-medium text-zinc-800">{c.title}</span>
+                        {c.evidence && <span className="block text-xs text-zinc-500">{c.evidence}</span>}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {s.cleanup.merge.length > 0 && (
+                <div>
+                  <h4 className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Duplicates to merge</h4>
+                  <ul className="mt-1 space-y-1.5">
+                    {s.cleanup.merge.map((g, i) => (
+                      <li key={i} className="text-sm">
+                        <span className="font-medium text-zinc-800">Keep: {g.keep}</span>
+                        <span className="block text-xs text-zinc-500">Merging in: {g.drop.join("; ")}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+          {compact && (
+            <a href={`/jarvis/signals/${s.id}`} className="mt-1 inline-block text-xs font-medium text-indigo-600">
+              Review the list
+            </a>
+          )}
+        </div>
+      ) : (
+        s.detail && <p className={`mt-1.5 whitespace-pre-line text-sm text-zinc-600 ${compact ? "line-clamp-3" : ""}`}>{s.detail}</p>
+      )}
       {s.why && !compact && <p className="mt-2 text-xs text-zinc-400">{s.why}</p>}
 
-      {!open && (
+      {closedByJarvis && (
+        <p className="mt-3 text-sm text-zinc-500">
+          {resolvedByLabel[s.resolvedBy ?? ""] ?? "Closed by Jarvis"}
+          {s.resolution ? `: ${s.resolution}` : "."}
+          {s.resolvedAt ? ` (${s.resolvedAt})` : ""}
+        </p>
+      )}
+      {!open && !closedByJarvis && (
         <p className="mt-3 text-sm text-zinc-500">
           {s.status === "applied" ? "Done." : s.status === "approved" ? "Working on it..." : s.status === "undone" ? "Undone." : s.status === "dismissed" ? "Dismissed." : s.status}
           {s.resultNote ? ` ${s.resultNote}` : ""}
@@ -104,15 +162,17 @@ export function SignalCard({ s, compact = false }: { s: SignalView; compact?: bo
           {open && (
             <>
               <input type="hidden" name="hours" value="3" />
-              <SubmitButton name="action" value="snooze" className="rounded-full border border-zinc-300 px-3 py-2 text-sm text-zinc-600 hover:bg-white">
-                Later
-              </SubmitButton>
+              {!isCleanup && (
+                <SubmitButton name="action" value="snooze" className="rounded-full border border-zinc-300 px-3 py-2 text-sm text-zinc-600 hover:bg-white">
+                  Later
+                </SubmitButton>
+              )}
               <SubmitButton name="action" value="dismiss" className="rounded-full px-3 py-2 text-sm text-zinc-500 hover:bg-zinc-100">
                 Not now
               </SubmitButton>
             </>
           )}
-          {s.status === "applied" && s.actionType !== "send_reply" && (
+          {(closedByJarvis || (s.status === "applied" && s.actionType !== "send_reply")) && (
             <SubmitButton name="action" value="undo" className="rounded-full border border-zinc-300 px-3 py-2 text-sm text-zinc-600 hover:bg-white">
               Undo
             </SubmitButton>

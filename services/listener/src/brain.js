@@ -1,10 +1,13 @@
 import { config } from './config.js';
-import { q, one, newId } from './db.js';
+import { q, one, newId, getSetting, v3State } from './db.js';
 import { structured } from './llm.js';
-import { goalsAndProjects, people, openSignals, upcoming, fmtEvents, rhythm, OWNER_BRIEF } from './context.js';
+import { goalsAndProjects, people, openSignals, upcoming, fmtEvents, rhythm, behaviour, OWNER_BRIEF } from './context.js';
 import { clip } from './util.js';
 import { pushSignal } from './push.js';
 import { enqueue } from './jobs.js';
+import { selectMergeTarget, OPEN_STATUSES, personKeysForOutgoing, hostfullyHealthy, adjustScore, behaviourText } from './pure.js';
+import { isAirbnbGuestNotification } from './hostfully.js';
+import { reconcileFromTriage } from './reconcile.js';
 
 // The triage brain: reads new messages in small batches, finds what matters, and turns it
 // into signals with one-tap actions. The model proposes; this code decides what may run
@@ -22,7 +25,7 @@ const SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['inbound_ids', 'kind', 'title', 'detail', 'why', 'score', 'project_id', 'same_as_signal_id', 'due_at', 'person', 'calendar', 'task', 'reply'],
+        required: ['inbound_ids', 'kind', 'title', 'detail', 'why', 'score', 'project_id', 'same_as_signal_id', 'due_at', 'expires_at', 'person', 'calendar', 'task', 'reply'],
         properties: {
           inbound_ids: { type: 'array', items: { type: 'string' } },
           kind: { type: 'string', enum: ['event', 'task', 'reply', 'opportunity', 'followup', 'fyi'] },
@@ -33,6 +36,7 @@ const SCHEMA = {
           project_id: { type: 'string' },
           same_as_signal_id: { type: 'string' },
           due_at: { type: 'string' },
+          expires_at: { type: 'string' },
           person: {
             type: 'object',
             additionalProperties: false,
@@ -95,6 +99,8 @@ title: under 70 characters, starts with the essence (for example "Taslim wants t
 project_id: the id of the matching project from the list, or "". same_as_signal_id: if this is the same thing as an open signal listed below, its id (then it only updates that one), else "".
 person: the main other person (key = phone digits or lowercase email, from the message sender), relation guess, org if known; empty strings if none.
 due_at: ISO time it matters by, or "".
+expires_at: ISO time after which this item no longer matters (the guest's checkout, the meeting start, the deadline, the day an offer lapses), or "" if it stays relevant until done.
+Items in the open list marked [DONE] are already finished: do not create them again. If a new message is the same thing as a [DONE] item, return nothing for it unless it clearly reopens the matter with new facts.
 inbound_ids: the message ids this item comes from. Group several messages about one thing into one item.
 Fill unused sub-objects with empty strings and false. Never invent facts that are not in the messages. Never use em dashes.`;
 
@@ -134,17 +140,28 @@ export async function triageOnce() {
   // Old backlog (more than 3 days) is kept as memory but not triaged.
   const stale = batch.filter((m) => Date.now() - new Date(m.occurredAt).getTime() > 3 * 864e5);
   if (stale.length) await q(`UPDATE "JarvisInbound" SET "triagedAt" = now(), triage = '{"skipped":"old"}' WHERE id = ANY($1)`, [stale.map((m) => m.id)]);
-  const fresh = batch.filter((m) => !stale.includes(m));
+  let fresh = batch.filter((m) => !stale.includes(m));
+
+  // While Hostfully is polling healthily it is the source of truth for guest messages: the
+  // Airbnb notification email about the same message is kept as memory but not triaged.
+  if (fresh.length && hostfullyHealthy(await getSetting('hostfully_status', null))) {
+    const dupes = fresh.filter((m) => m.direction === 'in' && ['gmail', 'outlook'].includes(m.source) && isAirbnbGuestNotification(m));
+    if (dupes.length) {
+      await q(`UPDATE "JarvisInbound" SET "triagedAt" = now(), triage = '{"skipped":"hostfully"}' WHERE id = ANY($1)`, [dupes.map((m) => m.id)]);
+      fresh = fresh.filter((m) => !dupes.includes(m));
+    }
+  }
   if (!fresh.length) return batch.length;
 
   const r = await rhythm();
   const ctx = { tz: r.tz };
-  const [{ goals, projects, ventures }, known, open, events, history] = await Promise.all([
+  const [{ goals, projects, ventures }, known, open, events, history, learned] = await Promise.all([
     goalsAndProjects(),
     people(),
     openSignals(),
     upcoming(10),
     threadContext(fresh),
+    behaviour(),
   ]);
   const nowLocal = new Date().toLocaleString('en-GB', { timeZone: r.tz, dateStyle: 'full', timeStyle: 'short' });
 
@@ -159,7 +176,9 @@ export async function triageOnce() {
         `Projects (id | name | status | priority):\n${projects.map((p) => `- ${p.id} | ${p.name}${p.venture ? ` [${p.venture}]` : ''} | ${p.status} | ${p.priority}`).join('\n') || '(none)'}`,
         `Known people:\n${known.map((p) => `- ${p.key} ${p.name || ''} ${p.relation ? `(${p.relation})` : ''} ${p.org || ''}`.trim()).join('\n') || '(none yet)'}`,
         `Calendar next 10 days:\n${fmtEvents(events, r.tz)}`,
-        `Open signals (id | kind | title):\n${open.map((s) => `- ${s.id} | ${s.kind} | ${s.title}`).join('\n') || '(none)'}`,
+        ...(behaviourText(learned) ? [`How he works (learned from his own behaviour; let it shape scores, never hide anything urgent):
+${behaviourText(learned)}`] : []),
+        `Open signals (id | kind | title):\n${open.map((s) => `- ${s.id} | ${s.kind} | ${s.title}${['applied', 'resolved'].includes(s.status) ? ` [DONE: ${s.status}]` : ''}`).join('\n') || '(none)'}`,
       ].join('\n\n'),
     },
   ];
@@ -182,10 +201,14 @@ export async function triageOnce() {
     const ids = (item.inbound_ids || []).filter((id) => freshIds.has(id));
     if (!ids.length) continue;
     await upsertPerson(item, byId.get(ids[0]));
-    await saveSignal(item, ids, byId, r).catch((e) => console.error('[brain] save signal', e.message));
+    await saveSignal(item, ids, byId, r, learned).catch((e) => console.error('[brain] save signal', e.message));
   }
   await q(`UPDATE "JarvisInbound" SET "triagedAt" = now(), triage = '{"ok":true}' WHERE id = ANY($1)`, [fresh.map((m) => m.id)]);
   await touchPeople(fresh);
+  // Anything the owner wrote may have answered an open item: close those loops now.
+  if (fresh.some((m) => m.direction === 'out')) {
+    await reconcileFromTriage().catch((e) => console.error('[brain] reconcile', e.message));
+  }
   return batch.length;
 }
 
@@ -193,7 +216,8 @@ function validIso(s) {
   return s && !Number.isNaN(new Date(s).getTime());
 }
 
-async function saveSignal(item, ids, byId, r) {
+// Returns { id, merged } for the signal created or refreshed, or null when nothing was saved.
+export async function saveSignal(item, ids, byId, r, learned = null) {
   const first = byId.get(ids[0]);
   let action = null;
   let autonomy = 'ask';
@@ -235,37 +259,74 @@ async function saveSignal(item, ids, byId, r) {
     };
   }
 
-  const score = Math.max(0, Math.min(100, Math.round(item.score || 0)));
+  const score = adjustScore(Math.max(0, Math.min(100, Math.round(item.score || 0))), item.kind, learned);
   const projectId = item.project_id && (await one('SELECT id FROM "JarvisProject" WHERE id = $1', [item.project_id])) ? item.project_id : null;
 
   // Same thing as an open signal: refresh it rather than nagging twice.
   if (item.same_as_signal_id) {
-    const existing = await one(`SELECT id, "inboundIds" FROM "JarvisSignal" WHERE id = $1`, [item.same_as_signal_id]);
-    if (existing) {
+    const existing = await one(`SELECT id, status, "inboundIds" FROM "JarvisSignal" WHERE id = $1`, [item.same_as_signal_id]);
+    // The model matched something already finished: nothing new to raise.
+    if (existing && existing.status === 'resolved') return null;
+    // Only an open signal is refreshed; anything else falls through to a fresh card.
+    if (existing && OPEN_STATUSES.includes(existing.status)) {
       const merged = [...new Set([...(existing.inboundIds || []), ...ids])];
       await q(
         `UPDATE "JarvisSignal" SET detail = $2, score = GREATEST(score, $3), "inboundIds" = $4, action = COALESCE($5, action), "updatedAt" = now() WHERE id = $1`,
         [existing.id, item.detail, score, JSON.stringify(merged), action ? JSON.stringify(action) : null],
       );
-      return;
+      return { id: existing.id, merged: true };
+    }
+  }
+
+  const threadKey = first.threadKey || null;
+  const expiresAt = validIso(item.expires_at) ? new Date(item.expires_at) : null;
+
+  // Same thread, same kind, still open: add to the existing card instead of making a second one.
+  // A finished card (applied, resolved, expired, dismissed) is never merged into: new activity
+  // on the thread gets a fresh card that pushes normally.
+  if (threadKey && v3State.ready) {
+    const rows = await q(
+      `SELECT id, status, "inboundIds", "updatedAt" FROM "JarvisSignal" WHERE "threadKey" = $1 AND kind = $2 AND status = ANY($3) AND "createdAt" > now() - interval '30 days'`,
+      [threadKey, item.kind, OPEN_STATUSES],
+    );
+    const target = selectMergeTarget(rows);
+    if (target) {
+      const merged = [...new Set([...(target.inboundIds || []), ...ids])];
+      await q(
+        `UPDATE "JarvisSignal" SET detail = $2, score = GREATEST(score, $3), "inboundIds" = $4, action = COALESCE($5, action),
+           "expiresAt" = COALESCE($6, "expiresAt"), "updatedAt" = now() WHERE id = $1`,
+        [target.id, item.detail, score, JSON.stringify(merged), action ? JSON.stringify(action) : null, expiresAt],
+      );
+      return { id: target.id, merged: true };
     }
   }
 
   const id = newId();
-  await q(
-    `INSERT INTO "JarvisSignal" (id, kind, title, detail, why, score, source, "inboundIds", "projectId", "personKey", action, autonomy, status, "dueAt", "updatedAt")
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'new',$13, now())`,
-    [id, item.kind, clip(item.title, 140), item.detail, item.why, score, first.source, JSON.stringify(ids), projectId, item.person.key || null, action ? JSON.stringify(action) : null, autonomy, validIso(item.due_at) ? new Date(item.due_at) : null],
-  );
+  const base = [id, item.kind, clip(item.title, 140), item.detail, item.why, score, first.source, JSON.stringify(ids), projectId, item.person.key || null, action ? JSON.stringify(action) : null, autonomy, validIso(item.due_at) ? new Date(item.due_at) : null];
+  if (v3State.ready) {
+    await q(
+      `INSERT INTO "JarvisSignal" (id, kind, title, detail, why, score, source, "inboundIds", "projectId", "personKey", action, autonomy, status, "dueAt", "threadKey", "expiresAt", "updatedAt")
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'new',$13,$14,$15, now())`,
+      [...base, threadKey, expiresAt],
+    );
+  } else {
+    // The v3 columns are not there yet (the site adds them): save the card the old way.
+    await q(
+      `INSERT INTO "JarvisSignal" (id, kind, title, detail, why, score, source, "inboundIds", "projectId", "personKey", action, autonomy, status, "dueAt", "updatedAt")
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'new',$13, now())`,
+      base,
+    );
+  }
 
   if (autonomy === 'auto' && action) {
     await enqueue('apply_signal', { signalId: id, auto: true });
   } else if (item.kind !== 'fyi') {
     await pushSignal(id).catch((e) => console.error('[brain] push', e.message));
   }
+  return { id, merged: false };
 }
 
-async function upsertPerson(item, msg) {
+export async function upsertPerson(item, msg) {
   const key = String(item.person?.key || '').toLowerCase().trim();
   if (!key) return;
   const importance = item.person.relation === 'family' ? 90 : ['client', 'partner', 'investor'].includes(item.person.relation) ? 70 : item.person.relation === 'team' ? 55 : 30;
@@ -285,7 +346,12 @@ async function upsertPerson(item, msg) {
 
 async function touchPeople(messages) {
   for (const m of messages) {
-    const key = String(m.direction === 'out' ? '' : m.sender || '').toLowerCase();
+    if (m.direction === 'out') {
+      const keys = personKeysForOutgoing(m);
+      if (keys.length) await q(`UPDATE "JarvisPerson" SET "lastOutboundAt" = GREATEST(COALESCE("lastOutboundAt", 'epoch'), $2) WHERE key = ANY($1)`, [keys, m.occurredAt]).catch(() => {});
+      continue;
+    }
+    const key = String(m.sender || '').toLowerCase();
     if (!key) continue;
     await q(`UPDATE "JarvisPerson" SET "lastInboundAt" = GREATEST(COALESCE("lastInboundAt", 'epoch'), $2) WHERE key = $1`, [key, m.occurredAt]).catch(() => {});
   }

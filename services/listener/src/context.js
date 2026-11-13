@@ -1,6 +1,7 @@
 import { q, getSetting } from './db.js';
 import { config } from './config.js';
 import { listEvents } from './calendar.js';
+import { buildRhythm } from './pure.js';
 
 // The owner's world, compact enough to put in front of the model on every triage call.
 
@@ -13,22 +14,24 @@ export const DEFAULT_RHYTHM = {
   familyEnd: '21:30',
   quietStart: '22:30',
   quietEnd: '06:30',
-  maxPushesPerDay: 15,
-  maxPushesPerHour: 4,
+  maxPushesPerDay: 40,
+  maxPushesPerHour: 8,
+  // v3: always on. Important items get through at any hour; the rest wait for the digest.
+  alwaysOn: true,
+  familyThreshold: 70,
+  quietThreshold: 70,
+  stopWorkPush: false,
 };
 
 export async function rhythm() {
   const saved = (await getSetting('rhythm', {})) || {};
   const learned = (await getSetting('rhythm_learned', {})) || {};
-  return { ...DEFAULT_RHYTHM, ...learnedDefaults(learned), ...saved, learned };
+  return buildRhythm(DEFAULT_RHYTHM, saved, learned);
 }
 
-function learnedDefaults(l) {
-  // Learned hours only fill in where the owner has not set something explicitly.
-  const out = {};
-  if (l.firstActive) out.quietEnd = l.firstActive;
-  if (l.lastActive) out.quietStart = l.lastActive;
-  return out;
+// What learn.js worked out about how he behaves (null until the first nightly run).
+export async function behaviour() {
+  return (await getSetting('behaviour', null)) || null;
 }
 
 export async function goalsAndProjects() {
@@ -49,13 +52,23 @@ export async function people(limit = 60) {
   return q(`SELECT key, name, relation, org, importance FROM "JarvisPerson" ORDER BY importance DESC, "lastInboundAt" DESC NULLS LAST LIMIT $1`, [limit]).catch(() => []);
 }
 
+// Open signals plus what was recently done or closed (labelled by status), so the triage
+// model recognises finished business and does not recreate it.
 export async function openSignals(days = 7) {
-  return q(
+  const open = await q(
     `SELECT id, kind, title, status FROM "JarvisSignal"
      WHERE "createdAt" > now() - ($1 || ' days')::interval AND status IN ('new','pushed','snoozed','approved')
      ORDER BY "createdAt" DESC LIMIT 60`,
     [String(days)],
   ).catch(() => []);
+  const done = await q(
+    `SELECT id, kind, title, status FROM "JarvisSignal"
+     WHERE "updatedAt" > now() - ($1 || ' days')::interval AND status IN ('applied','resolved')
+       AND kind NOT IN ('plan','fyi')
+     ORDER BY "updatedAt" DESC LIMIT 30`,
+    [String(days)],
+  ).catch(() => []);
+  return [...open, ...done];
 }
 
 export async function upcoming(days = 7) {

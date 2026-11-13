@@ -2,7 +2,8 @@ import webpush from 'web-push';
 import { config } from './config.js';
 import { q, one } from './db.js';
 import { rhythm } from './context.js';
-import { minutesIn, parseHm, clip } from './util.js';
+import { minutesIn, clip } from './util.js';
+import { gateDecision } from './pure.js';
 
 // Push notifications with manners: quiet hours, an hourly and a daily cap, and
 // low-value items held back for the digest instead of interrupting.
@@ -45,27 +46,14 @@ export async function sendPush(payload) {
   return { sent };
 }
 
-function inWindow(nowMin, startMin, endMin) {
-  return startMin <= endMin ? nowMin >= startMin && nowMin < endMin : nowMin >= startMin || nowMin < endMin;
-}
-
 export async function mayInterrupt(score) {
   const r = await rhythm();
-  const now = minutesIn(r.tz);
-  const quiet = inWindow(now, parseHm(r.quietStart, 22 * 60 + 30), parseHm(r.quietEnd, 6 * 60 + 30));
-  if (quiet && score < 95) return { ok: false, reason: 'quiet hours' };
-  // During family time only family-grade urgency gets through.
-  const family = inWindow(now, parseHm(r.familyStart, 18 * 60 + 30), parseHm(r.familyEnd, 21 * 60 + 30));
-  if (family && score < 85) return { ok: false, reason: 'family time' };
   const counts = await one(
     `SELECT count(*) FILTER (WHERE "pushedAt" > now() - interval '1 hour')::int AS hour,
             count(*) FILTER (WHERE "pushedAt" > now() - interval '24 hours')::int AS day
      FROM "JarvisSignal" WHERE "pushedAt" IS NOT NULL`,
   );
-  if (counts.day >= r.maxPushesPerDay && score < 90) return { ok: false, reason: 'daily cap' };
-  if (counts.hour >= r.maxPushesPerHour && score < 85) return { ok: false, reason: 'hourly cap' };
-  if (score < 45) return { ok: false, reason: 'low score, digest only' };
-  return { ok: true };
+  return gateDecision(r, { nowMin: minutesIn(r.tz), score, counts });
 }
 
 const VERB = {

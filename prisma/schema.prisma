@@ -112,10 +112,15 @@ model JarvisTask {
   completedAt DateTime?
   // "daily" | "weekly" | "monthly": completing the task spawns the next occurrence
   recurrence  String?
+  sourceSignalId String? // the signal that created this task
+  threadKey      String?
+  closedBy       String? // reply | reconcile | cleanup | manual
+  closeNote      String?
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 
   @@index([status, dueDate])
+  @@index([threadKey])
 }
 
 model JarvisNote {
@@ -704,17 +709,42 @@ model JarvisSignal {
   personKey   String?
   action      Json? // { type, payload } the one-tap action
   autonomy    String    @default("ask") // auto | ask
-  status      String    @default("new") // new | pushed | approved | applied | dismissed | snoozed | failed | undone
+  status      String    @default("new") // new | pushed | approved | applied | dismissed | snoozed | failed | undone | resolved | expired
   result      Json?
   dueAt       DateTime?
   snoozeUntil DateTime?
   pushedAt    DateTime?
   decidedAt   DateTime?
+  threadKey   String? // the conversation this came from (merge and close key)
+  expiresAt   DateTime? // when the item stops mattering
+  resolvedAt  DateTime?
+  resolvedBy  String? // reply | reconcile | expired | manual | other_party
+  resolution  String? // one line of evidence
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
   @@index([status, score])
   @@index([createdAt])
+  @@index([threadKey])
+}
+
+// The permanent memory of what got done (closed by a reply, by Jarvis, by expiry or by hand).
+model JarvisLedger {
+  id        String   @id @default(cuid())
+  kind      String // signal | task | cleanup
+  title     String
+  summary   String?
+  personKey String?
+  threadKey String?
+  signalId  String?
+  taskId    String?
+  closedBy  String? // reply | reconcile | expired | manual | other_party | cleanup
+  evidence  String?
+  closedAt  DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([closedAt])
 }
 
 // Work for the Railway listener or one of your computers.
@@ -747,6 +777,11 @@ model JarvisPerson {
   lastInboundAt  DateTime?
   lastOutboundAt DateTime?
   openLoops      Int       @default(0)
+  medianReplyMins Int?
+  answerRate      Float?
+  dismissRate     Float?
+  behaviour       String? // JSON
+  lastNudgedAt    DateTime?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 }
