@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 process.env.JARVIS_ENCRYPTION_KEY ||= 'test';
 process.env.ANTHROPIC_API_KEY ||= 'test';
 process.env.DATA_DIR ||= './.data';
+process.env.TRIAGE_MAX_WAIT_MIN = '0'; // no waiting in tests
 
 const { ensureTables, q, one, pool } = await import('../src/db.js');
 const { storeInbound } = await import('../src/accounts.js');

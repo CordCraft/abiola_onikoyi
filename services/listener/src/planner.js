@@ -90,7 +90,7 @@ You are Jarvis planning his day. Build a realistic, time-blocked plan for today 
     `Active projects:\n${projects.slice(0, 20).map((p) => `- ${p.name} (${p.status}, ${p.priority})`).join('\n')}`,
   ].join('\n\n');
 
-  const plan = await structured({ model: config.plannerModel, system, user, schema: PLAN_SCHEMA, effort: 'medium' });
+  const plan = await structured({ model: config.plannerModel, system, user, schema: PLAN_SCHEMA, effort: 'medium', maxTokens: 6000, label: 'planner' });
 
   const blocksText = plan.blocks.map((b) => `${b.start}-${b.end} ${b.title}`).join('\n');
   const movesText = plan.top_moves.map((m, i) => `${i + 1}. ${m.title} (${m.why})`).join('\n');
