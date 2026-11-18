@@ -6,11 +6,13 @@ import { profile } from "@/content/profile";
 import { buildContext } from "@/lib/jarvis/context";
 import { jarvisTools, executeTool, type SavedRecord } from "@/lib/jarvis/tools";
 import { indexRecord } from "@/lib/jarvis/embeddings";
+import { withHistoryCache, steppedWindow } from "@/lib/jarvis/prompt-cache";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MODEL = "claude-opus-5-5";
+const TITLE_MODEL = "claude-haiku-5-5";
 // Whole-turn cap across all invocations (research turns span several).
 const MAX_TOOL_LOOPS = 12;
 // One Netlify invocation must stay safely under the platform's streamed
@@ -39,6 +41,9 @@ type TurnState = {
   nudged: boolean;
   loopIndex: number;
   voice: boolean;
+  // Memory snapshot built when the turn began. Kept so a resumed invocation sends the exact
+  // same bytes and the prompt cache is read instead of re-paid.
+  context?: string;
 };
 
 const serverTools = [
@@ -46,8 +51,12 @@ const serverTools = [
   { type: "web_fetch_20260209" as const, name: "web_fetch" as const, max_uses: 6 },
 ];
 
-function buildSystem(context: string, voice: boolean): string {
-  return `You are Jarvis, ${profile.name}'s personal chief-of-staff and second brain. You have live access to their ventures, projects, tasks, goals, notes, decisions and document library (snapshot below). Be concise, direct, and action-oriented. Do not use em dashes.
+// The system prompt is two blocks: the frozen instructions (identical on every request, so
+// tools + instructions form one cached prefix) and the per-turn part (voice mode and the live
+// memory snapshot). Each ends in a cache breakpoint; the snapshot is built once per turn and
+// re-read on every tool-loop iteration.
+function buildSystem(context: string, voice: boolean): Anthropic.TextBlockParam[] {
+  const instructions = `You are Jarvis, ${profile.name}'s personal chief-of-staff and second brain. You have live access to their ventures, projects, tasks, goals, notes, decisions and document library (snapshot below). Be concise, direct, and action-oriented. Do not use em dashes.
 
 ## How you save things (CRITICAL)
 Your write tools (create_project, update_project, create_task, create_tasks_bulk, complete_task, log_note, log_decision, set_goal, add_milestone, complete_milestone, file_document, save_document, file_note, ask_claude_code) apply IMMEDIATELY. There is no confirmation step. Hard rules:
@@ -94,8 +103,13 @@ Documents named "Playbook: ..." are reusable checklists. To instantiate one, rea
 
 ## Duplicates
 create_task and create_project refuse near-duplicates and tell you what exists. Prefer updating the existing record; only pass allowDuplicate when it is genuinely distinct.
-${voice ? `\n## Voice mode\nThe user is speaking and will hear your reply read aloud. Keep replies short and conversational: a few sentences, no markdown formatting, no headings, no bullet lists, no tables. Spell numbers naturally.\n` : ""}
+`;
+  const volatile = `${voice ? `\n## Voice mode\nThe user is speaking and will hear your reply read aloud. Keep replies short and conversational: a few sentences, no markdown formatting, no headings, no bullet lists, no tables. Spell numbers naturally.\n` : ""}
 ${context}`;
+  return [
+    { type: "text", text: instructions, cache_control: { type: "ephemeral" } },
+    { type: "text", text: volatile, cache_control: { type: "ephemeral" } },
+  ];
 }
 
 export async function POST(req: Request) {
@@ -284,7 +298,8 @@ export async function POST(req: Request) {
       where: { threadId: resolvedThreadId },
       orderBy: { createdAt: "asc" },
     });
-    let prior = priorAll.filter((m) => m.id !== savedUserMessageId).slice(-MAX_HISTORY_MESSAGES);
+    let prior = priorAll.filter((m) => m.id !== savedUserMessageId);
+    prior = steppedWindow(prior, MAX_HISTORY_MESSAGES);
     while (prior.length && prior[0].role === "assistant") prior = prior.slice(1);
 
     const wantsWrite =
@@ -310,7 +325,9 @@ export async function POST(req: Request) {
     };
   }
 
-  const context = await buildContext();
+  // A resumed invocation reuses the snapshot from the first one: identical bytes, cache read.
+  const context = turn.context ?? (await buildContext());
+  turn.context = context;
   const system = buildSystem(context, turn.voice);
   const client = new Anthropic();
   const invocationStart = Date.now();
@@ -388,7 +405,7 @@ export async function POST(req: Request) {
             thinking: { type: "adaptive" as const },
             // Opus 5.5 defaults to medium effort; Jarvis chat does real agent work.
             output_config: { effort: "high" as const },
-            messages: turn.messages,
+            messages: withHistoryCache(turn.messages),
           });
 
           messageStream.on("text", (delta) => {
@@ -412,6 +429,8 @@ export async function POST(req: Request) {
           });
 
           const response = await messageStream.finalMessage();
+          // One log line per model call: cache_read near zero on a long turn means something broke the prefix.
+          console.log(`jarvis/chat usage loop=${i} in=${response.usage.input_tokens} cache_read=${response.usage.cache_read_input_tokens ?? 0} cache_write=${response.usage.cache_creation_input_tokens ?? 0} out=${response.usage.output_tokens}`);
 
           const passText = response.content
             .filter((b): b is Anthropic.TextBlock => b.type === "text")
@@ -524,10 +543,11 @@ export async function POST(req: Request) {
           const looksDefault =
             !t?.title || (firstUser ? firstUser.content.startsWith(t.title.slice(0, 20)) : false);
           if (!looksDefault) return;
+          // A three-word title does not need the chat model.
           const r = await client.messages.create({
-            model: MODEL,
-            // Thinking is always on with Opus 5.5, so leave room beyond the title itself.
-            max_tokens: 1000,
+            model: TITLE_MODEL,
+            // Thinking is always on, so leave room beyond the title itself.
+            max_tokens: 600,
             output_config: { effort: "low" as const },
             system:
               "Name this conversation. Reply with ONLY a 3-6 word title, no quotes, no punctuation at the end.",

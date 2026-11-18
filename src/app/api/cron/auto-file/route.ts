@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { buildContext } from "@/lib/jarvis/context";
 import { jarvisTools, executeTool, type SavedRecord } from "@/lib/jarvis/tools";
 import { profile } from "@/content/profile";
+import { withHistoryCache } from "@/lib/jarvis/prompt-cache";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -55,9 +56,10 @@ export async function POST(req: Request) {
         model: MODEL,
         max_tokens: 8000,
         thinking: { type: "adaptive" },
-        system,
+        // Tools + snapshot are identical on every loop: cache them; the growing history tail too.
+        system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
         tools,
-        messages,
+        messages: withHistoryCache(messages),
       });
 
       if (response.stop_reason === "tool_use") {

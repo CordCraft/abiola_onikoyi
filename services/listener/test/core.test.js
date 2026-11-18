@@ -28,7 +28,7 @@ test('email cleanup', () => {
 });
 
 test('every module imports', async () => {
-  for (const m of ['config', 'db', 'accounts', 'gmail', 'outlook', 'calendar', 'context', 'llm', 'push', 'jobs', 'brain', 'executor', 'planner', 'whatsapp', 'voice']) {
+  for (const m of ['config', 'db', 'accounts', 'gmail', 'outlook', 'calendar', 'context', 'llm', 'push', 'jobs', 'brain', 'executor', 'planner', 'whatsapp', 'voice', 'gate']) {
     await import(`../src/${m}.js`);
   }
 });

@@ -9,6 +9,11 @@ export const config = {
   encryptionKey: env.JARVIS_ENCRYPTION_KEY || '',
   anthropicKey: env.ANTHROPIC_API_KEY || '',
   triageModel: env.TRIAGE_MODEL || 'claude-sonnet-5-5',
+  gateModel: env.GATE_MODEL || 'claude-haiku-5-5', // cheap first pass: drops messages that cannot matter
+  gateEnabled: env.TRIAGE_GATE !== 'off',
+  triageMinBatch: Number(env.TRIAGE_MIN_BATCH || 6),
+  triageMaxWaitMin: Number(env.TRIAGE_MAX_WAIT_MIN || 5),
+  triageMaxCallsPerHour: Number(env.TRIAGE_MAX_CALLS_PER_HOUR || 30),
   plannerModel: env.PLANNER_MODEL || 'claude-opus-5-5',
   siteUrl: (env.SITE_URL || 'https://abiolaonikoyi.com').replace(/\/$/, ''),
   vapidPublic: env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || env.VAPID_PUBLIC_KEY || '',

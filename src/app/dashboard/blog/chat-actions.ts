@@ -3,6 +3,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { verifySession } from "@/lib/dal";
 import { profile } from "@/content/profile";
+import { withHistoryCache } from "@/lib/jarvis/prompt-cache";
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
@@ -56,8 +57,9 @@ Respond with ONLY a JSON object (no code fences, no text outside it):
     const response = await client.messages.create({
       model: "claude-opus-4-8",
       max_tokens: 3500,
-      system,
-      messages,
+      // The draft sits in the system prompt and is resent every turn of the editing chat: cache it.
+      system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+      messages: withHistoryCache(messages),
     });
 
     const text = response.content

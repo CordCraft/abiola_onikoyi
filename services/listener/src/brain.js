@@ -5,6 +5,7 @@ import { goalsAndProjects, people, openSignals, upcoming, fmtEvents, rhythm, OWN
 import { clip } from './util.js';
 import { pushSignal } from './push.js';
 import { enqueue } from './jobs.js';
+import { prefilterReason, mustKeep, isUrgent, shouldTriageNow, makeLimiter } from './gate.js';
 
 // The triage brain: reads new messages in small batches, finds what matters, and turns it
 // into signals with one-tap actions. The model proposes; this code decides what may run
@@ -125,53 +126,154 @@ async function threadContext(batch) {
   return rows.map((m) => `(${m.threadKey}) ${m.direction === 'out' ? 'YOU' : m.senderName || m.sender}: ${clip(m.body, 300)}`).join('\n');
 }
 
-export async function triageOnce() {
+// ---- Cost control ---------------------------------------------------------------------------
+// Three steps, cheapest first, so the main model only reads what can matter:
+//   1. prefilter (code, free): acknowledgements, OTPs, media without caption, automated senders.
+//   2. gate (claude-haiku-5-5): drops what clearly needs nothing; unsure means keep.
+//   3. triage (claude-sonnet-5-5): batches of what is left, held a few minutes so a trickle of
+//      messages becomes one call instead of one call each (important people skip the wait).
+// The owner context (goals, projects, people, calendar) is a cached, byte-stable system block.
+
+const GATE_BATCH = 40;
+const limiter = makeLimiter(config.triageMaxCallsPerHour);
+let gateFailures = 0;
+let gateOffUntil = 0;
+
+const GATE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['drop_ids'],
+  properties: { drop_ids: { type: 'array', items: { type: 'string' } } },
+};
+
+const GATE_RULES = `You screen new WhatsApp messages and emails for a busy founder's chief of staff. For each message decide whether anything could need doing, deciding, scheduling, answering, remembering or following up. List in drop_ids ONLY the messages where it is clear that nothing is needed: greetings, thanks and acknowledgements, banter, memes and jokes, chatter between other people in a group, newsletters, marketing, social media or app notifications, login alerts, delivered-parcel notices, receipts with nothing due. KEEP (do not list) anything where someone asks him something or waits on him, a meeting, call, event, trip or deadline is mentioned, money, a payment, an invoice, a deal, a contract, a client, partner or investor is involved, there is a task or a promise by anyone, it concerns family, school or health, it is a voice note, or you are unsure. When in doubt, keep. Never list an id that is not in the input.`;
+
+async function markSkipped(ids, why) {
+  if (!ids.length) return;
+  await q(`UPDATE "JarvisInbound" SET "triagedAt" = now(), triage = $2::jsonb WHERE id = ANY($1)`, [ids, JSON.stringify({ skipped: why })]);
+}
+
+async function importantSenders(messages) {
+  const keys = [...new Set(messages.filter((m) => !m.isGroup && m.direction !== 'out').map((m) => String(m.sender || '').toLowerCase()).filter(Boolean))];
+  if (!keys.length) return new Set();
+  const rows = await q(`SELECT key FROM "JarvisPerson" WHERE key = ANY($1) AND importance >= 70`, [keys]).catch(() => []);
+  return new Set(rows.map((r) => r.key));
+}
+
+// Step 1 and 2: decide which new messages deserve the main model. Returns how many it looked at.
+async function gatePhase() {
   const batch = await q(
-    `SELECT * FROM "JarvisInbound" WHERE "triagedAt" IS NULL ORDER BY "occurredAt" ASC LIMIT ${BATCH}`,
+    `SELECT * FROM "JarvisInbound" WHERE "triagedAt" IS NULL AND (triage IS NULL OR triage->>'gate' IS NULL) ORDER BY "occurredAt" ASC LIMIT ${GATE_BATCH}`,
   );
   if (!batch.length) return 0;
 
   // Old backlog (more than 3 days) is kept as memory but not triaged.
   const stale = batch.filter((m) => Date.now() - new Date(m.occurredAt).getTime() > 3 * 864e5);
-  if (stale.length) await q(`UPDATE "JarvisInbound" SET "triagedAt" = now(), triage = '{"skipped":"old"}' WHERE id = ANY($1)`, [stale.map((m) => m.id)]);
-  const fresh = batch.filter((m) => !stale.includes(m));
-  if (!fresh.length) return batch.length;
+  await markSkipped(stale.map((m) => m.id), 'old');
+  const live = batch.filter((m) => !stale.includes(m));
 
+  const trivial = [];
+  const rest = [];
+  for (const m of live) {
+    const why = prefilterReason(m);
+    if (why) trivial.push([m, why]);
+    else rest.push(m);
+  }
+  for (const why of new Set(trivial.map((t) => t[1]))) await markSkipped(trivial.filter((t) => t[1] === why).map((t) => t[0].id), `prefilter:${why}`);
+  if (!rest.length) return batch.length;
+
+  const important = await importantSenders(rest);
+  const keepIds = new Set();
+  const ask = [];
+  for (const m of rest) {
+    if (mustKeep(m, important)) keepIds.add(m.id);
+    else ask.push(m);
+  }
+
+  let dropIds = new Set();
+  if (ask.length && config.gateEnabled && Date.now() >= gateOffUntil) {
+    const user = ask
+      .map((m) => `[${m.id}] ${m.source}${m.isGroup ? ` group "${clip(m.chatName, 40)}"` : ''}${m.subject ? ` subject "${clip(m.subject, 80)}"` : ''} | ${m.direction === 'out' ? 'FROM THE OWNER' : `from ${clip(m.senderName || m.sender, 40)}`}: ${clip(m.body, 500)}`)
+      .join('\n\n');
+    try {
+      const res = await structured({ model: config.gateModel, system: GATE_RULES, user: `Messages:\n\n${user}`, schema: GATE_SCHEMA, effort: 'low', maxTokens: 2000, label: 'gate', fallback: false });
+      const valid = new Set(ask.map((m) => m.id));
+      dropIds = new Set((res.drop_ids || []).filter((id) => valid.has(id)));
+      gateFailures = 0;
+    } catch (e) {
+      // Fail safe: if the gate breaks, everything goes to the main model as before.
+      console.error('[brain] gate failed, keeping all:', e.message);
+      gateFailures += 1;
+      if (gateFailures >= 3) gateOffUntil = Date.now() + 3600e3;
+    }
+  }
+  await markSkipped([...dropIds], 'gate');
+  const keep = rest.filter((m) => !dropIds.has(m.id)).map((m) => m.id);
+  if (keep.length) await q(`UPDATE "JarvisInbound" SET triage = COALESCE(triage, '{}'::jsonb) || '{"gate":"keep"}'::jsonb WHERE id = ANY($1)`, [keep]);
+  return batch.length;
+}
+
+// The owner's world as one stable block. Rebuilt at most every 10 minutes so its bytes stay
+// identical between calls and the prompt cache can be read instead of re-paid.
+let snapshotMemo = { at: 0, text: '', tz: '' };
+async function stableSnapshot(r) {
+  if (snapshotMemo.text && Date.now() - snapshotMemo.at < 10 * 60e3 && snapshotMemo.tz === r.tz) return snapshotMemo.text;
+  const [{ goals, projects, ventures }, known, events] = await Promise.all([goalsAndProjects(), people(), upcoming(10)]);
+  const text = [
+    `Goals:\n${goals.map((g) => `- ${g.title}${g.horizon ? ` (${g.horizon})` : ''}`).join('\n') || '(none)'}`,
+    `Ventures: ${ventures.map((v) => v.name).join(', ') || '(none)'}`,
+    `Projects (id | name | status | priority):\n${projects.map((p) => `- ${p.id} | ${p.name}${p.venture ? ` [${p.venture}]` : ''} | ${p.status} | ${p.priority}`).join('\n') || '(none)'}`,
+    `Known people:\n${known.map((p) => `- ${p.key} ${p.name || ''} ${p.relation ? `(${p.relation})` : ''} ${p.org || ''}`.trim()).join('\n') || '(none yet)'}`,
+    `Calendar next 10 days:\n${fmtEvents(events, r.tz)}`,
+  ].join('\n\n');
+  snapshotMemo = { at: Date.now(), text, tz: r.tz };
+  return text;
+}
+
+// Step 3: the main model, on what the gate kept.
+async function triagePhase() {
+  const ready = await q(
+    `SELECT * FROM "JarvisInbound" WHERE "triagedAt" IS NULL AND triage->>'gate' = 'keep' ORDER BY "occurredAt" ASC LIMIT ${BATCH}`,
+  );
+  if (!ready.length) return 0;
+
+  const important = await importantSenders(ready);
+  const oldest = Math.min(...ready.map((m) => new Date(m.createdAt || m.occurredAt).getTime()));
+  const go = shouldTriageNow({
+    count: ready.length,
+    oldestAgeMs: Date.now() - oldest,
+    urgent: ready.some((m) => isUrgent(m, important)),
+    minBatch: config.triageMinBatch,
+    maxWaitMs: config.triageMaxWaitMin * 60e3,
+  });
+  if (!go) return 0;
+  if (!limiter.allow()) {
+    console.error(`[brain] hourly triage cap reached (${config.triageMaxCallsPerHour}); messages wait for the next hour`);
+    return 0;
+  }
+
+  const fresh = ready;
   const r = await rhythm();
   const ctx = { tz: r.tz };
-  const [{ goals, projects, ventures }, known, open, events, history] = await Promise.all([
-    goalsAndProjects(),
-    people(),
-    openSignals(),
-    upcoming(10),
-    threadContext(fresh),
-  ]);
+  const [snapshot, open, history] = await Promise.all([stableSnapshot(r), openSignals(), threadContext(fresh)]);
   const nowLocal = new Date().toLocaleString('en-GB', { timeZone: r.tz, dateStyle: 'full', timeStyle: 'short' });
 
+  // Stable first (instructions, then the owner's world with the cache breakpoint); everything
+  // that changes per call (time, open signals, the messages) goes in the user turn.
   const system = [
-    { type: 'text', text: `${OWNER_BRIEF}\n\n${RULES}`, cache_control: { type: 'ephemeral' } },
-    {
-      type: 'text',
-      text: [
-        `Now: ${nowLocal} (${r.tz}).`,
-        `Goals:\n${goals.map((g) => `- ${g.title}${g.horizon ? ` (${g.horizon})` : ''}`).join('\n') || '(none)'}`,
-        `Ventures: ${ventures.map((v) => v.name).join(', ') || '(none)'}`,
-        `Projects (id | name | status | priority):\n${projects.map((p) => `- ${p.id} | ${p.name}${p.venture ? ` [${p.venture}]` : ''} | ${p.status} | ${p.priority}`).join('\n') || '(none)'}`,
-        `Known people:\n${known.map((p) => `- ${p.key} ${p.name || ''} ${p.relation ? `(${p.relation})` : ''} ${p.org || ''}`.trim()).join('\n') || '(none yet)'}`,
-        `Calendar next 10 days:\n${fmtEvents(events, r.tz)}`,
-        `Open signals (id | kind | title):\n${open.map((s) => `- ${s.id} | ${s.kind} | ${s.title}`).join('\n') || '(none)'}`,
-      ].join('\n\n'),
-    },
+    { type: 'text', text: `${OWNER_BRIEF}\n\n${RULES}` },
+    { type: 'text', text: snapshot, cache_control: { type: 'ephemeral' } },
   ];
-  const user = `${history ? `Earlier messages in these threads, for context only:\n${history}\n\n` : ''}New messages to triage:\n\n${fresh.map((m) => fmtMessage(m, ctx)).join('\n\n')}`;
+  const user = `Now: ${nowLocal} (${r.tz}).\n\nOpen signals (id | kind | title):\n${open.map((s) => `- ${s.id} | ${s.kind} | ${s.title}`).join('\n') || '(none)'}\n\n${history ? `Earlier messages in these threads, for context only:\n${history}\n\n` : ''}New messages to triage:\n\n${fresh.map((m) => fmtMessage(m, ctx)).join('\n\n')}`;
 
   let result;
+  limiter.record();
   try {
-    result = await structured({ model: config.triageModel, system, user, schema: SCHEMA, effort: 'medium' });
+    result = await structured({ model: config.triageModel, system, user, schema: SCHEMA, effort: 'medium', maxTokens: 8000, label: 'triage' });
   } catch (e) {
     console.error('[brain] triage call failed:', e.message);
     // Leave them untriaged so the next round retries, unless the batch keeps failing.
-    await q(`UPDATE "JarvisInbound" SET triage = jsonb_build_object('error', $2::text, 'tries', COALESCE((triage->>'tries')::int, 0) + 1) WHERE id = ANY($1)`, [fresh.map((m) => m.id), e.message.slice(0, 200)]);
+    await q(`UPDATE "JarvisInbound" SET triage = COALESCE(triage, '{}'::jsonb) || jsonb_build_object('error', $2::text, 'tries', COALESCE((triage->>'tries')::int, 0) + 1) WHERE id = ANY($1)`, [fresh.map((m) => m.id), e.message.slice(0, 200)]);
     await q(`UPDATE "JarvisInbound" SET "triagedAt" = now() WHERE id = ANY($1) AND COALESCE((triage->>'tries')::int, 0) >= 3`, [fresh.map((m) => m.id)]);
     return 0;
   }
@@ -186,7 +288,15 @@ export async function triageOnce() {
   }
   await q(`UPDATE "JarvisInbound" SET "triagedAt" = now(), triage = '{"ok":true}' WHERE id = ANY($1)`, [fresh.map((m) => m.id)]);
   await touchPeople(fresh);
-  return batch.length;
+  return fresh.length;
+}
+
+// Called every 45 seconds. Returns the most rows either step handled, so the caller can keep
+// going while a backlog is draining.
+export async function triageOnce() {
+  const gated = await gatePhase();
+  const triaged = await triagePhase();
+  return Math.max(gated, triaged);
 }
 
 function validIso(s) {

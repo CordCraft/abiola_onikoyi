@@ -12,6 +12,7 @@ import { triageOnce } from './brain.js';
 import { runJobs, attachWhatsApp } from './executor.js';
 import { flushHeld } from './push.js';
 import { plannerTick, morningPlan } from './planner.js';
+import { usageStats } from './llm.js';
 
 const started = new Date();
 const health = { lastTriage: null, lastGmail: null, lastOutlook: null, lastJobs: null, errors: [] };
@@ -81,7 +82,7 @@ async function main() {
           const wa = await getSetting('whatsapp_status', {});
           const pending = await q(`SELECT count(*)::int AS n FROM "JarvisInbound" WHERE "triagedAt" IS NULL`).catch(() => [{ n: null }]);
           res.writeHead(200, { 'content-type': 'application/json' });
-          res.end(JSON.stringify({ ok: true, startedAt: started, whatsapp: wa?.state || 'unknown', untriaged: pending[0].n, missingEnv: missing(), ...health, errors: health.errors.slice(0, 5) }));
+          res.end(JSON.stringify({ ok: true, startedAt: started, whatsapp: wa?.state || 'unknown', untriaged: pending[0].n, missingEnv: missing(), usage: usageStats, ...health, errors: health.errors.slice(0, 5) }));
           return;
         }
         if (!authorised(req, url)) {
