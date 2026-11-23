@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>MaiGadi · A project by Abiola Onikoyi</title>
+<meta name="description" content="MaiGadi: the watchman for your shop. One box that cuts the diesel bill, stops cash and fuel leaking, and keeps records ready.">
+<link rel="icon" href="/icon.png">
+<style>
+  :root { --g:#0F7B5F; --ink:#14211C; --mut:#5D6B66; --line:#E1E8E5; }
+  * { box-sizing:border-box; } body { margin:0; font-family:Inter,system-ui,sans-serif; color:var(--ink); background:#F6F9F8; }
+  a { color:var(--g); }
+  header { padding:18px 24px; display:flex; justify-content:space-between; align-items:center; max-width:1100px; margin:0 auto; }
+  header b { color:var(--g); font-size:20px; } header a { font-size:14px; text-decoration:none; }
+  .hero { max-width:1100px; margin:0 auto; padding:12px 24px 0; display:grid; grid-template-columns:1fr 1.2fr; gap:28px; align-items:center; }
+  h1 { font-size:46px; line-height:1.04; margin:0 0 14px; letter-spacing:-1px; }
+  .lead { font-size:18px; color:#33433D; line-height:1.5; }
+  .btns { display:flex; gap:12px; flex-wrap:wrap; margin-top:20px; }
+  .btn { background:var(--g); color:#fff; padding:12px 18px; border-radius:10px; text-decoration:none; font-weight:600; }
+  .btn.alt { background:#fff; color:var(--g); border:1.5px solid var(--g); }
+  .viewer { height:460px; border-radius:16px; overflow:hidden; border:1px solid var(--line); background:#fff; position:relative; }
+  .viewer iframe { width:100%; height:100%; border:0; }
+  .tabs { position:absolute; left:12px; bottom:12px; display:flex; gap:6px; }
+  .tabs button { font:inherit; font-size:13px; border:1px solid var(--line); background:#fff; border-radius:99px; padding:6px 12px; cursor:pointer; }
+  .tabs button.on { background:var(--g); color:#fff; border-color:var(--g); }
+  main { max-width:1100px; margin:0 auto; padding:30px 24px 60px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:14px; margin-top:8px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:14px; padding:18px; }
+  .card h3 { margin:0 0 6px; font-size:16px; color:var(--g); } .card p { margin:0; color:#3E4E48; font-size:14px; line-height:1.5; }
+  h2 { font-size:24px; margin:34px 0 10px; }
+  table { width:100%; border-collapse:collapse; background:#fff; border-radius:12px; overflow:hidden; font-size:14px; }
+  th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); } th { background:var(--g); color:#fff; }
+  .tag { display:inline-block; font-size:12px; padding:3px 10px; border-radius:99px; background:#EAF4F0; color:var(--g); font-weight:600; }
+  footer { text-align:center; color:var(--mut); font-size:13px; padding:20px; }
+  @media (max-width:820px) { .hero { grid-template-columns:1fr; } h1 { font-size:36px; } .viewer { height:340px; } }
+</style>
+</head>
+<body>
+<header><b>MaiGadi</b><a href="/">← Abiola Onikoyi</a></header>
+<section class="hero">
+  <div>
+    <span class="tag">Project · Prototype stage · Started November 2026</span>
+    <h1>The watchman for your shop.</h1>
+    <p class="lead">One wall box that cuts a Nigerian shop's diesel bill, stops cash and fuel leaking, keeps tax records ready and turns its data into a credit profile. Owners get instant Telegram alerts with photos, a daily report and a simple dashboard.</p>
+    <div class="btns">
+      <a class="btn" href="/maigadi/MaiGadi-Playbook.pdf" download>Download the playbook (PDF)</a>
+      <a class="btn alt" href="/maigadi/viewer.html?view=exploded" target="_blank">Open 3D full screen</a>
+    </div>
+  </div>
+  <div class="viewer">
+    <iframe id="v" src="/maigadi/viewer.html?view=hero" title="MaiGadi 3D model"></iframe>
+    <div class="tabs">
+      <button class="on" data-v="hero">Box</button><button data-v="exploded">Inside</button><button data-v="install">In a shop</button>
+    </div>
+  </div>
+</section>
+<main>
+  <div class="cards">
+    <div class="card"><h3>Power</h3><p>Knows when grid power and the generator are on, flags a generator left running while grid is back, and measures every kWh.</p></div>
+    <div class="card"><h3>Diesel</h3><p>An ultrasonic sensor in the tank cap catches siphoning and confirms every refuel.</p></div>
+    <div class="card"><h3>Security</h3><p>Door, motion and tamper sensors with a camera that sends a photo the moment something happens after hours.</p></div>
+    <div class="card"><h3>Cash and records</h3><p>A two-minute end-of-day cash count shows any gap, and the data builds tax records and a credit profile.</p></div>
+  </div>
+  <h2>Progress</h2>
+  <table>
+    <tr><th>Date</th><th>Milestone</th><th>Status</th></tr>
+    <tr><td>23 Nov 2026</td><td>Concept, parts list, wiring, firmware (Core + camera), database, dashboard and business plan</td><td>Done</td></tr>
+    <tr><td>Next</td><td>Parts ordered, first prototype built and soak-tested at home</td><td>In progress</td></tr>
+    <tr><td>Month 2</td><td>First box installed in a friendly shop in Nigeria</td><td>Planned</td></tr>
+    <tr><td>Month 3 to 4</td><td>Pilot of 50 paying sites</td><td>Planned</td></tr>
+  </table>
+</main>
+<footer>MaiGadi is a project by <a href="/">Abiola Onikoyi</a>. "Mai gadi" means watchman in Hausa.</footer>
+<script>
+  document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+    document.querySelectorAll('.tabs button').forEach(x => x.classList.remove('on')); b.classList.add('on');
+    document.getElementById('v').src = '/maigadi/viewer.html?view=' + b.dataset.v;
+  });
+</script>
+</body>
+</html>
