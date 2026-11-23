@@ -774,3 +774,67 @@ model JarvisMachine {
   lastSeenAt DateTime?
   createdAt  DateTime  @default(now())
 }
+
+// Health data pushed from the iPhone (Apple Shortcuts) plus phone-use pings
+// that Jarvis turns into a sleep estimate. Tables are created lazily by
+// src/lib/jarvis/companion-setup.ts; keep in sync.
+model JarvisHealthSample {
+  id         String   @id @default(cuid())
+  metric     String // steps | resting_hr | hrv | active_energy | walking_running_km | weight_kg | sleep_hours | vo2max | phone_use | ...
+  value      Float
+  unit       String?
+  startAt    DateTime
+  endAt      DateTime?
+  day        String? // local YYYY-MM-DD for daily aggregates
+  source     String? // shortcut | jarvis-app | shortcut:WhatsApp ...
+  externalId String   @unique
+  createdAt  DateTime @default(now())
+
+  @@index([metric, startAt])
+}
+
+// Workouts done (or skipped), logged from chat or notification replies.
+model JarvisWorkout {
+  id          String   @id @default(cuid())
+  day         String // local YYYY-MM-DD
+  kind        String // strength | run | walk | mobility | gym | other
+  status      String   @default("done") // done | skipped | partial
+  durationMin Int?
+  distanceKm  Float?
+  pushups     Int?
+  squats      Int?
+  plankSec    Int?
+  rpe         Int? // 1-10 effort
+  details     String?
+  createdAt   DateTime @default(now())
+
+  @@index([day])
+}
+
+// Every push Jarvis sends, so tapping it opens a reply screen with context.
+model JarvisNotification {
+  id        String    @id @default(cuid())
+  title     String
+  body      String
+  url       String // where the notification originally pointed
+  kind      String? // health | task | signal | briefing | other
+  tag       String?
+  ref       Json? // { taskId?, signalId?, planItem? }
+  threadId  String? // chat thread this notification belongs to (Jarvis answers to replies)
+  openedAt  DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([tag])
+  @@index([createdAt])
+}
+
+// The native Jarvis iPhone app (apps/jarvis-ios): its Expo push token, so
+// notifications arrive natively with a Reply text field in the banner.
+model JarvisAppDevice {
+  id         String   @id @default(cuid())
+  pushToken  String   @unique // ExponentPushToken[...]
+  name       String?
+  platform   String   @default("ios")
+  lastSeenAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+}

@@ -22,6 +22,7 @@ export async function POST(req: Request) {
     actions: Array.isArray(p.actions) ? p.actions.slice(0, 2) : undefined,
     taskId: p.taskId,
     signalId: p.signalId,
+    kind: p.kind,
   });
   return NextResponse.json(result);
 }

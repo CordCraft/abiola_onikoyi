@@ -302,10 +302,19 @@ export function JarvisChat({
   initialThreadId,
   initialItems,
   initialInput,
+  contextPrefix,
+  quickReplies,
+  autoFocus,
 }: {
   initialThreadId: string | null;
   initialItems: ChatItem[];
   initialInput?: string;
+  // Hidden context sent with the first message of a new thread (the
+  // notification being replied to). The user only sees what they typed.
+  contextPrefix?: string;
+  // One-tap answers shown above the input (notification replies).
+  quickReplies?: string[];
+  autoFocus?: boolean;
 }) {
   const [threadId, setThreadId] = useState(initialThreadId);
   const [items, setItems] = useState<ChatItem[]>(initialItems);
@@ -1085,7 +1094,14 @@ export function JarvisChat({
           body: JSON.stringify(
             resumeToken
               ? { threadId: threadIdRef.current, resumeStateId: resumeToken }
-              : { threadId: threadIdRef.current, message: text, attachments, voice: isVoice },
+              : {
+                  threadId: threadIdRef.current,
+                  message: contextPrefix && !threadIdRef.current ? `${contextPrefix}
+
+${text}` : text,
+                  attachments,
+                  voice: isVoice,
+                },
           ),
           signal: controller.signal,
         });
@@ -1356,7 +1372,7 @@ export function JarvisChat({
   }
 
   return (
-    <div className="flex h-[calc(100dvh-16rem)] min-h-[420px] flex-col overflow-hidden rounded-3xl border border-white/60 bg-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.04),0_20px_50px_-24px_rgba(30,27,75,0.28)] backdrop-blur-sm md:h-[calc(100dvh-12rem)]">
+    <div className={`flex ${contextPrefix ? "h-[calc(100dvh-22rem)] min-h-[320px]" : "h-[calc(100dvh-16rem)] min-h-[420px]"} flex-col overflow-hidden rounded-3xl border border-white/60 bg-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.04),0_20px_50px_-24px_rgba(30,27,75,0.28)] backdrop-blur-sm ${contextPrefix ? "md:h-[calc(100dvh-20rem)]" : "md:h-[calc(100dvh-12rem)]"}`}>
       <div className="relative flex min-h-0 flex-1 flex-col">
       {voiceMode ? (
         <VoiceOverlay
@@ -1397,7 +1413,9 @@ export function JarvisChat({
               </svg>
             </span>
             <p className="mt-4 max-w-sm text-sm text-zinc-500">
-              Ask anything about your ventures. Attach documents, or turn on the headset and say &quot;Hey Jarvis&quot;.
+              {contextPrefix
+                ? "Tap an answer or type your reply. Jarvis will act on it."
+                : <>Ask anything about your ventures. Attach documents, or turn on the headset and say &quot;Hey Jarvis&quot;.</>}
             </p>
           </div>
         ) : null}
@@ -1606,6 +1624,21 @@ export function JarvisChat({
           </div>
         ) : null}
 
+        {quickReplies?.length && !sending ? (
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {quickReplies.map((q) => (
+              <button
+                key={q}
+                type="button"
+                onClick={() => void send(q)}
+                className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+              >
+                {q}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
         <div className="flex items-end gap-1.5 md:gap-2">
           <input
             ref={fileInputRef}
@@ -1633,6 +1666,7 @@ export function JarvisChat({
           </button>
 
           <textarea
+            autoFocus={autoFocus}
             value={input}
             onChange={(e) => {
               const v = e.target.value;

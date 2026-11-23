@@ -21,6 +21,7 @@ export default async function SettingsPage() {
         <div className="mt-3 flex flex-wrap gap-2 text-sm">
           {[
             ["/jarvis/connect", "Connections (WhatsApp, email, calendars)"],
+            ["/jarvis/health", "Health and training"],
             ["/jarvis/machines", "Computers"],
             ["/jarvis/ventures", "Ventures"],
             ["/jarvis/goals", "Goals"],

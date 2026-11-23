@@ -8,6 +8,7 @@ import { getAlerts } from "@/lib/jarvis/sync/digest";
 import { gh } from "@/lib/jarvis/sync/github";
 import { v2Tools, executeV2Tool, V2_TOOL_NAMES } from "@/lib/jarvis/tools-v2";
 import { machineTools, executeMachineTool, MACHINE_TOOL_NAMES } from "@/lib/jarvis/tools-machines";
+import { healthTools, executeHealthTool, HEALTH_TOOL_NAMES } from "@/lib/jarvis/tools-health";
 
 // Jarvis tool surface. Read tools run live queries. Write tools apply
 // IMMEDIATELY (no confirmation step) and report a receipt the UI shows with an
@@ -342,7 +343,7 @@ const coreTools = [
 ];
 
 // Listener tools (calendars, messages, signals) and computer tools live in their own modules.
-export const jarvisTools = [...coreTools, ...v2Tools, ...machineTools];
+export const jarvisTools = [...coreTools, ...v2Tools, ...machineTools, ...healthTools];
 
 function str(v: unknown): string | undefined {
   if (v === undefined || v === null) return undefined;
@@ -1072,6 +1073,7 @@ export async function executeTool(
     default:
       if (V2_TOOL_NAMES.has(name)) return executeV2Tool(name, rawInput);
       if (MACHINE_TOOL_NAMES.has(name)) return executeMachineTool(name, rawInput);
+      if (HEALTH_TOOL_NAMES.has(name)) return executeHealthTool(name, rawInput);
       return `Unknown tool: ${name}`;
   }
 }

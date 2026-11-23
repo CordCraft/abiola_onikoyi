@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { verifySession } from "@/lib/dal";
 import { logout } from "./actions";
+import { PhoneUseBeacon } from "@/components/jarvis/PhoneUseBeacon";
 
 export const metadata: Metadata = {
   title: "Jarvis",
@@ -51,6 +52,15 @@ const NAV = [
     ),
   },
   {
+    href: "/jarvis/health",
+    label: "Health",
+    icon: (
+      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" />
+      </svg>
+    ),
+  },
+  {
     href: "/jarvis/memory",
     label: "Memory",
     icon: (
@@ -74,15 +84,8 @@ const MOBILE_NAV = [
       </svg>
     ),
   },
-  {
-    href: "/jarvis/machines",
-    label: "Computers",
-    icon: (
-      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25m18 0A2.25 2.25 0 0018.75 3H5.25A2.25 2.25 0 003 5.25m18 0V12a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 12V5.25" />
-      </svg>
-    ),
-  },
+  // Health replaces Computers on the phone bar (Computers is under Settings).
+  NAV.find((n) => n.href === "/jarvis/health")!,
   {
     href: "/jarvis/settings",
     label: "Settings",
@@ -152,6 +155,7 @@ export default async function JarvisLayout({
       </header>
 
       <main className="relative z-10 mx-auto max-w-5xl px-4 py-6 pb-24 md:px-6 md:py-10 md:pb-10">
+        <PhoneUseBeacon />
         {children}
       </main>
 
