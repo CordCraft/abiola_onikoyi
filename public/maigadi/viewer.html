@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="robots" content="noindex"><meta name="viewport" content="width=device-width, initial-scale=1"><title>MaiGadi 3D viewer</title>
+<style>html,body{margin:0;background:radial-gradient(120% 80% at 70% 60%,#fff 0%,#EAF4F0 50%,#CFE6DD 100%);overflow:hidden;height:100%}canvas{display:block}</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
+</head><body>
+<script type="module">
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const P = new URLSearchParams(location.search);
+const VIEW = P.get('view') || 'hero';
+let W = innerWidth, H = innerHeight;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.setSize(W, H);
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+sun.position.set(4, 7, 6); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -8; sun.shadow.camera.right = 8; sun.shadow.camera.top = 8; sun.shadow.camera.bottom = -8;
+sun.shadow.radius = 6; sun.shadow.bias = -0.0005; scene.add(sun);
+scene.add(new THREE.HemisphereLight(0xffffff, 0xd9e4df, 0.5));
+
+// ---------- materials ----------
+const M = {
+  green:  new THREE.MeshPhysicalMaterial({ color: 0x0F7B5F, roughness: 0.42, clearcoat: 0.5, clearcoatRoughness: 0.35 }),
+  char:   new THREE.MeshPhysicalMaterial({ color: 0x27302C, roughness: 0.55 }),
+  white:  new THREE.MeshStandardMaterial({ color: 0xF3F5F4, roughness: 0.6 }),
+  plate:  new THREE.MeshStandardMaterial({ color: 0xDCE3E0, roughness: 0.7 }),
+  pcbB:   new THREE.MeshStandardMaterial({ color: 0x1D3A8A, roughness: 0.5 }),
+  pcbG:   new THREE.MeshStandardMaterial({ color: 0x1F6B3A, roughness: 0.5 }),
+  pcbK:   new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 0.5 }),
+  metal:  new THREE.MeshStandardMaterial({ color: 0xC9CDD0, roughness: 0.25, metalness: 0.9 }),
+  term:   new THREE.MeshStandardMaterial({ color: 0x2C6FD1, roughness: 0.5 }),
+  greyT:  new THREE.MeshStandardMaterial({ color: 0x9AA3A0, roughness: 0.6 }),
+  cellW:  new THREE.MeshStandardMaterial({ color: 0x2BA3D9, roughness: 0.4 }),
+  black:  new THREE.MeshStandardMaterial({ color: 0x0E0E0E, roughness: 0.35 }),
+  amber:  new THREE.MeshStandardMaterial({ color: 0xE8A317, roughness: 0.45 }),
+  gen:    new THREE.MeshPhysicalMaterial({ color: 0xE3B11F, roughness: 0.45, clearcoat: 0.3 }),
+  wall:   new THREE.MeshStandardMaterial({ color: 0xF1EEE8, roughness: 0.95 }),
+  floor:  new THREE.MeshStandardMaterial({ color: 0xD9D2C6, roughness: 0.9 }),
+  wood:   new THREE.MeshStandardMaterial({ color: 0x8A5A35, roughness: 0.7 }),
+  tank:   new THREE.MeshStandardMaterial({ color: 0x3D4A45, roughness: 0.5, metalness: 0.3 }),
+  glass:  new THREE.MeshPhysicalMaterial({ color: 0xffffff, transmission: 0.6, roughness: 0.1, thickness: 0.05 }),
+};
+const wireMat = c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.45 });
+
+function textTex(lines, opt = {}) {
+  const c = document.createElement('canvas'); c.width = opt.w || 512; c.height = opt.h || 256;
+  const g = c.getContext('2d');
+  g.fillStyle = opt.bg || 'rgba(0,0,0,0)'; g.fillRect(0, 0, c.width, c.height);
+  g.fillStyle = opt.color || '#fff'; g.textAlign = opt.align || 'center'; g.textBaseline = 'middle';
+  lines.forEach((l, i) => { g.font = l.font; g.fillText(l.t, l.x ?? c.width / 2, l.y); });
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t;
+}
+function box(w, h, d, mat, r = 0) {
+  const g = r > 0 ? new RoundedBoxGeometry(w, h, d, 4, r) : new THREE.BoxGeometry(w, h, d);
+  const m = new THREE.Mesh(g, mat); m.castShadow = true; m.receiveShadow = true; return m;
+}
+function cyl(r, h, mat, seg = 40) { const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, seg), mat); m.castShadow = true; m.receiveShadow = true; return m; }
+function tube(points, color, r = 0.012) {
+  const curve = new THREE.CatmullRomCurve3(points.map(p => new THREE.Vector3(...p)));
+  const m = new THREE.Mesh(new THREE.TubeGeometry(curve, 64, r, 10, false), wireMat(color)); m.castShadow = true; return m;
+}
+function add(parent, obj, x = 0, y = 0, z = 0) { obj.position.set(x, y, z); parent.add(obj); return obj; }
+
+// ---------- components (units: 1 = 100 mm) ----------
+function esp32() {
+  const g = new THREE.Group();
+  add(g, box(0.52, 0.02, 0.28, M.pcbK), 0, 0, 0);
+  add(g, box(0.25, 0.03, 0.18, M.metal), -0.08, 0.025, 0);
+  add(g, box(0.06, 0.012, 0.16, M.black), -0.24, 0.016, 0);
+  add(g, box(0.08, 0.03, 0.07, M.metal), 0.24, 0.025, 0);
+  for (let i = 0; i < 15; i++) { add(g, box(0.012, 0.03, 0.012, M.metal), -0.22 + i * 0.03, 0.02, 0.12); add(g, box(0.012, 0.03, 0.012, M.metal), -0.22 + i * 0.03, 0.02, -0.12); }
+  return g;
+}
+function pzem() {
+  const g = new THREE.Group();
+  add(g, box(0.73, 0.02, 0.30, M.pcbG), 0, 0, 0);
+  add(g, box(0.14, 0.12, 0.12, M.black), -0.15, 0.07, 0.03);
+  add(g, box(0.18, 0.1, 0.09, M.term), 0.25, 0.06, -0.08);
+  add(g, box(0.1, 0.06, 0.06, M.white), 0.27, 0.04, 0.09);
+  add(g, box(0.08, 0.02, 0.06, M.pcbK), 0.02, 0.02, 0.05);
+  
+  return g;
+}
+function opto() {
+  const g = new THREE.Group();
+  add(g, box(0.34, 0.02, 0.17, M.pcbB), 0, 0, 0);
+  add(g, box(0.1, 0.09, 0.1, M.term), -0.11, 0.055, 0);
+  add(g, box(0.06, 0.03, 0.05, M.black), 0.04, 0.025, 0);
+  add(g, box(0.03, 0.04, 0.03, M.amber), 0.13, 0.03, 0.04);
+  return g;
+}
+function ups() {
+  const g = new THREE.Group();
+  add(g, box(0.42, 0.02, 0.36, M.pcbK), 0, 0, 0);
+  [-0.09, 0.09].forEach(z => { const c = cyl(0.09, 0.65, M.cellW); c.rotation.z = Math.PI / 2; add(g, c, 0.05, 0.11, z); const cap = cyl(0.04, 0.02, M.metal); cap.rotation.z = Math.PI / 2; add(g, cap, 0.385, 0.11, z); });
+  add(g, box(0.1, 0.03, 0.1, M.metal), -0.24, 0.03, 0);
+  return g;
+}
+function oled(onLid) {
+  const g = new THREE.Group();
+  add(g, box(0.27, 0.27, 0.015, M.pcbK), 0, 0, 0);
+  const scr = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 0.13), new THREE.MeshBasicMaterial({ map: textTex([
+    { t: 'MaiGadi  08:42', font: 'bold 34px monospace', y: 40 }, { t: 'Power: GRID', font: '30px monospace', y: 92 },
+    { t: 'Load : 690 W', font: '30px monospace', y: 136 }, { t: 'Diesel: 62 L', font: '30px monospace', y: 180 }, { t: 'WiFi OK', font: '30px monospace', y: 224 }],
+    { bg: '#02121c', color: '#8fe7ff', align: 'left' }) }));
+  scr.position.set(0, 0.01, 0.009); g.add(scr);
+  if (onLid) g.rotation.y = Math.PI;
+  return g;
+}
+function buzzer() { const g = new THREE.Group(); const c = cyl(0.06, 0.06, M.black); c.rotation.x = Math.PI / 2; g.add(c); return g; }
+function terminals(n) { const g = new THREE.Group(); for (let i = 0; i < n; i++) { add(g, box(0.055, 0.1, 0.09, M.greyT), i * 0.06, 0, 0); add(g, cyl(0.016, 0.02, M.metal), i * 0.06, 0.055, 0); } return g; }
+function gland() { const g = new THREE.Group(); add(g, cyl(0.075, 0.07, M.char, 6), 0, 0, 0); add(g, cyl(0.06, 0.08, M.black), 0, -0.07, 0); return g; }
+function ct() { const g = new THREE.Group(); const t = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.06, 20, 48), M.black); t.castShadow = true; g.add(t); add(g, box(0.1, 0.1, 0.13, M.black), 0, -0.2, 0); return g; }
+function espcam() { const g = new THREE.Group(); add(g, box(0.27, 0.4, 0.05, M.white, 0.02), 0, 0, 0); const lens = cyl(0.045, 0.06, M.black); lens.rotation.x = Math.PI / 2; add(g, lens, 0, 0.06, 0.05); add(g, cyl(0.015, 0.02, M.amber), 0.08, -0.1, 0.03).rotation.x = Math.PI / 2; return g; }
+function pir() { const g = new THREE.Group(); add(g, box(0.32, 0.32, 0.08, M.white, 0.03), 0, 0, 0); const d = new THREE.Mesh(new THREE.SphereGeometry(0.12, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), M.white); d.rotation.x = Math.PI / 2; d.position.z = 0.04; d.castShadow = true; g.add(d); return g; }
+function reed() { const g = new THREE.Group(); add(g, box(0.27, 0.14, 0.08, M.white, 0.02), 0, 0, 0); add(g, box(0.27, 0.14, 0.08, M.white, 0.02), 0, -0.2, 0); return g; }
+function ultrasonic() { const g = new THREE.Group(); add(g, cyl(0.12, 0.18, M.black), 0, 0, 0); add(g, cyl(0.17, 0.03, M.black), 0, 0.09, 0); return g; }
+
+// ---------- the MaiGadi box ----------
+const BW = 2.0, BH = 1.2, BD = 0.55, LD = 0.2;
+function lidFace() {
+  const g = new THREE.Group();
+  add(g, box(BW, BH, LD, M.green, 0.06), 0, 0, 0);
+  const brand = new THREE.Mesh(new THREE.PlaneGeometry(1.05, 0.34), new THREE.MeshBasicMaterial({ transparent: true, map: textTex([
+    { t: 'MaiGadi', font: 'bold 150px Inter, sans-serif', y: 112 }, { t: 'THE WATCHMAN FOR YOUR SHOP', font: '600 40px Inter, sans-serif', y: 218 }], { w: 1024, h: 300, color: '#ffffff' }) }));
+  add(g, brand, -0.38, 0.22, LD / 2 + 0.002);
+  const win = box(0.62, 0.36, 0.02, M.black, 0.02); add(win, new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.27), new THREE.MeshBasicMaterial({ map: textTex([
+    { t: 'GRID  690 W', font: 'bold 52px monospace', y: 80 }, { t: 'DIESEL 62 L', font: 'bold 52px monospace', y: 170 }], { bg: '#02121c', color: '#8fe7ff' }) })), 0, 0, 0.012);
+  add(g, win, 0.5, -0.24, LD / 2 + 0.005);
+  const led = new THREE.Mesh(new THREE.SphereGeometry(0.03, 20, 10), new THREE.MeshStandardMaterial({ color: 0x40ff9a, emissive: 0x20ff80, emissiveIntensity: 2 }));
+  add(g, led, -0.82, -0.42, LD / 2 + 0.01);
+  [[-0.92, 0.52], [0.92, 0.52], [-0.92, -0.52], [0.92, -0.52]].forEach(([x, y]) => add(g, cyl(0.025, 0.02, M.metal), x, y, LD / 2 + 0.005).rotation.x = Math.PI / 2);
+  return g;
+}
+function baseBox(showInside) {
+  const g = new THREE.Group();
+  const shell = box(BW, BH, BD, M.char, 0.06); g.add(shell);
+  // mounting ears
+  [[-1.1, 0.45], [1.1, 0.45], [-1.1, -0.45], [1.1, -0.45]].forEach(([x, y]) => { const e = box(0.22, 0.2, 0.04, M.char, 0.02); add(g, e, x, y, -BD / 2 + 0.02); });
+  // cable glands on the bottom face
+  [-0.6, -0.2, 0.2, 0.6].forEach(x => { const gl = gland(); gl.position.set(x, -BH / 2 - 0.03, 0); g.add(gl); });
+  return g;
+}
+function internals() {
+  const g = new THREE.Group();
+  add(g, box(1.84, 1.04, 0.02, M.plate), 0, 0, 0);
+  const e = esp32(); e.rotation.x = Math.PI / 2; add(g, e, -0.45, 0.25, 0.03);
+  const p = pzem(); p.rotation.x = Math.PI / 2; add(g, p, 0.45, 0.25, 0.03);
+  const o1 = opto(); o1.rotation.x = Math.PI / 2; add(g, o1, -0.68, -0.2, 0.03);
+  const o2 = opto(); o2.rotation.x = Math.PI / 2; add(g, o2, -0.3, -0.2, 0.03);
+  const u = ups(); u.rotation.x = Math.PI / 2; add(g, u, 0.4, -0.25, 0.03);
+  const b = buzzer(); add(g, b, -0.05, -0.2, 0.06);
+  const t = terminals(10); add(g, t, -0.78, -0.42, 0.06);
+  // wiring
+  g.add(tube([[-0.45, 0.12, 0.05], [-0.45, -0.05, 0.12], [-0.68, -0.12, 0.08]], 0xD64541));
+  g.add(tube([[-0.40, 0.12, 0.05], [-0.35, -0.02, 0.14], [-0.30, -0.12, 0.08]], 0xF2C230));
+  g.add(tube([[-0.22, 0.25, 0.06], [0.05, 0.36, 0.14], [0.2, 0.3, 0.07]], 0x2E86DE));
+  g.add(tube([[-0.22, 0.2, 0.06], [0.0, 0.1, 0.15], [0.25, -0.12, 0.08]], 0x27AE60));
+  g.add(tube([[-0.6, 0.12, 0.05], [-0.7, -0.3, 0.15], [-0.6, -0.42, 0.1]], 0x111111));
+  g.add(tube([[-0.05, -0.2, 0.09], [-0.15, -0.05, 0.15], [-0.4, 0.12, 0.06]], 0x8E44AD));
+  return g;
+}
+
+const labels = {}; let labelPts = {};
+function mark(name, obj, offset = [0, 0, 0]) { labelPts[name] = { obj, offset: new THREE.Vector3(...offset) }; }
+
+let camera;
+if (VIEW === 'hero') {
+  const root = new THREE.Group(); scene.add(root);
+  const base = baseBox(false); root.add(base);
+  const lid = lidFace(); lid.position.z = BD / 2 + LD / 2; root.add(lid);
+  // CT clamp cable out of the bottom
+  const c = ct(); c.position.set(1.65, -1.35, 0.3); c.rotation.y = -0.5; root.add(c);
+  root.add(tube([[0.6, -0.68, 0], [0.75, -1.0, 0.1], [1.4, -1.2, 0.25], [1.62, -1.45, 0.3]], 0x111111, 0.02));
+  root.add(tube([[-0.6, -0.68, 0], [-0.7, -1.1, 0.15], [-1.4, -1.35, 0.3]], 0x1a1a1a, 0.02));
+  const us = ultrasonic(); us.position.set(-1.5, -1.4, 0.35); root.add(us);
+  root.rotation.y = -0.42; root.rotation.x = 0.06;
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.ShadowMaterial({ opacity: 0.18 }));
+  ground.rotation.x = -Math.PI / 2; ground.position.y = -1.6; ground.receiveShadow = true; scene.add(ground);
+  camera = new THREE.PerspectiveCamera(30, W / H, 0.1, 100); camera.position.set(1.2, 1.0, 7.2); camera.lookAt(0, -0.3, 0);
+}
+
+if (VIEW === 'exploded') {
+  const root = new THREE.Group(); scene.add(root);
+  const base = baseBox(true); root.add(base);
+  const inner = internals(); inner.position.z = 1.05; root.add(inner);
+  const lid = lidFace(); lid.position.z = 2.45; root.add(lid);
+  const ol = oled(false); ol.position.set(0.5, -0.24, 2.2); root.add(ol);
+  root.rotation.y = -0.62; root.rotation.x = 0.16; root.position.x = 0.35;
+  mark('esp32', inner.children[1]); mark('pzem', inner.children[2], [0, 0, 0.1]);
+  mark('opto', inner.children[3]); mark('ups', inner.children[5], [0.1, 0, 0.1]);
+  mark('terminals', inner.children[7], [0.25, 0, 0]); mark('buzzer', inner.children[6]);
+  mark('lid', lid, [-0.6, 0.45, 0.1]); mark('oled', ol); mark('glands', base, [0, -0.66, 0]); mark('plate', inner.children[0], [0.8, 0.45, 0]);
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.ShadowMaterial({ opacity: 0.15 }));
+  ground.rotation.x = -Math.PI / 2; ground.position.y = -1.3; ground.receiveShadow = true; scene.add(ground);
+  camera = new THREE.PerspectiveCamera(30, W / H, 0.1, 100); camera.position.set(0.9, 1.6, 8.6); camera.lookAt(0.2, -0.1, 0.9);
+}
+
+if (VIEW === 'install') {
+  const S = 0.5;  // scene scale: shop corner
+  const room = new THREE.Group(); scene.add(room);
+  const wallBack = box(14, 6.5, 0.2, M.wall); add(room, wallBack, 0, 3.25, -0.1);
+  const wallSide = box(0.2, 6.5, 9, M.wall); add(room, wallSide, -7, 3.25, 4.4);
+  const floor = box(14, 0.1, 9, M.floor); add(room, floor, 0, -0.05, 4.4);
+  // door
+  const door = box(2.2, 4.4, 0.12, M.wood); add(room, door, 4.6, 2.2, 0.05);
+  add(room, box(2.5, 0.15, 0.25, M.white), 4.6, 4.45, 0.05);
+  const rd = reed(); rd.scale.setScalar(0.9); add(room, rd, 5.55, 4.2, 0.18);
+  // MaiGadi box on wall
+  const mg = new THREE.Group(); const b = baseBox(); mg.add(b); const l = lidFace(); l.position.z = BD / 2 + LD / 2; mg.add(l);
+  mg.scale.setScalar(0.75); add(room, mg, 0.2, 3.4, 0.4);
+  // camera + PIR
+  const cam = espcam(); cam.scale.setScalar(1.3); add(room, cam, -5.6, 5.4, 0.12);
+  const p = pir(); p.scale.setScalar(1.2); add(room, p, 2.2, 5.5, 0.1);
+  // generator + tank outside-ish on the floor at left
+  const gen = new THREE.Group(); add(gen, box(2.6, 1.6, 1.4, M.gen, 0.08), 0, 0.8, 0);
+  for (let i = 0; i < 7; i++) add(gen, box(0.08, 0.9, 0.02, M.char), -0.9 + i * 0.12, 0.85, 0.71);
+  add(gen, box(0.6, 0.4, 0.05, M.char), 0.8, 1.1, 0.71);
+  add(gen, cyl(0.12, 0.6, M.char), 0.9, 1.8, -0.3);
+  gen.position.set(-4.4, 0, 2.6); gen.rotation.y = 0.35; room.add(gen);
+  const tank = new THREE.Group(); const tc = cyl(0.7, 1.8, M.tank); tc.rotation.z = Math.PI / 2; add(tank, tc, 0, 0.75, 0);
+  [-0.6, 0.6].forEach(x => add(tank, box(0.12, 0.25, 1.0, M.char), x, 0.12, 0));
+  const us = ultrasonic(); us.scale.setScalar(1.1); add(tank, us, 0.3, 1.55, 0);
+  tank.position.set(-1.6, 0, 1.6); tank.rotation.y = 0.0; room.add(tank);
+  // cables along wall
+  room.add(tube([[0.2, 2.95, 0.45], [0.2, 2.2, 0.3], [-1.5, 1.8, 0.4], [-1.2, 1.9, 1.2], [-1.3, 1.66, 1.6]], 0x1a1a1a, 0.04));
+  room.add(tube([[-0.2, 2.95, 0.45], [-1.2, 2.5, 0.25], [-3.6, 1.6, 2.0], [-4.1, 1.5, 2.4]], 0x111111, 0.04));
+  room.add(tube([[0.6, 2.95, 0.45], [2.5, 3.2, 0.15], [5.3, 4.1, 0.15]], 0xf5f5f5, 0.03));
+  room.add(tube([[-0.4, 3.9, 0.3], [-3.0, 5.3, 0.12], [-5.5, 5.3, 0.12]], 0xf5f5f5, 0.03));
+  // counter
+  add(room, box(3.6, 1.8, 1.2, M.wood, 0.04), 2.2, 0.9, 6.0);
+  add(room, box(3.8, 0.1, 1.4, M.white), 2.2, 1.85, 6.0);
+  const phone = box(0.4, 0.04, 0.8, M.black, 0.04); add(room, phone, 3.0, 1.93, 5.8);
+  const ph = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.72), new THREE.MeshBasicMaterial({ map: textTex([
+    { t: 'MaiGadi', font: 'bold 40px Inter', y: 40 }, { t: 'Generator', font: '30px Inter', y: 130 }, { t: 'running with', font: '30px Inter', y: 170 },
+    { t: 'grid ON', font: 'bold 34px Inter', y: 212 }], { w: 256, h: 512, bg: '#ffffff', color: '#0F7B5F' }) }));
+  ph.rotation.x = -Math.PI / 2; ph.rotation.z = Math.PI; add(room, ph, 3.0, 1.956, 5.8);
+  mark('box', mg, [0, 0.8, 0]); mark('cam', cam, [0, 0.5, 0]); mark('pir', p, [0, 0.4, 0]); mark('reed', rd, [0, 0.3, 0]);
+  mark('gen', gen, [0, 2.0, 0]); mark('tank', tank, [0.3, 2.1, 0]); mark('phone', phone, [0, 0.25, 0]);
+  camera = new THREE.PerspectiveCamera(36, W / H, 0.1, 100); camera.position.set(6.5, 6.0, 15.5); camera.lookAt(-0.6, 2.2, 1.5);
+  sun.position.set(6, 12, 10);
+}
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.autoRotate = VIEW !== 'install'; controls.autoRotateSpeed = 0.8;
+const tgt = new THREE.Vector3(); camera.getWorldDirection(tgt); controls.target.copy(camera.position).add(tgt.multiplyScalar(VIEW === 'install' ? 14 : 7));
+controls.update();
+addEventListener('resize', () => { W = innerWidth; H = innerHeight; camera.aspect = W / H; camera.updateProjectionMatrix(); renderer.setSize(W, H); });
+renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+</script></body></html>
