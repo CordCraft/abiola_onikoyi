@@ -45,7 +45,7 @@ function SlowNotice({ show }: { show: boolean }) {
   if (!show) return null;
   return (
     <p className="text-xs text-amber-600">
-      Still sending — this can take longer when the database connection is
+      Still sending. This can take longer when the database connection is
       waking up. Nothing is lost; refresh in a bit to check before resending.
     </p>
   );
@@ -139,7 +139,7 @@ function SlowNoticeDark({ show }: { show: boolean }) {
   if (!show) return null;
   return (
     <p className="text-xs text-amber-300">
-      Still sending — this can take longer when the database connection is
+      Still sending. This can take longer when the database connection is
       waking up. Nothing is lost; refresh in a bit to check before resending.
     </p>
   );

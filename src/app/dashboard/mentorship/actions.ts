@@ -10,7 +10,9 @@ import {
   GOAL_STATUSES,
   RESOURCE_CATEGORIES,
   SESSION_STATUSES,
+  dateOfPlanDay,
 } from "@/lib/mentorship/constants";
+import { currentIntakeCohort, getCohort } from "@/lib/mentorship/cohorts";
 
 export type AdminFormResult = { error?: string; ok?: boolean } | undefined;
 
@@ -66,8 +68,18 @@ export async function createMentee(
   });
   if (existing) return { error: "A mentee with that email already exists." };
 
+  const cohortRaw = String(formData.get("cohort") ?? "").trim();
+  const cohort = cohortRaw ? (await getCohort(cohortRaw)).id : (await currentIntakeCohort()).id;
+
   const mentee = await prisma.mentorshipMentee.create({
-    data: { name, email, headline, focusArea, accessCode: generateAccessCode() },
+    data: {
+      name,
+      email,
+      headline,
+      focusArea,
+      cohort,
+      accessCode: generateAccessCode(),
+    },
   });
 
   revalidatePath("/dashboard/mentorship");
@@ -301,6 +313,7 @@ export async function createMentorshipSession(
   const scheduledAt = parseWatDateTime(String(formData.get("scheduledAt") ?? ""));
   const link = String(formData.get("link") ?? "").trim() || null;
   const agenda = String(formData.get("agenda") ?? "").trim() || null;
+  const cohort = String(formData.get("cohort") ?? "").trim() || null;
 
   if (!title) return { error: "Give the session a title." };
   if (!scheduledAt) return { error: "Pick a valid date and time." };
@@ -316,6 +329,7 @@ export async function createMentorshipSession(
       scheduledAt,
       link,
       agenda,
+      cohort: kind === "one_on_one" ? null : cohort,
     },
   });
 
@@ -398,7 +412,8 @@ export async function createAnnouncement(
   const body = String(formData.get("body") ?? "").trim();
   if (!title || !body) return { error: "Announcements need a title and a body." };
 
-  await prisma.mentorshipAnnouncement.create({ data: { title, body } });
+  const cohort = String(formData.get("cohort") ?? "").trim() || null;
+  await prisma.mentorshipAnnouncement.create({ data: { title, body, cohort } });
 
   revalidateCohort();
   return { ok: true };
@@ -502,4 +517,170 @@ export async function adminRevokeAiTool(formData: FormData): Promise<void> {
   });
   revalidatePath(`/dashboard/mentorship/${row.menteeId}`);
   revalidatePath("/mentorship/portal/toolkit");
+}
+
+// ---------------------------------------------------------------------------
+// Cohorts
+// ---------------------------------------------------------------------------
+
+function revalidateCohorts() {
+  revalidatePath("/dashboard/mentorship");
+  revalidatePath("/dashboard/mentorship/cohorts");
+  revalidatePath("/mentorship");
+  revalidatePath("/mentorship/portal", "layout");
+}
+
+// "2026-12-05" -> that Lagos calendar date at UTC midnight (plan-day format).
+function parseLagosDate(value: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const d = new Date(`${value}T00:00:00.000Z`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+async function nextCohortId(start: Date): Promise<string> {
+  const year = start.getUTCFullYear();
+  const count = await prisma.mentorshipCohort.count();
+  let n = count + 1;
+  // Ids stay unique even if an older cohort was renamed or removed.
+  while (await prisma.mentorshipCohort.findUnique({ where: { id: `${year}-C${n}` } })) n += 1;
+  return `${year}-C${n}`;
+}
+
+export async function saveCohort(
+  _prev: AdminFormResult,
+  formData: FormData,
+): Promise<AdminFormResult> {
+  await verifySession();
+  await ensureMentorshipTables();
+
+  const id = String(formData.get("id") ?? "").trim();
+  const label = String(formData.get("label") ?? "").trim();
+  const startDate = parseLagosDate(String(formData.get("startDate") ?? ""));
+  const kickoffRaw = String(formData.get("kickoffAt") ?? "").trim();
+  const kickoffAt = kickoffRaw ? parseWatDateTime(kickoffRaw) : null;
+
+  if (!label) return { error: "Give the cohort a name, for example Cohort 2 · 2026." };
+  if (!startDate) return { error: "Pick the date day 1 of the programme lands on." };
+  // The daily programme is built Saturday to Friday (weekend deep work,
+  // Friday checkpoint and check-in), so day 1 must be a Saturday.
+  if (startDate.getUTCDay() !== 6) {
+    return { error: "Day 1 must be a Saturday: weeks run Saturday to Friday." };
+  }
+  if (kickoffRaw && !kickoffAt) return { error: "That kickoff date and time is not valid." };
+
+  if (id) {
+    const before = await prisma.mentorshipCohort.findUnique({ where: { id } });
+    if (!before) return { error: "Cohort not found." };
+    await prisma.mentorshipCohort.update({
+      where: { id },
+      data: { label, startDate, kickoffAt },
+    });
+    // Moving the start date re-dates every member's daily programme.
+    if (before.startDate.getTime() !== startDate.getTime()) {
+      const members = await prisma.mentorshipMentee.findMany({
+        where: { cohort: id },
+        select: { id: true },
+      });
+      for (const m of members) await redatePlan(m.id, startDate.toISOString());
+    }
+  } else {
+    await prisma.mentorshipCohort.create({
+      data: {
+        id: await nextCohortId(startDate),
+        label,
+        startDate,
+        kickoffAt,
+        status: "upcoming",
+      },
+    });
+  }
+
+  revalidateCohorts();
+  return { ok: true };
+}
+
+async function redatePlan(menteeId: string, startIso: string): Promise<void> {
+  const days = await prisma.mentorshipPlanDay.findMany({
+    where: { menteeId },
+    select: { id: true, dayIndex: true },
+  });
+  await prisma.$transaction(
+    days.map((d) =>
+      prisma.mentorshipPlanDay.update({
+        where: { id: d.id },
+        data: { date: dateOfPlanDay(d.dayIndex, startIso) },
+      }),
+    ),
+  );
+}
+
+// Moves a mentee into another cohort. Their daily programme keeps its content
+// but is re-dated to the new cohort's calendar; "fresh" instead clears the
+// programme days and weekly check-ins so they start week 1 clean (goals,
+// tasks, messages and profile are always kept).
+export async function moveMenteeToCohort(formData: FormData): Promise<void> {
+  await verifySession();
+  await ensureMentorshipTables();
+  const id = String(formData.get("id") ?? "");
+  const cohortId = String(formData.get("cohort") ?? "");
+  const fresh = formData.get("fresh") === "on";
+  if (!id || !cohortId) return;
+
+  const cohort = await prisma.mentorshipCohort.findUnique({ where: { id: cohortId } });
+  if (!cohort) return;
+
+  await prisma.mentorshipMentee.update({
+    where: { id },
+    data: { cohort: cohort.id, active: cohort.status === "closed" ? false : true },
+  });
+  if (fresh) {
+    await prisma.mentorshipPlanDay.deleteMany({ where: { menteeId: id } });
+    await prisma.mentorshipCheckin.deleteMany({ where: { menteeId: id } });
+  } else {
+    await redatePlan(id, cohort.startDate.toISOString());
+  }
+
+  revalidateMentee(id);
+  revalidateProgram(id);
+  revalidateCohorts();
+}
+
+// Wraps a cohort up: status closed, every member's portal access switched
+// off, and their unanswered check-ins drop out of "Needs your reply". Nothing
+// is deleted; reopening restores access.
+export async function setCohortClosed(formData: FormData): Promise<void> {
+  await verifySession();
+  await ensureMentorshipTables();
+  const id = String(formData.get("id") ?? "");
+  const close = String(formData.get("close") ?? "true") === "true";
+  if (!id) return;
+
+  await prisma.mentorshipCohort.update({
+    where: { id },
+    data: close
+      ? { status: "closed", closedAt: new Date() }
+      : { status: "active", closedAt: null },
+  });
+  await prisma.mentorshipMentee.updateMany({
+    where: { cohort: id },
+    data: { active: !close },
+  });
+
+  revalidateCohorts();
+}
+
+export async function adminUpdateGoal(formData: FormData): Promise<void> {
+  await verifySession();
+  const id = String(formData.get("id") ?? "");
+  const title = String(formData.get("title") ?? "").trim();
+  const detail = String(formData.get("detail") ?? "").trim() || null;
+  const monthRaw = Number(formData.get("targetMonth"));
+  const targetMonth = monthRaw >= 1 && monthRaw <= 3 ? monthRaw : null;
+  if (!id || !title) return;
+
+  const goal = await prisma.mentorshipGoal.update({
+    where: { id },
+    data: { title, detail, targetMonth },
+  });
+  revalidateMentee(goal.menteeId);
 }

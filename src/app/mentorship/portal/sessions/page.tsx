@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { verifyMentee } from "@/lib/mentorship/dal";
 import { Card, EmptyState, Pill } from "@/components/mentorship/ui";
 import { formatDateTime } from "@/lib/format";
+import { googleCalendarUrl } from "@/lib/mentorship/calendar";
 import type { MentorshipSession } from "@prisma/client";
 
 function SessionCard({ session }: { session: MentorshipSession }) {
@@ -34,15 +35,33 @@ function SessionCard({ session }: { session: MentorshipSession }) {
           </p>
         </div>
       ) : null}
-      {!past && session.link ? (
-        <a
-          href={session.link}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mt-4 inline-block rounded-full bg-white px-4 py-1.5 text-sm font-semibold text-zinc-950 transition-colors hover:bg-zinc-200"
-        >
-          Join call
-        </a>
+      {!past ? (
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          {session.link ? (
+            <a
+              href={session.link}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-block rounded-full bg-white px-4 py-1.5 text-sm font-semibold text-zinc-950 transition-colors hover:bg-zinc-200"
+            >
+              Join call
+            </a>
+          ) : null}
+          <a
+            href={googleCalendarUrl({
+                  title: session.title,
+                  start: session.scheduledAt,
+                  minutes: 60,
+                  details: session.agenda,
+                  location: session.link,
+                })}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block rounded-full border border-white/15 px-4 py-1.5 text-sm font-medium text-zinc-300 transition-colors hover:bg-white/10"
+          >
+            Add to calendar
+          </a>
+        </div>
       ) : null}
     </Card>
   );
@@ -53,7 +72,12 @@ export default async function SessionsPage() {
   const now = new Date();
 
   const sessions = await prisma.mentorshipSession.findMany({
-    where: { OR: [{ menteeId: null }, { menteeId: mentee.id }] },
+    where: {
+      OR: [
+        { menteeId: mentee.id },
+        { menteeId: null, OR: [{ cohort: null }, { cohort: mentee.cohort }] },
+      ],
+    },
     orderBy: { scheduledAt: "asc" },
   });
 

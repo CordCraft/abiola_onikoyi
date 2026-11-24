@@ -3,17 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { verifyMentee } from "@/lib/mentorship/dal";
-import {
-  PROGRAM_WEEKS,
-  planDayIndex,
-  programWeek,
-  weekOfPlanDay,
-} from "@/lib/mentorship/constants";
+import { PROGRAM_WEEKS } from "@/lib/mentorship/constants";
 import {
   canCloseDay,
   canWorkDay,
-  computeUnlockedWeek,
+  unlockedWeekForMentee,
 } from "@/lib/mentorship/plan";
+import { cohortClockFor } from "@/lib/mentorship/cohorts";
 import { ensureWeekGenerated } from "@/lib/mentorship/program-gen";
 import { after } from "next/server";
 
@@ -131,7 +127,8 @@ export async function submitCheckin(
   // Mentees may catch up on any week the calendar has already reached (a
   // missed week blocks every later week of the daily programme), but never
   // check in ahead of the calendar.
-  const lastWeek = Math.min(programWeek(), PROGRAM_WEEKS);
+  const clock = await cohortClockFor(mentee.cohort);
+  const lastWeek = Math.min(clock.week, PROGRAM_WEEKS);
   const week = Number(formData.get("week"));
   if (lastWeek < 1) {
     return { error: "Check-ins open when the programme kicks off." };
@@ -171,17 +168,7 @@ export async function submitCheckin(
 // ---------------------------------------------------------------------------
 
 async function unlockedWeekFor(menteeId: string): Promise<number> {
-  const todayIndex = planDayIndex();
-  if (todayIndex < 1) return 0;
-  const currentWeek = Math.min(
-    Math.max(1, weekOfPlanDay(Math.max(1, todayIndex))),
-    PROGRAM_WEEKS,
-  );
-  const checkins = await prisma.mentorshipCheckin.findMany({
-    where: { menteeId },
-    select: { week: true },
-  });
-  return computeUnlockedWeek(currentWeek, new Set(checkins.map((c) => c.week)));
+  return unlockedWeekForMentee(menteeId);
 }
 
 function revalidateProgram() {

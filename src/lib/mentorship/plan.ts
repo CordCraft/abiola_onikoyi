@@ -7,6 +7,7 @@ import {
   weekOfPlanDay,
 } from "@/lib/mentorship/constants";
 import type { MentorshipPlanDay, MentorshipPlanTask } from "@prisma/client";
+import { cohortClockFor } from "@/lib/mentorship/cohorts";
 
 export type PlanDayWithTasks = MentorshipPlanDay & {
   tasks: MentorshipPlanTask[];
@@ -80,7 +81,33 @@ export function computeStreak(
   return streak;
 }
 
+// The mentee's programme start, from their cohort.
+export async function menteeStartIso(menteeId: string): Promise<string> {
+  const row = await prisma.mentorshipMentee.findUnique({
+    where: { id: menteeId },
+    select: { cohort: true },
+  });
+  return (await cohortClockFor(row?.cohort)).startIso;
+}
+
+// Highest week the mentee may work in right now (0 before their start).
+export async function unlockedWeekForMentee(menteeId: string): Promise<number> {
+  const startIso = await menteeStartIso(menteeId);
+  const todayIndex = planDayIndex(new Date(), startIso);
+  if (todayIndex < 1) return 0;
+  const currentWeek = Math.min(
+    Math.max(1, weekOfPlanDay(Math.max(1, todayIndex))),
+    PROGRAM_WEEKS,
+  );
+  const checkins = await prisma.mentorshipCheckin.findMany({
+    where: { menteeId },
+    select: { week: true },
+  });
+  return computeUnlockedWeek(currentWeek, new Set(checkins.map((c) => c.week)));
+}
+
 export async function getPlanState(menteeId: string): Promise<PlanState> {
+  const startIso = await menteeStartIso(menteeId);
   const [days, checkins] = await Promise.all([
     prisma.mentorshipPlanDay.findMany({
       where: { menteeId },
@@ -93,7 +120,7 @@ export async function getPlanState(menteeId: string): Promise<PlanState> {
     }),
   ]);
 
-  const todayIndex = planDayIndex();
+  const todayIndex = planDayIndex(new Date(), startIso);
   const currentWeek = Math.min(
     Math.max(1, weekOfPlanDay(Math.max(1, todayIndex))),
     PROGRAM_WEEKS,

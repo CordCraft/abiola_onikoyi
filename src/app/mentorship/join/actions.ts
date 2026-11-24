@@ -6,6 +6,7 @@ import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { createMenteeSession } from "@/lib/mentorship/session";
+import { currentIntakeCohort } from "@/lib/mentorship/cohorts";
 import { ensureMentorshipTables } from "@/lib/mentorship/setup";
 import { generateAccessCode } from "@/lib/mentorship/codes";
 import { draftInitialGoals } from "@/lib/mentorship/goal-draft";
@@ -101,7 +102,12 @@ export async function signUp(
         data,
       })
     : await prisma.mentorshipMentee.create({
-        data: { email, accessCode: generateAccessCode(), ...data },
+        data: {
+          email,
+          accessCode: generateAccessCode(),
+          cohort: (await currentIntakeCohort()).id,
+          ...data,
+        },
       });
 
   // Personalized starter goals, then the 91-day programme blueprint and the

@@ -17,7 +17,9 @@ import {
   adminRevokeAiTool,
   adminSetGoalStatus,
   adminToggleTask,
+  adminUpdateGoal,
   deleteMentee,
+  moveMenteeToCohort,
   resetMenteePassword,
   setMenteeActive,
 } from "@/app/dashboard/mentorship/actions";
@@ -28,7 +30,14 @@ import {
 } from "@/components/mentorship/admin-plan-forms";
 import { SubmitButton } from "@/components/SubmitButton";
 import { computeStreak } from "@/lib/mentorship/plan";
-import { PLAN_KIND_LABELS, planDayIndex, type PlanTaskKind } from "@/lib/mentorship/constants";
+import {
+  PLAN_KIND_LABELS,
+  PROGRAM_DAYS,
+  PROGRAM_WEEKS,
+  type PlanTaskKind,
+} from "@/lib/mentorship/constants";
+import { clockFor, getCohort, listCohorts } from "@/lib/mentorship/cohorts";
+import { formatLongDate } from "@/lib/mentorship/calendar";
 
 export const metadata = { title: "Mentee" };
 
@@ -60,14 +69,27 @@ export default async function MenteeDetailPage({
   });
   if (!mentee) notFound();
 
-  const todayIndex = planDayIndex();
+  const cohort = await getCohort(mentee.cohort);
+  const cohorts = await listCohorts();
+  const clock = clockFor(cohort);
+  const todayIndex = clock.dayIndex;
+  const firstName = mentee.name.split(" ")[0];
+  const wa = mentee.phone?.replace(/[^\d]/g, "");
+  const now = new Date();
   const planTasks = mentee.planDays.flatMap((d) => d.tasks);
   const planDone = planTasks.filter((t) => t.status === "done");
   const planStreak = computeStreak(mentee.planDays, todayIndex);
   const planWeeks = Array.from(
     new Set(mentee.planDays.map((d) => d.week)),
   ).sort((a, b) => a - b);
-  const currentWeek = Math.min(Math.max(1, Math.ceil(Math.max(1, todayIndex) / 7)), 13);
+  const currentWeek = Math.min(
+    Math.max(1, Math.ceil(Math.max(1, todayIndex) / 7)),
+    PROGRAM_WEEKS,
+  );
+  // Unanswered check-ins first, then newest.
+  const checkins = [...mentee.checkins].sort(
+    (a, b) => Number(!!a.mentorReply) - Number(!!b.mentorReply) || b.week - a.week,
+  );
 
   // Opening the thread marks the mentee's messages as read.
   await prisma.mentorshipMessage.updateMany({
@@ -81,14 +103,34 @@ export default async function MenteeDetailPage({
   });
 
   const inviteText = [
-    `Hello ${mentee.name.split(" ")[0]},`,
+    `Hello ${firstName},`,
     "",
-    "Welcome to the mentorship programme. Register here:",
+    `Welcome to the mentorship programme (${cohort.label}). Register here:`,
     `https://abiolaonikoyi.com/mentorship/join`,
     `Use this email: ${mentee.email}`,
     "",
+    ...(clock.week === 0
+      ? [
+          `${cohort.kickoffAt ? `Our kickoff call is ${formatDateTime(cohort.kickoffAt)}. ` : ""}Day 1 of your daily programme is ${formatLongDate(cohort.startDate)}.`,
+          "",
+        ]
+      : []),
     "You will choose your own password, upload a photo (have a nice headshot ready), and share your story. The portal drafts your starter goals from it, and we refine them together. See you inside.",
   ].join("\n");
+  const kickoffEmail = `mailto:${mentee.email}?subject=${encodeURIComponent(
+    `Your mentorship kicks off${cohort.kickoffAt ? ` ${formatDate(cohort.kickoffAt)}` : ""}`,
+  )}&body=${encodeURIComponent(
+    [
+      `Hello ${firstName},`,
+      "",
+      `Welcome to ${cohort.label}.${cohort.kickoffAt ? ` We kick off on ${formatDateTime(cohort.kickoffAt)}.` : ""} Your daily programme starts ${formatLongDate(cohort.startDate)} and runs ${PROGRAM_WEEKS} weeks.`,
+      "",
+      "Portal: https://abiolaonikoyi.com/mentorship/login",
+      "",
+      "See you soon,",
+      "Abiola",
+    ].join("\n"),
+  )}`;
 
   return (
     <div className="space-y-8">
@@ -121,7 +163,45 @@ export default async function MenteeDetailPage({
               {mentee.track}
             </p>
           ) : null}
-          <p className="mt-1 text-xs text-zinc-400">
+          <p className="mt-1 text-sm text-zinc-600">
+            <Link
+              href={`/dashboard/mentorship?cohort=${cohort.id}`}
+              className="font-medium underline-offset-2 hover:underline"
+            >
+              {cohort.label}
+            </Link>
+            {clock.closed
+              ? " · cohort closed"
+              : clock.inProgram
+                ? ` · Week ${clock.week} of ${PROGRAM_WEEKS} · Day ${clock.dayIndex} of ${PROGRAM_DAYS}`
+                : clock.week === 0
+                  ? ` · starts ${formatLongDate(clock.startDate)}`
+                  : " · programme finished"}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <a href={`mailto:${mentee.email}`} className={smallButton}>
+              Email
+            </a>
+            {wa ? (
+              <a
+                href={`https://wa.me/${wa}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={smallButton}
+              >
+                WhatsApp
+              </a>
+            ) : null}
+            <a href="#messages" className={smallButton}>
+              Portal message
+            </a>
+            {clock.week === 0 && !clock.closed ? (
+              <a href={kickoffEmail} className={smallButton}>
+                Draft kickoff email
+              </a>
+            ) : null}
+          </div>
+          <p className="mt-2 text-xs text-zinc-400">
             {mentee.lastLoginAt
               ? `Last signed in ${formatDateTime(mentee.lastLoginAt)}`
               : "Has not signed in yet"}
@@ -141,7 +221,57 @@ export default async function MenteeDetailPage({
         </form>
       </div>
 
-      <div className="rounded-2xl border border-zinc-200 bg-white p-6">
+      <nav
+        aria-label="Sections"
+        className="sticky top-0 z-10 flex flex-wrap gap-1 rounded-xl border border-zinc-200 bg-white/90 px-2 py-1.5 text-xs backdrop-blur"
+      >
+        {[
+          ["#account", "Account"],
+          ["#programme", "Programme"],
+          ["#goals", "Goals"],
+          ["#tasks", "Tasks"],
+          ["#checkins", `Check-ins${mentee.checkins.some((c) => !c.mentorReply) ? " (reply due)" : ""}`],
+          ["#messages", "Messages"],
+        ].map(([href, label]) => (
+          <a
+            key={href}
+            href={href}
+            className="rounded-lg px-2.5 py-1 text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
+          >
+            {label}
+          </a>
+        ))}
+      </nav>
+
+      <div id="account" className="scroll-mt-16 rounded-2xl border border-zinc-200 bg-white p-6">
+        <form
+          action={moveMenteeToCohort}
+          className="mb-5 flex flex-wrap items-end gap-3 border-b border-zinc-100 pb-5"
+        >
+          <input type="hidden" name="id" value={mentee.id} />
+          <label className="text-sm text-zinc-600">
+            Cohort
+            <select
+              name="cohort"
+              defaultValue={mentee.cohort}
+              className="mt-1 block rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900"
+            >
+              {cohorts.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
+                  {c.status === "closed" ? " (closed)" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-2 pb-1.5 text-xs text-zinc-600">
+            <input type="checkbox" name="fresh" className="h-4 w-4 rounded border-zinc-300" />
+            Start the daily programme fresh (clears programme days and check-ins)
+          </label>
+          <SubmitButton pendingLabel="Moving…" className={`${smallButton} disabled:opacity-60`}>
+            Move
+          </SubmitButton>
+        </form>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-sm font-semibold text-zinc-900">
@@ -250,9 +380,9 @@ export default async function MenteeDetailPage({
         </section>
       ) : (
         <p className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800">
-          This mentee has not completed onboarding yet. Once they activate with
-          their access code, their full profile (photo, contact, aspirations,
-          expectations) appears here.
+          This mentee has not completed onboarding yet. Once they register at
+          the Join page with their email, their full profile (photo, contact,
+          aspirations, expectations) appears here.
         </p>
       )}
 
@@ -275,7 +405,7 @@ export default async function MenteeDetailPage({
       </details>
 
       {mentee.planDays.length > 0 ? (
-        <section className="rounded-2xl border border-zinc-200 bg-white p-6">
+        <section id="programme" className="scroll-mt-16 rounded-2xl border border-zinc-200 bg-white p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-lg font-semibold text-zinc-900">
               Daily programme
@@ -285,10 +415,10 @@ export default async function MenteeDetailPage({
                 {planDone.length}/{planTasks.length} tasks ·{" "}
                 {planDone.reduce((s, t) => s + t.points, 0)} pts
                 {planStreak > 0 ? ` · 🔥 ${planStreak}-day streak` : ""}
-                {todayIndex >= 1 && todayIndex <= 91
+                {todayIndex >= 1 && todayIndex <= PROGRAM_DAYS
                   ? ` · Day ${todayIndex}, week ${currentWeek}`
                   : todayIndex === 0
-                    ? " · starts 1 Aug"
+                    ? ` · starts ${formatDate(clock.startDate)}`
                     : " · wrapped"}
               </p>
               <Link
@@ -330,7 +460,7 @@ export default async function MenteeDetailPage({
               return (
                 <details
                   key={w}
-                  open={w === currentWeek && todayIndex >= 1 && todayIndex <= 91}
+                  open={w === currentWeek && todayIndex >= 1 && todayIndex <= PROGRAM_DAYS}
                   className="rounded-xl border border-zinc-100 bg-zinc-50"
                 >
                   <summary className="flex cursor-pointer items-center justify-between gap-3 p-3 text-sm font-medium text-zinc-800">
@@ -482,7 +612,7 @@ export default async function MenteeDetailPage({
         </div>
       </section>
 
-      <section className="rounded-2xl border border-zinc-200 bg-white p-6">
+      <section id="goals" className="scroll-mt-16 rounded-2xl border border-zinc-200 bg-white p-6">
         <h2 className="text-lg font-semibold text-zinc-900">Goals</h2>
         {mentee.goals.length === 0 ? (
           <p className="mt-2 text-sm text-zinc-500">No goals yet.</p>
@@ -516,6 +646,41 @@ export default async function MenteeDetailPage({
                   {g.detail ? (
                     <p className="mt-1 text-sm text-zinc-600">{g.detail}</p>
                   ) : null}
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-xs text-zinc-500 hover:text-zinc-900">
+                      Edit
+                    </summary>
+                    <form action={adminUpdateGoal} className="mt-2 space-y-2">
+                      <input type="hidden" name="id" value={g.id} />
+                      <input
+                        name="title"
+                        defaultValue={g.title}
+                        required
+                        className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm"
+                      />
+                      <textarea
+                        name="detail"
+                        defaultValue={g.detail ?? ""}
+                        rows={2}
+                        className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm"
+                      />
+                      <div className="flex items-center gap-2">
+                        <select
+                          name="targetMonth"
+                          defaultValue={g.targetMonth ?? ""}
+                          className="rounded-lg border border-zinc-300 bg-white px-2 py-1 text-sm"
+                        >
+                          <option value="">No month</option>
+                          <option value="1">Month 1</option>
+                          <option value="2">Month 2</option>
+                          <option value="3">Month 3</option>
+                        </select>
+                        <SubmitButton className={`${smallButton} disabled:opacity-60`}>
+                          Save goal
+                        </SubmitButton>
+                      </div>
+                    </form>
+                  </details>
                 </div>
                 <div className="flex gap-2">
                   {g.status !== "completed" ? (
@@ -554,7 +719,7 @@ export default async function MenteeDetailPage({
         </div>
       </section>
 
-      <section className="rounded-2xl border border-zinc-200 bg-white p-6">
+      <section id="tasks" className="scroll-mt-16 rounded-2xl border border-zinc-200 bg-white p-6">
         <h2 className="text-lg font-semibold text-zinc-900">Tasks</h2>
         {mentee.tasks.length === 0 ? (
           <p className="mt-2 text-sm text-zinc-500">No tasks yet.</p>
@@ -593,7 +758,17 @@ export default async function MenteeDetailPage({
                   </p>
                   <p className="text-xs text-zinc-400">
                     {t.createdBy === "mentee" ? "Added by mentee" : "Assigned by you"}
-                    {t.dueDate ? ` · due ${formatDate(t.dueDate)}` : null}
+                    {t.dueDate ? (
+                      <span
+                        className={
+                          t.status !== "done" && t.dueDate < now
+                            ? "font-medium text-red-600"
+                            : ""
+                        }
+                      >
+                        {` · ${t.status !== "done" && t.dueDate < now ? "overdue" : "due"} ${formatDate(t.dueDate)}`}
+                      </span>
+                    ) : null}
                     {t.notes ? ` · ${t.notes}` : null}
                   </p>
                 </div>
@@ -620,13 +795,13 @@ export default async function MenteeDetailPage({
         </div>
       </section>
 
-      <section id="checkins" className="rounded-2xl border border-zinc-200 bg-white p-6">
+      <section id="checkins" className="scroll-mt-16 rounded-2xl border border-zinc-200 bg-white p-6">
         <h2 className="text-lg font-semibold text-zinc-900">Check-ins</h2>
-        {mentee.checkins.length === 0 ? (
+        {checkins.length === 0 ? (
           <p className="mt-2 text-sm text-zinc-500">No check-ins yet.</p>
         ) : (
           <ul className="mt-4 space-y-4">
-            {mentee.checkins.map((c) => (
+            {checkins.map((c) => (
               <li key={c.id} className="rounded-xl border border-zinc-100 bg-zinc-50 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-sm font-semibold text-zinc-900">
@@ -667,7 +842,7 @@ export default async function MenteeDetailPage({
                     <p className="mt-1 whitespace-pre-line">{c.mentorReply}</p>
                   </div>
                 ) : (
-                  <CheckinReplyForm checkinId={c.id} />
+                  <CheckinReplyForm checkinId={c.id} firstName={firstName} />
                 )}
               </li>
             ))}
@@ -675,7 +850,7 @@ export default async function MenteeDetailPage({
         )}
       </section>
 
-      <section className="rounded-2xl border border-zinc-200 bg-white p-6">
+      <section id="messages" className="scroll-mt-16 rounded-2xl border border-zinc-200 bg-white p-6">
         <h2 className="text-lg font-semibold text-zinc-900">Messages</h2>
         {messages.length === 0 ? (
           <p className="mt-2 text-sm text-zinc-500">No messages yet.</p>

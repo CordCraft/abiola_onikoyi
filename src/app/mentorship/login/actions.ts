@@ -47,7 +47,7 @@ export async function menteeLogin(
   await ensureMentorshipTables();
   const mentee = await prisma.mentorshipMentee.findUnique({ where: { email } });
 
-  if (!mentee || !mentee.active) {
+  if (!mentee) {
     return { error: "That email and password combination was not recognized." };
   }
   if (!mentee.passwordHash) {
@@ -59,6 +59,12 @@ export async function menteeLogin(
   const ok = await bcrypt.compare(password, mentee.passwordHash);
   if (!ok) {
     return { error: "That email and password combination was not recognized." };
+  }
+  if (!mentee.active) {
+    return {
+      error:
+        "Your mentorship cohort has wrapped up, so portal access is closed. Message Abiola if you would like to join a future cohort.",
+    };
   }
 
   await prisma.mentorshipMentee.update({

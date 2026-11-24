@@ -187,6 +187,30 @@ const DDL: string[] = [
       REFERENCES "MentorshipMentee"("id") ON DELETE CASCADE ON UPDATE CASCADE
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "MentorshipAiTool_menteeId_tool_key" ON "MentorshipAiTool"("menteeId", "tool")`,
+
+  `CREATE TABLE IF NOT EXISTS "MentorshipCohort" (
+    "id" TEXT NOT NULL,
+    "label" TEXT NOT NULL,
+    "kickoffAt" TIMESTAMP(3),
+    "startDate" TIMESTAMP(3) NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'upcoming',
+    "closedAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "MentorshipCohort_pkey" PRIMARY KEY ("id")
+  )`,
+  // Cohort 1 existed before the table did: seed it with its real dates.
+  `INSERT INTO "MentorshipCohort" ("id", "label", "kickoffAt", "startDate", "status", "updatedAt")
+    VALUES ('2026-C1', 'Cohort 1 · 2026', '2026-07-25T09:00:00.000Z', '2026-08-01T00:00:00.000Z', 'active', CURRENT_TIMESTAMP)
+    ON CONFLICT ("id") DO NOTHING`,
+];
+
+// Postgres-only hardening and later columns on other tables, each tried on
+// its own (SQLite dev gets these from prisma db push and ignores failures).
+const EXTRA_DDL: string[] = [
+  `ALTER TABLE "MentorshipCohort" ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE "MentorshipSession" ADD COLUMN IF NOT EXISTS "cohort" TEXT`,
+  `ALTER TABLE "MentorshipAnnouncement" ADD COLUMN IF NOT EXISTS "cohort" TEXT`,
 ];
 
 // Columns added after the initial launch. CREATE TABLE IF NOT EXISTS skips
@@ -245,8 +269,16 @@ export function ensureMentorshipTables(): Promise<void> {
         await prisma.$executeRawUnsafe(stmt);
       }
       let altered = false;
+      for (const stmt of EXTRA_DDL) {
+        try {
+          await prisma.$executeRawUnsafe(stmt);
+          if (stmt.includes("ADD COLUMN")) altered = true;
+        } catch {
+          // SQLite or already applied.
+        }
+      }
       try {
-        altered = await applyColumnMigrations();
+        altered = (await applyColumnMigrations()) || altered;
       } catch {
         // Non-Postgres local dev: columns come from `prisma db push`.
       }

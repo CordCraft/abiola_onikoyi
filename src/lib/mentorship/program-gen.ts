@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/prisma";
 import type { MentorshipMentee } from "@prisma/client";
 import { profileSummary } from "@/lib/mentorship/goal-draft";
+import { cohortClockFor } from "@/lib/mentorship/cohorts";
 import {
   MINDSET,
   WEEK_TAGLINES,
@@ -376,6 +377,7 @@ export async function ensureWeekGenerated(
   if (!mentee) return "failed";
 
   const blueprint = await ensureBlueprint(menteeId);
+  const { startIso } = await cohortClockFor(mentee.cohort);
 
   const [goals, lastCheckin] = await Promise.all([
     prisma.mentorshipGoal.findMany({
@@ -440,7 +442,7 @@ export async function ensureWeekGenerated(
         data: {
           menteeId,
           dayIndex,
-          date: dateOfPlanDay(dayIndex),
+          date: dateOfPlanDay(dayIndex, startIso),
           week,
           title: days[d].title,
           mindset: WEEK_TAGLINES[week - 1],

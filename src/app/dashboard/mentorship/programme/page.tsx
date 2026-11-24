@@ -15,6 +15,8 @@ import {
   deleteResource,
   updateMentorshipSession,
 } from "@/app/dashboard/mentorship/actions";
+import { listCohorts } from "@/lib/mentorship/cohorts";
+import { googleCalendarUrl } from "@/lib/mentorship/calendar";
 
 export const metadata = { title: "Programme admin" };
 
@@ -25,7 +27,17 @@ export default async function ProgrammeAdminPage() {
   await verifySession();
   await ensureMentorshipTables();
 
-  const [sessions, resources, announcements, mentees] = await Promise.all([
+  const cohortRows = await listCohorts();
+  const cohorts = cohortRows.map((c) => ({
+    id: c.id,
+    label: c.label,
+    closed: c.status === "closed",
+  }));
+  const cohortLabel = (id: string | null) =>
+    id ? (cohortRows.find((c) => c.id === id)?.label ?? id) : "Every cohort";
+  const now = new Date();
+
+  const [allSessions, resources, announcements, mentees] = await Promise.all([
     prisma.mentorshipSession.findMany({
       orderBy: { scheduledAt: "desc" },
       include: { mentee: { select: { name: true } } },
@@ -40,6 +52,13 @@ export default async function ProgrammeAdminPage() {
       select: { id: true, name: true },
     }),
   ]);
+  // Upcoming first (soonest at the top), then the history.
+  const sessions = [
+    ...allSessions
+      .filter((s) => s.status === "upcoming" && s.scheduledAt >= now)
+      .sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime()),
+    ...allSessions.filter((s) => !(s.status === "upcoming" && s.scheduledAt >= now)),
+  ];
 
   return (
     <div className="space-y-8">
@@ -54,15 +73,16 @@ export default async function ProgrammeAdminPage() {
           Sessions, resources & announcements
         </h1>
         <p className="mt-1 text-sm text-zinc-500">
-          Everything here is visible to the whole cohort (one-on-ones only to
-          the mentee involved).
+          Group sessions and announcements go to every cohort or the one you
+          pick; one-on-ones only to the mentee involved. Resources are shared
+          with everyone.
         </p>
       </div>
 
       <section className="rounded-2xl border border-zinc-200 bg-white p-6">
         <h2 className="text-lg font-semibold text-zinc-900">Schedule a session</h2>
         <div className="mt-4">
-          <SessionForm mentees={mentees} />
+          <SessionForm mentees={mentees} cohorts={cohorts} />
         </div>
         {sessions.length > 0 ? (
           <ul className="mt-6 divide-y divide-zinc-100">
@@ -73,12 +93,41 @@ export default async function ProgrammeAdminPage() {
                     {s.title}
                     <span className="ml-2 text-xs text-zinc-500">
                       {s.kind === "group"
-                        ? "Group"
+                        ? `Group · ${cohortLabel(s.cohort)}`
                         : `One on one · ${s.mentee?.name ?? "?"}`}
                     </span>
                   </p>
                   <p className="text-xs text-zinc-500">
-                    {formatDateTime(s.scheduledAt)} · {s.status}
+                    {formatDateTime(s.scheduledAt)} ·{" "}
+                    <span
+                      className={
+                        s.status === "upcoming" && s.scheduledAt < now
+                          ? "font-medium text-amber-700"
+                          : ""
+                      }
+                    >
+                      {s.status === "upcoming" && s.scheduledAt < now
+                        ? "past, mark held or cancelled"
+                        : s.status}
+                    </span>
+                    {s.status === "upcoming" && s.scheduledAt >= now ? (
+                      <>
+                        {" · "}
+                        <a
+                          href={googleCalendarUrl({
+                            title: s.title,
+                            start: s.scheduledAt,
+                            details: s.agenda,
+                            location: s.link,
+                          })}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline-offset-2 hover:underline"
+                        >
+                          add to calendar
+                        </a>
+                      </>
+                    ) : null}
                     {s.link ? (
                       <>
                         {" · "}
@@ -191,14 +240,19 @@ export default async function ProgrammeAdminPage() {
       <section className="rounded-2xl border border-zinc-200 bg-white p-6">
         <h2 className="text-lg font-semibold text-zinc-900">Post an announcement</h2>
         <div className="mt-4">
-          <AnnouncementForm />
+          <AnnouncementForm cohorts={cohorts} />
         </div>
         {announcements.length > 0 ? (
           <ul className="mt-6 divide-y divide-zinc-100">
             {announcements.map((a) => (
               <li key={a.id} className="py-3">
                 <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-medium text-zinc-900">{a.title}</p>
+                  <p className="text-sm font-medium text-zinc-900">
+                    {a.title}
+                    <span className="ml-2 text-xs font-normal text-zinc-500">
+                      {cohortLabel(a.cohort)}
+                    </span>
+                  </p>
                   <div className="flex items-center gap-3">
                     <span className="text-xs text-zinc-400">
                       {formatDate(a.createdAt)}

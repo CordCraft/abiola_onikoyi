@@ -4,11 +4,8 @@ import type { Metadata } from "next";
 import { verifyMentee } from "@/lib/mentorship/dal";
 import { profile } from "@/content/profile";
 import { PortalNav } from "@/components/mentorship/PortalNav";
-import {
-  COHORT_LABEL,
-  PROGRAM_WEEKS,
-  programWeek,
-} from "@/lib/mentorship/constants";
+import { PROGRAM_WEEKS } from "@/lib/mentorship/constants";
+import { cohortClockFor } from "@/lib/mentorship/cohorts";
 
 export const metadata: Metadata = {
   title: "Mentorship Portal",
@@ -26,7 +23,8 @@ export default async function PortalLayout({
   if (!mentee.onboardedAt) {
     redirect("/mentorship/logout");
   }
-  const week = programWeek();
+  const clock = await cohortClockFor(mentee.cohort);
+  const week = clock.week;
 
   return (
     <div className="relative min-h-screen">
@@ -59,7 +57,7 @@ export default async function PortalLayout({
             </Link>
             <div className="flex items-center gap-4 text-sm">
               <span className="hidden text-zinc-500 sm:inline">
-                {COHORT_LABEL}
+                {clock.label}
                 {week >= 1 && week <= PROGRAM_WEEKS
                   ? ` · Week ${week} of ${PROGRAM_WEEKS}`
                   : null}

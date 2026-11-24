@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { verifyMentee } from "@/lib/mentorship/dal";
-import { PROGRAM_WEEKS, programWeek } from "@/lib/mentorship/constants";
+import { PROGRAM_WEEKS, dateOfPlanDay } from "@/lib/mentorship/constants";
+import { cohortClockFor } from "@/lib/mentorship/cohorts";
+import { formatLongDate } from "@/lib/mentorship/calendar";
 import { CheckinForm } from "@/components/mentorship/forms";
 import { Card, CardTitle, EmptyState, Pill } from "@/components/mentorship/ui";
 import { formatDate } from "@/lib/format";
@@ -8,7 +10,8 @@ import { nextCheckinWeek } from "@/lib/mentorship/plan";
 
 export default async function CheckinsPage() {
   const mentee = await verifyMentee();
-  const week = programWeek();
+  const clock = await cohortClockFor(mentee.cohort);
+  const week = clock.week;
   const inProgram = week >= 1 && week <= PROGRAM_WEEKS;
 
   const checkins = await prisma.mentorshipCheckin.findMany({
@@ -60,7 +63,10 @@ export default async function CheckinsPage() {
           Week {week} check-in done. Next one opens when the new week starts.
         </p>
       ) : week === 0 ? (
-        <EmptyState>Check-ins open when the programme kicks off.</EmptyState>
+        <EmptyState>
+          Check-ins open with week 1. Your first one is due on{" "}
+          {formatLongDate(dateOfPlanDay(7, clock.startIso))}.
+        </EmptyState>
       ) : (
         <EmptyState>The programme has wrapped. Your history stays here.</EmptyState>
       )}

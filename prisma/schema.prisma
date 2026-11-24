@@ -532,6 +532,7 @@ model MentorshipSession {
   link        String? // Google Meet or similar
   agenda      String?
   notes       String? // mentor's post-session notes, visible to attendees
+  cohort      String? // group sessions: null = every cohort
   // "upcoming" | "completed" | "cancelled"
   status      String            @default("upcoming")
   createdAt   DateTime          @default(now())
@@ -621,6 +622,22 @@ model MentorshipAiTool {
   @@unique([menteeId, tool])
 }
 
+// A cohort: its own kickoff call and programme start (day 1, a Saturday).
+// Mentees point at it by id through MentorshipMentee.cohort (plain string, no
+// FK, so legacy rows with the default '2026-C1' keep working). Created lazily
+// with Cohort 1 seeded by ensureMentorshipTables().
+model MentorshipCohort {
+  id        String    @id // e.g. "2026-C1"
+  label     String // e.g. "Cohort 1 · 2026"
+  kickoffAt DateTime? // the kickoff call
+  startDate DateTime // programme day 1 (Lagos date at UTC midnight)
+  // "upcoming" | "active" | "closed"
+  status    String    @default("upcoming")
+  closedAt  DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
 model MentorshipResource {
   id        String   @id @default(cuid())
   title     String
@@ -636,6 +653,7 @@ model MentorshipAnnouncement {
   id        String   @id @default(cuid())
   title     String
   body      String
+  cohort    String? // null = every cohort
   createdAt DateTime @default(now())
 }
 

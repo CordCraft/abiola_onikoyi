@@ -1,9 +1,12 @@
 import Link from "next/link";
+import { PROGRAM_DAYS as PROGRAM_DAYS_TOTAL } from "@/lib/mentorship/constants";
 import { notFound } from "next/navigation";
 import { verifySession } from "@/lib/dal";
 import { prisma } from "@/lib/prisma";
 import { ensureMentorshipTables } from "@/lib/mentorship/setup";
 import { getPlanState, type PlanDayWithTasks } from "@/lib/mentorship/plan";
+import { cohortClockFor } from "@/lib/mentorship/cohorts";
+import { formatLongDate } from "@/lib/mentorship/calendar";
 import {
   PROGRAM_WEEKS,
   monthOfWeek,
@@ -164,7 +167,7 @@ function MirrorDayCard({
             ) : null}
           </p>
           <p className="text-xs text-zinc-500">
-            {dayFmt.format(day.date)} · Day {day.dayIndex} of 91 · {done}/{total}{" "}
+            {dayFmt.format(day.date)} · Day {day.dayIndex} of {PROGRAM_DAYS_TOTAL} · {done}/{total}{" "}
             tasks{points > 0 ? ` · ${points} pts` : ""}
           </p>
         </div>
@@ -204,7 +207,7 @@ function MirrorDayCard({
           </div>
         ) : (
           <p className="rounded-xl border border-dashed border-white/10 px-4 py-3 text-xs text-zinc-500">
-            Not closed out yet — they haven&apos;t submitted this day&apos;s reflection.
+            Not closed out yet: they haven&apos;t submitted this day&apos;s reflection.
           </p>
         )}
       </div>
@@ -226,14 +229,15 @@ export default async function MenteeProgramMirrorPage({
 
   const mentee = await prisma.mentorshipMentee.findUnique({
     where: { id },
-    select: { id: true, name: true, track: true },
+    select: { id: true, name: true, track: true, cohort: true },
   });
   if (!mentee) notFound();
 
   const state = await getPlanState(id);
+  const clock = await cohortClockFor(mentee.cohort);
 
   const notStarted = state.todayIndex === 0;
-  const wrapped = state.todayIndex > 91;
+  const wrapped = state.todayIndex > PROGRAM_DAYS_TOTAL;
   const defaultWeek = notStarted
     ? 1
     : Math.min(state.currentWeek, state.unlockedWeek || 1);
@@ -296,10 +300,10 @@ export default async function MenteeProgramMirrorPage({
               <p className="mt-1 text-zinc-400">
                 {mentee.track ? `${mentee.track} · ` : ""}
                 {notStarted
-                  ? "Day 1 lands on Saturday 1 August. Preview week 1 below and come ready."
+                  ? `Day 1 lands on ${formatLongDate(clock.startDate)}. Preview week 1 below and come ready.`
                   : wrapped
-                    ? "The 91 days are complete. Your record stays here."
-                    : `Day ${state.todayIndex} of 91 · built from your story, one day at a time.`}
+                    ? `The ${PROGRAM_DAYS_TOTAL} days are complete. Your record stays here.`
+                    : `Day ${state.todayIndex} of ${PROGRAM_DAYS_TOTAL} · built from your story, one day at a time.`}
               </p>
             </div>
 
@@ -307,7 +311,7 @@ export default async function MenteeProgramMirrorPage({
               <div className="glass glow-card rounded-2xl p-5">
                 <p className="text-sm text-zinc-400">Streak</p>
                 <p className="mt-1 text-2xl font-semibold tracking-tight text-white">
-                  {state.streak > 0 ? `🔥 ${state.streak}` : "—"}
+                  {state.streak > 0 ? `🔥 ${state.streak}` : "-"}
                 </p>
                 <p className="mt-1 text-xs text-zinc-500">
                   {state.streak > 0
@@ -334,7 +338,7 @@ export default async function MenteeProgramMirrorPage({
               <div className="glass glow-card rounded-2xl p-5">
                 <p className="text-sm text-zinc-400">Week</p>
                 <p className="mt-1 text-2xl font-semibold tracking-tight text-white">
-                  {notStarted ? "—" : state.currentWeek}
+                  {notStarted ? "-" : state.currentWeek}
                   <span className="text-sm font-normal text-zinc-500"> / {PROGRAM_WEEKS}</span>
                 </p>
                 <p className="mt-1 text-xs text-zinc-500">

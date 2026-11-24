@@ -4,7 +4,6 @@ import { useActionState } from "react";
 import Link from "next/link";
 import { menteeLogin, type MenteeLoginState } from "./actions";
 import { profile } from "@/content/profile";
-import { COHORT_LABEL } from "@/lib/mentorship/constants";
 import { PasswordInput } from "@/components/mentorship/PasswordInput";
 import { Spinner } from "@/components/mentorship/Spinner";
 
@@ -49,7 +48,7 @@ export default function MenteeLoginPage() {
             </Link>
 
             <p className="mt-8 text-xs font-semibold uppercase tracking-[0.25em] gradient-text">
-              {COHORT_LABEL}
+              Mentee portal
             </p>
             <h1 className="mt-2 text-2xl font-semibold text-white">Welcome back</h1>
             <p className="mt-1 text-sm text-zinc-400">

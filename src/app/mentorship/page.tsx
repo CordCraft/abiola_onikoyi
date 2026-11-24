@@ -4,11 +4,9 @@ import { Nav } from "@/components/site/Nav";
 import { Footer } from "@/components/site/Footer";
 import { Reveal } from "@/components/anim/Reveal";
 import { profile } from "@/content/profile";
-import {
-  MONTH_THEMES,
-  CADENCE,
-  COHORT_LABEL,
-} from "@/lib/mentorship/constants";
+import { MONTH_THEMES, CADENCE, daysUntil } from "@/lib/mentorship/constants";
+import { currentIntakeCohort } from "@/lib/mentorship/cohorts";
+import { formatLongDate } from "@/lib/mentorship/calendar";
 
 export const metadata: Metadata = {
   title: "Mentorship",
@@ -58,7 +56,12 @@ const HERO_STATS = [
   { value: "4×", label: "touchpoints monthly" },
 ];
 
-export default function MentorshipPage() {
+// Re-render hourly so the cohort label and start date follow the cohorts table.
+export const revalidate = 3600;
+
+export default async function MentorshipPage() {
+  const intake = await currentIntakeCohort();
+  const startsLater = daysUntil(intake.startDate) > 0;
   return (
     <>
       <Nav />
@@ -80,7 +83,8 @@ export default function MentorshipPage() {
           <div className="relative mx-auto w-full max-w-5xl px-6 pb-24 pt-40">
             <Reveal y={30} stagger={0.12}>
               <p className="text-sm font-semibold uppercase tracking-[0.3em] gradient-text">
-                Mentorship · {COHORT_LABEL}
+                Mentorship · {intake.label}
+                {startsLater ? ` · starts ${formatLongDate(intake.startDate)}` : ""}
               </p>
               <h1 className="mt-4 max-w-3xl text-4xl font-semibold leading-[1.05] tracking-tight text-white sm:text-6xl lg:text-7xl">
                 From the classroom to a{" "}

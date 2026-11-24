@@ -3,11 +3,12 @@ import { prisma } from "@/lib/prisma";
 import { verifyMentee } from "@/lib/mentorship/dal";
 import {
   MONTH_THEMES,
+  PROGRAM_DAYS,
   PROGRAM_WEEKS,
   monthOfWeek,
-  programProgressPct,
-  programWeek,
 } from "@/lib/mentorship/constants";
+import { cohortClockFor, type CohortClock } from "@/lib/mentorship/cohorts";
+import { formatLongDate, googleCalendarUrl } from "@/lib/mentorship/calendar";
 import { formatDateTime } from "@/lib/format";
 import {
   Card,
@@ -20,10 +21,94 @@ import { ProgressRing } from "@/components/mentorship/ProgressRing";
 import { WeekStrip } from "@/components/mentorship/WeekStrip";
 import { getPlanState } from "@/lib/mentorship/plan";
 
+type ChecklistItem = {
+  label: string;
+  done: boolean;
+  href: string;
+  cta: string;
+  external?: boolean;
+};
+
+function GettingReady({
+  clock,
+  checklist,
+}: {
+  clock: CohortClock;
+  checklist: ChecklistItem[];
+}) {
+  const doneCount = checklist.filter((c) => c.done).length;
+  const kickoffLine =
+    clock.kickoffAt && clock.daysToKickoff !== null
+      ? clock.daysToKickoff > 0
+        ? `Kickoff call in ${clock.daysToKickoff} day${clock.daysToKickoff === 1 ? "" : "s"}`
+        : clock.daysToKickoff === 0
+          ? "Kickoff call today"
+          : "Kickoff call done"
+      : `Programme starts in ${Math.max(clock.daysToStart, 0)} day${clock.daysToStart === 1 ? "" : "s"}`;
+  return (
+    <Card className="border border-accent/20">
+      <CardTitle kicker="Getting ready" title={kickoffLine} />
+      <div className="space-y-1 text-sm text-zinc-400">
+        {clock.kickoffAt ? <p>{formatDateTime(clock.kickoffAt)}</p> : null}
+        <p>Day 1 of your programme: {formatLongDate(clock.startDate)}</p>
+      </div>
+      <div className="mt-5 flex items-center justify-between gap-3">
+        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">
+          Kickoff checklist
+        </p>
+        <Pill tone={doneCount === checklist.length ? "green" : "amber"}>
+          {doneCount} / {checklist.length}
+        </Pill>
+      </div>
+      <ul className="mt-3 divide-y divide-white/5">
+        {checklist.map((item) => (
+          <li key={item.label} className="flex items-center gap-3 py-2.5">
+            <span
+              aria-hidden
+              className={`grid h-5 w-5 shrink-0 place-items-center rounded-full text-[11px] font-bold ${
+                item.done
+                  ? "bg-accent text-zinc-950"
+                  : "border border-white/20 text-transparent"
+              }`}
+            >
+              ✓
+            </span>
+            <span
+              className={`min-w-0 flex-1 text-sm ${
+                item.done ? "text-zinc-500 line-through" : "text-zinc-200"
+              }`}
+            >
+              {item.label}
+            </span>
+            {item.external ? (
+              <a
+                href={item.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="shrink-0 text-xs font-medium text-accent hover:underline"
+              >
+                {item.cta}
+              </a>
+            ) : (
+              <Link
+                href={item.href}
+                className="shrink-0 text-xs font-medium text-accent hover:underline"
+              >
+                {item.cta}
+              </Link>
+            )}
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
 export default async function PortalOverviewPage() {
   const mentee = await verifyMentee();
   const plan = await getPlanState(mentee.id);
-  const week = programWeek();
+  const clock = await cohortClockFor(mentee.cohort);
+  const week = clock.week;
   const inProgram = week >= 1 && week <= PROGRAM_WEEKS;
   const month = inProgram ? monthOfWeek(week) : week === 0 ? 1 : 3;
   const theme = MONTH_THEMES[month];
@@ -39,6 +124,7 @@ export default async function PortalOverviewPage() {
     cohortSize,
     cohortCheckinsThisWeek,
     myCheckinWeeks,
+    sentMessages,
   ] = await Promise.all([
     prisma.mentorshipTask.count({
       where: { menteeId: mentee.id, status: "todo" },
@@ -57,24 +143,38 @@ export default async function PortalOverviewPage() {
       where: {
         status: "upcoming",
         scheduledAt: { gte: now },
-        OR: [{ menteeId: null }, { menteeId: mentee.id }],
+        OR: [
+          { menteeId: mentee.id },
+          { menteeId: null, OR: [{ cohort: null }, { cohort: mentee.cohort }] },
+        ],
       },
       orderBy: { scheduledAt: "asc" },
     }),
-    prisma.mentorshipAnnouncement.findFirst({ orderBy: { createdAt: "desc" } }),
+    prisma.mentorshipAnnouncement.findFirst({
+      where: { OR: [{ cohort: null }, { cohort: mentee.cohort }] },
+      orderBy: { createdAt: "desc" },
+    }),
     prisma.mentorshipMessage.count({
       where: { menteeId: mentee.id, sender: "mentor", readAt: null },
     }),
-    prisma.mentorshipMentee.count({ where: { active: true } }),
+    prisma.mentorshipMentee.count({
+      where: { active: true, cohort: mentee.cohort },
+    }),
     inProgram
       ? prisma.mentorshipCheckin.groupBy({
           by: ["menteeId"],
-          where: { week },
+          where: {
+            week,
+            mentee: { active: true, cohort: mentee.cohort },
+          },
         })
       : Promise.resolve([]),
     prisma.mentorshipCheckin.findMany({
       where: { menteeId: mentee.id },
       select: { week: true },
+    }),
+    prisma.mentorshipMessage.count({
+      where: { menteeId: mentee.id, sender: "mentee" },
     }),
   ]);
 
@@ -94,12 +194,59 @@ export default async function PortalOverviewPage() {
               <span className="text-zinc-300">{theme.title}</span>
             </>
           ) : week === 0 ? (
-            "Kickoff done. Your daily programme starts Saturday 1 August."
+            `Your daily programme starts ${formatLongDate(clock.startDate)}.`
           ) : (
             "The programme has wrapped. Your portal remains open."
           )}
         </p>
       </div>
+
+      {clock.week === 0 ? (
+        <GettingReady
+          clock={clock}
+          checklist={[
+            {
+              label: "Profile photo and phone number added",
+              done: Boolean(mentee.photoData && mentee.phone),
+              href: "/mentorship/portal/profile",
+              cta: "Update profile",
+            },
+            {
+              label: "At least 3 goals in place",
+              done: goals.length >= 3,
+              href: "/mentorship/portal/goals",
+              cta: "Review goals",
+            },
+            {
+              label: "Availability filled in",
+              done: Boolean(mentee.availability?.trim()),
+              href: "/mentorship/portal/profile",
+              cta: "Add availability",
+            },
+            {
+              label: "First message sent to your mentor",
+              done: sentMessages > 0,
+              href: "/mentorship/portal/messages",
+              cta: "Say hello",
+            },
+            {
+              label: "Kickoff session on your calendar",
+              done: Boolean(nextSession),
+              href: nextSession
+                ? googleCalendarUrl({
+                  title: nextSession.title,
+                  start: nextSession.scheduledAt,
+                  minutes: 60,
+                  details: nextSession.agenda,
+                  location: nextSession.link,
+                })
+                : "/mentorship/portal/sessions",
+              cta: nextSession ? "Add to Google Calendar" : "Nothing scheduled yet",
+              external: Boolean(nextSession),
+            },
+          ]}
+        />
+      ) : null}
 
       {plan.hasPlan ? (
         (() => {
@@ -115,7 +262,7 @@ export default async function PortalOverviewPage() {
                 <div className="min-w-0">
                   <p className="text-xs font-semibold uppercase tracking-[0.2em] text-accent">
                     {todayDay
-                      ? `Today · Day ${todayDay.dayIndex} of 91`
+                      ? `Today · Day ${todayDay.dayIndex} of ${PROGRAM_DAYS}`
                       : plan.todayIndex === 0
                         ? "Your daily programme"
                         : "Daily programme"}
@@ -124,8 +271,8 @@ export default async function PortalOverviewPage() {
                     {todayDay
                       ? todayDay.title
                       : plan.todayIndex === 0
-                        ? "Day 1 lands Saturday 1 August"
-                        : "The 91 days are complete"}
+                        ? `Day 1 lands ${formatLongDate(clock.startDate)}`
+                        : `The ${PROGRAM_DAYS} days are complete`}
                   </h2>
                   <p className="mt-1 text-sm text-zinc-400">
                     {todayDay
@@ -156,7 +303,7 @@ export default async function PortalOverviewPage() {
       <Card className="overflow-hidden">
         <div className="grid items-center gap-8 md:grid-cols-[auto_1fr]">
           <div className="mx-auto">
-            <ProgressRing pct={programProgressPct()} label="of the journey" />
+            <ProgressRing pct={clock.progressPct} label="of the journey" />
           </div>
           <div className="min-w-0">
             <div className="mb-5 flex items-baseline justify-between gap-4">
@@ -241,6 +388,20 @@ export default async function PortalOverviewPage() {
                   Join call
                 </a>
               ) : null}
+              <a
+                href={googleCalendarUrl({
+                  title: nextSession.title,
+                  start: nextSession.scheduledAt,
+                  minutes: 60,
+                  details: nextSession.agenda,
+                  location: nextSession.link,
+                })}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="ml-2 inline-block rounded-full border border-white/15 px-4 py-1.5 text-sm font-medium text-zinc-300 transition-colors hover:bg-white/10"
+              >
+                Add to calendar
+              </a>
             </div>
           ) : (
             <EmptyState>

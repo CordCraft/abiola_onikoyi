@@ -12,8 +12,11 @@ import {
   createMentorshipSession,
   createResource,
   replyToCheckin,
+  saveCohort,
   updateMentee,
 } from "@/app/dashboard/mentorship/actions";
+
+export type CohortOption = { id: string; label: string; closed?: boolean };
 
 // Light-themed admin forms for the dashboard mentorship area.
 
@@ -21,6 +24,32 @@ const inputClass =
   "w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder-zinc-400 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30";
 const buttonClass =
   "rounded-full bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-zinc-700 disabled:opacity-60";
+
+// Group sessions and announcements: everyone, or one cohort.
+function CohortSelect({
+  cohorts,
+  name = "cohort",
+  allLabel = "Every cohort",
+  defaultValue = "",
+}: {
+  cohorts: CohortOption[];
+  name?: string;
+  allLabel?: string | null;
+  defaultValue?: string;
+}) {
+  return (
+    <select name={name} defaultValue={defaultValue} className={`${inputClass} w-auto`}>
+      {allLabel !== null ? <option value="">{allLabel}</option> : null}
+      {cohorts
+        .filter((c) => !c.closed)
+        .map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.label}
+          </option>
+        ))}
+    </select>
+  );
+}
 
 function Feedback({ state }: { state: AdminFormResult }) {
   if (state?.error) {
@@ -70,7 +99,7 @@ function SlowNotice({ show }: { show: boolean }) {
   if (!show) return null;
   return (
     <p className="text-xs text-amber-600">
-      Still sending — this can take longer when the database connection is
+      Still sending. This can take longer when the database connection is
       waking up. Nothing is lost; refresh in a bit to check whether it went
       through before resending.
     </p>
@@ -80,8 +109,12 @@ function SlowNotice({ show }: { show: boolean }) {
 export function MenteeForm({
   mode,
   defaults,
+  cohorts,
+  defaultCohort,
 }: {
   mode: "create" | "edit";
+  cohorts?: CohortOption[];
+  defaultCohort?: string;
   defaults?: {
     id: string;
     name: string;
@@ -150,13 +183,21 @@ export function MenteeForm({
             className={`mt-1.5 ${inputClass}`}
           />
         </div>
+        {mode === "create" && cohorts && cohorts.length > 0 ? (
+          <div>
+            <span className="block text-sm font-medium text-zinc-700">Cohort</span>
+            <div className="mt-1.5">
+              <CohortSelect cohorts={cohorts} allLabel={null} defaultValue={defaultCohort} />
+            </div>
+          </div>
+        ) : null}
       </div>
       <Feedback state={state} />
       <button type="submit" disabled={pending} className={buttonClass}>
         {pending
           ? "Saving…"
           : mode === "create"
-            ? "Add mentee & generate code"
+            ? "Add mentee"
             : "Save changes"}
       </button>
     </form>
@@ -249,16 +290,48 @@ export function AdminTaskForm({
   );
 }
 
-export function CheckinReplyForm({ checkinId }: { checkinId: string }) {
+// One-tap starters for check-in replies; the mentor edits before sending.
+const REPLY_STARTERS = [
+  { chip: "Great week", text: "Great week. What made the biggest difference, and how do you repeat it next week?" },
+  { chip: "Unblock", text: "Good progress. On the blocker: break it into the smallest next step and do that first. Message me if it is still stuck by midweek." },
+  { chip: "Talk on our call", text: "Thanks for the honesty. Let us talk this through on our next call. Bring one question." },
+  { chip: "Stretch", text: "Strong work. For next week, pick one task that scares you a little and do it first." },
+];
+
+export function CheckinReplyForm({
+  checkinId,
+  firstName,
+}: {
+  checkinId: string;
+  firstName?: string;
+}) {
   const [state, action, pending] = useActionState(replyToCheckin, undefined);
   const slow = useSlowPending(pending);
+  const textRef = useRef<HTMLTextAreaElement>(null);
 
   return (
     <form action={action} className="mt-3 space-y-2">
       <input type="hidden" name="id" value={checkinId} />
+      <div className="flex flex-wrap gap-1.5">
+        {REPLY_STARTERS.map((r) => (
+          <button
+            key={r.chip}
+            type="button"
+            onClick={() => {
+              if (!textRef.current) return;
+              textRef.current.value = firstName ? `${firstName}, ${r.text}` : r.text;
+              textRef.current.focus();
+            }}
+            className="rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs text-zinc-600 transition-colors hover:border-zinc-400"
+          >
+            {r.chip}
+          </button>
+        ))}
+      </div>
       <textarea
+        ref={textRef}
         name="reply"
-        rows={2}
+        rows={3}
         required
         placeholder="Reply to this check-in…"
         className={inputClass}
@@ -312,8 +385,10 @@ export function AdminMessageForm({ menteeId }: { menteeId: string }) {
 
 export function SessionForm({
   mentees,
+  cohorts = [],
 }: {
   mentees: { id: string; name: string }[];
+  cohorts?: CohortOption[];
 }) {
   const [state, action, pending] = useActionState(
     createMentorshipSession,
@@ -349,6 +424,8 @@ export function SessionForm({
               </option>
             ))}
           </select>
+        ) : cohorts.length > 0 ? (
+          <CohortSelect cohorts={cohorts} />
         ) : null}
         <label className="flex items-center gap-2 text-sm text-zinc-600">
           When (WAT)
@@ -425,13 +502,16 @@ export function ResourceForm() {
   );
 }
 
-export function AnnouncementForm() {
+export function AnnouncementForm({ cohorts = [] }: { cohorts?: CohortOption[] }) {
   const [state, action, pending] = useActionState(createAnnouncement, undefined);
   const ref = useResetOnSuccess(state);
 
   return (
     <form ref={ref} action={action} className="space-y-3">
-      <input name="title" required placeholder="Announcement title" className={inputClass} />
+      <div className="flex flex-wrap gap-3">
+        <input name="title" required placeholder="Announcement title" className={`${inputClass} min-w-0 flex-1`} />
+        {cohorts.length > 0 ? <CohortSelect cohorts={cohorts} /> : null}
+      </div>
       <textarea
         name="body"
         rows={3}
@@ -448,6 +528,56 @@ export function AnnouncementForm() {
         ) : (
           "Post announcement"
         )}
+      </button>
+    </form>
+  );
+}
+
+export function CohortForm({
+  defaults,
+}: {
+  defaults?: { id: string; label: string; startDate: string; kickoffAt: string };
+}) {
+  const [state, action, pending] = useActionState(saveCohort, undefined);
+  const ref = useResetOnSuccess(defaults ? undefined : state);
+
+  return (
+    <form ref={ref} action={action} className="space-y-3">
+      {defaults ? <input type="hidden" name="id" value={defaults.id} /> : null}
+      <div className="grid gap-3 sm:grid-cols-3">
+        <label className="block text-sm text-zinc-600">
+          Name
+          <input
+            name="label"
+            required
+            defaultValue={defaults?.label}
+            placeholder="Cohort 3 · 2027"
+            className={`mt-1 ${inputClass}`}
+          />
+        </label>
+        <label className="block text-sm text-zinc-600">
+          Kickoff call (WAT)
+          <input
+            name="kickoffAt"
+            type="datetime-local"
+            defaultValue={defaults?.kickoffAt}
+            className={`mt-1 ${inputClass}`}
+          />
+        </label>
+        <label className="block text-sm text-zinc-600">
+          Day 1 of the programme (a Saturday)
+          <input
+            name="startDate"
+            type="date"
+            required
+            defaultValue={defaults?.startDate}
+            className={`mt-1 ${inputClass}`}
+          />
+        </label>
+      </div>
+      <Feedback state={state} />
+      <button type="submit" disabled={pending} className={buttonClass}>
+        {pending ? "Saving…" : defaults ? "Save dates" : "Create cohort"}
       </button>
     </form>
   );

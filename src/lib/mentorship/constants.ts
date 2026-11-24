@@ -10,6 +10,25 @@ export const PROGRAM_START_ISO = "2026-08-01T00:00:00.000Z";
 export const PROGRAM_WEEKS = 13; // three months
 export const PROGRAM_DAYS = PROGRAM_WEEKS * 7; // 91 daily plan days
 export const COHORT_LABEL = "Cohort 1 · 2026";
+export const DEFAULT_COHORT_ID = "2026-C1";
+
+// Cohort lifecycle. "upcoming" before its programme starts, "active" while it
+// runs, "closed" once the mentor wraps it up (mentees lose portal access and
+// their open check-ins stop asking for a reply).
+export const COHORT_STATUSES = ["upcoming", "active", "closed"] as const;
+export type CohortStatus = (typeof COHORT_STATUSES)[number];
+
+// Days from today until a date (Lagos calendar days), negative once passed.
+export function daysUntil(date: Date, now: Date = new Date()): number {
+  return Math.round(
+    (lagosDate(date).getTime() - lagosDate(now).getTime()) / 86_400_000,
+  );
+}
+
+// The programme end (last plan day) for a cohort start.
+export function programEndDate(startIso: string = PROGRAM_START_ISO): Date {
+  return dateOfPlanDay(PROGRAM_DAYS, startIso);
+}
 
 export const MONTH_THEMES: Record<number, { title: string; blurb: string }> = {
   1: {
@@ -98,8 +117,14 @@ export const COMMS_OPTIONS = [
 
 // Programme week for a given date: 0 before kickoff, 1..PROGRAM_WEEKS during,
 // PROGRAM_WEEKS + 1 once the cohort has wrapped.
-export function programWeek(now: Date = new Date()): number {
-  const start = new Date(PROGRAM_START_ISO).getTime();
+// Every date helper takes the cohort's programme start (day 1, a Saturday) as
+// an ISO string; it defaults to Cohort 1 so older call sites keep working.
+// Resolve a mentee's start with cohortStartIso() in src/lib/mentorship/cohorts.ts.
+export function programWeek(
+  now: Date = new Date(),
+  startIso: string = PROGRAM_START_ISO,
+): number {
+  const start = new Date(startIso).getTime();
   const diff = now.getTime() - start;
   if (diff < 0) return 0;
   const week = Math.floor(diff / (7 * 24 * 60 * 60 * 1000)) + 1;
@@ -113,8 +138,11 @@ export function monthOfWeek(week: number): number {
   return 3;
 }
 
-export function programProgressPct(now: Date = new Date()): number {
-  const week = programWeek(now);
+export function programProgressPct(
+  now: Date = new Date(),
+  startIso: string = PROGRAM_START_ISO,
+): number {
+  const week = programWeek(now, startIso);
   if (week === 0) return 0;
   if (week > PROGRAM_WEEKS) return 100;
   return Math.round(((week - 1) / PROGRAM_WEEKS) * 100);
@@ -157,16 +185,22 @@ export function lagosDate(now: Date = new Date()): Date {
 
 // 1-based plan day index for a date; 0 before the programme, PROGRAM_DAYS + 1
 // once it has wrapped.
-export function planDayIndex(now: Date = new Date()): number {
-  const start = new Date(PROGRAM_START_ISO).getTime();
+export function planDayIndex(
+  now: Date = new Date(),
+  startIso: string = PROGRAM_START_ISO,
+): number {
+  const start = new Date(startIso).getTime();
   const diff = lagosDate(now).getTime() - start;
   if (diff < 0) return 0;
   const day = Math.floor(diff / (24 * 60 * 60 * 1000)) + 1;
   return day > PROGRAM_DAYS ? PROGRAM_DAYS + 1 : day;
 }
 
-export function dateOfPlanDay(dayIndex: number): Date {
-  const start = new Date(PROGRAM_START_ISO).getTime();
+export function dateOfPlanDay(
+  dayIndex: number,
+  startIso: string = PROGRAM_START_ISO,
+): Date {
+  const start = new Date(startIso).getTime();
   return new Date(start + (dayIndex - 1) * 24 * 60 * 60 * 1000);
 }
 
