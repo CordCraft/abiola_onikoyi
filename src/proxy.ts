@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { decryptSession } from "@/lib/jwt";
+import { decryptSession, decryptDeviceToken, bearerFrom } from "@/lib/jwt";
 import { decryptMenteeSession } from "@/lib/mentorship/jwt";
 
 // Next.js 16 renamed `middleware` to `proxy` (Node.js runtime). This performs an
@@ -41,7 +41,11 @@ export async function proxy(req: NextRequest) {
   }
 
   const token = req.cookies.get("session")?.value;
-  const session = await decryptSession(token);
+  let session: { user: string } | null = await decryptSession(token);
+  // The iPhone app calls /jarvis/api/* with a device Bearer token instead.
+  if (!session && path.startsWith("/jarvis/api/")) {
+    session = await decryptDeviceToken(bearerFrom(req.headers.get("authorization")));
+  }
 
   if (isProtected && !session?.user) {
     // API callers need a machine-readable failure, not a redirect that fetch

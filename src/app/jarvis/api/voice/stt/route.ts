@@ -11,10 +11,20 @@ export async function POST(req: Request) {
   if (!cfg) return notConfigured();
 
   let form: FormData;
-  try {
-    form = await req.formData();
-  } catch {
-    return Response.json({ error: "Invalid form data" }, { status: 400 });
+  const type = req.headers.get("content-type") ?? "";
+  if (type.startsWith("audio/")) {
+    // The iPhone app posts the recording as the raw body (prompt in the query).
+    form = new FormData();
+    const buf = await req.arrayBuffer();
+    if (buf.byteLength) form.set("audio", new Blob([buf], { type }), "utterance.m4a");
+    const prompt = new URL(req.url).searchParams.get("prompt");
+    if (prompt) form.set("prompt", prompt);
+  } else {
+    try {
+      form = await req.formData();
+    } catch {
+      return Response.json({ error: "Invalid form data" }, { status: 400 });
+    }
   }
   const audio = form.get("audio");
   if (!(audio instanceof Blob) || audio.size === 0) {

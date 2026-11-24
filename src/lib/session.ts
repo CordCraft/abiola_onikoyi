@@ -1,6 +1,13 @@
 import "server-only";
-import { cookies } from "next/headers";
-import { encryptSession, decryptSession, type SessionPayload } from "@/lib/jwt";
+import { cookies, headers } from "next/headers";
+import {
+  encryptSession,
+  decryptSession,
+  decryptDeviceToken,
+  bearerFrom,
+  type SessionPayload,
+} from "@/lib/jwt";
+import { isDeviceActive } from "@/lib/jarvis/mobile-devices";
 
 const COOKIE_NAME = "session";
 const MAX_AGE_SECONDS = 60 * 60 * 24 * 7; // 7 days
@@ -24,7 +31,12 @@ export async function createSession(user: string): Promise<void> {
 
 export async function getSession(): Promise<SessionPayload | null> {
   const token = (await cookies()).get(COOKIE_NAME)?.value;
-  return decryptSession(token);
+  const session = await decryptSession(token);
+  if (session) return session;
+  // The paired iPhone app has no cookie: it sends a device Bearer token.
+  const device = await decryptDeviceToken(bearerFrom((await headers()).get("authorization")));
+  if (!device || !(await isDeviceActive(device.dev))) return null;
+  return { user: device.user, expiresAt: device.expiresAt };
 }
 
 export async function deleteSession(): Promise<void> {

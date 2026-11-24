@@ -1,0 +1,70 @@
+name: Jarvis iOS
+
+# Keeps the Jarvis iPhone app alive on TestFlight and ships changes to it.
+# - Every other month: a fresh build goes to TestFlight before the 90-day expiry.
+# - On a push that touches mobile/: if only JavaScript changed, it ships as an
+#   over-the-air update (live on the phone at next launch, no new build); if the
+#   native side changed (Swift, plugins, packages), it builds and submits.
+# - Run it by hand from the Actions tab to force a build.
+# Needs the repository secret EXPO_TOKEN (expo.dev, Account settings, Access tokens).
+
+on:
+  schedule:
+    - cron: "0 2 1 */2 *"
+  push:
+    branches: [main]
+    paths: ["mobile/**"]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "build (new TestFlight build) or auto (update if possible)"
+        default: build
+        type: choice
+        options: [build, auto]
+
+concurrency:
+  group: jarvis-ios
+  cancel-in-progress: false
+
+jobs:
+  ship:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - run: npm ci --legacy-peer-deps
+
+      - name: Decide between an update and a build
+        id: decide
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.mode }}" = "build" ]; then
+            echo "action=build" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          RUNTIME=$(npx expo-updates runtimeversion:resolve --platform ios | tail -n 1 | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).runtimeVersion))')
+          echo "runtime=$RUNTIME"
+          FOUND=$(eas build:list --platform ios --status finished --runtime-version "$RUNTIME" --limit 1 --json --non-interactive 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).length)}catch{console.log(0)}})')
+          if [ "$FOUND" -gt 0 ]; then echo "action=update" >> "$GITHUB_OUTPUT"; else echo "action=build" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Over-the-air update
+        if: steps.decide.outputs.action == 'update'
+        env:
+          MSG: ${{ github.event.head_commit.message || 'Jarvis update' }}
+        run: eas update --branch production --platform ios --message "$MSG" --non-interactive
+
+      - name: Build and submit to TestFlight
+        if: steps.decide.outputs.action == 'build'
+        run: eas build --platform ios --profile production --auto-submit --non-interactive --no-wait
