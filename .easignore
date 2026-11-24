@@ -1,0 +1,17 @@
+# Expo (EAS) uploads the whole git repository for an iPhone build. Only the
+# app in mobile/ is needed, so everything else (the website, its media and
+# dependencies) is left out. This file replaces .gitignore for EAS uploads.
+/*
+!/mobile
+!/.easignore
+
+/mobile/node_modules
+/mobile/ios
+/mobile/android
+/mobile/.expo
+/mobile/dist
+.env*
+*.p8
+*.p12
+*.pem
+.DS_Store
