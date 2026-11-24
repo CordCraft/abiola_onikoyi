@@ -21,7 +21,8 @@
           "group.com.abiolaonikoyi.jarvis",
           "group.com.abiolaonikoyi.jarvis"
         ]
-      }
+      },
+      "appleTeamId": "AK4GD5C42Y"
     },
     "plugins": [
       "expo-router",

@@ -41,6 +41,7 @@ const STATUS_STYLE: Record<string, string> = {
   Behind: "bg-amber-100 text-amber-800",
   Quiet: "bg-red-100 text-red-700",
   Closed: "bg-zinc-200 text-zinc-500",
+  Finished: "bg-indigo-100 text-indigo-700",
   Inactive: "bg-zinc-200 text-zinc-500",
 };
 
@@ -182,13 +183,17 @@ export default async function MentorshipAdminPage({
     if (!m.active) status = c?.closed ? "Closed" : "Inactive";
     else if (!m.passwordHash) status = "Not registered";
     else if (!c || c.week === 0) status = "Ready";
+    else if (!c.inProgram) status = "Finished";
     else if (quietDays === null || quietDays >= 10) status = "Quiet";
     else if (missed > 0) status = "Behind";
 
     return { m, c, lastCheckin, missed, lastActive, status };
   });
 
-  const behind = rows.filter((r) => r.status === "Behind" || r.status === "Quiet");
+  // Nudges only make sense while a cohort is running.
+  const behind = rows.filter(
+    (r) => r.c?.inProgram && (r.status === "Behind" || r.status === "Quiet"),
+  );
 
   return (
     <div className="space-y-8">
@@ -370,7 +375,7 @@ export default async function MentorshipAdminPage({
                       </Link>
                       {" · "}
                       {r.missed > 0 ? `${r.missed} check-in${r.missed === 1 ? "" : "s"} missed · ` : ""}
-                      last active {ago(r.lastActive).toLowerCase()}
+                      last active {ago(r.lastActive)}
                     </li>
                   ))}
                 </ul>
