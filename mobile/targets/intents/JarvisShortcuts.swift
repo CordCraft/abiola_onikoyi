@@ -7,6 +7,8 @@ import AppIntents
 @main
 struct JarvisIntentsExtension: AppIntentsExtension {}
 
+// The extension targets iOS 18 (OpenURLIntent for the "open Jarvis" phrases).
+@available(iOS 18.0, *)
 struct JarvisShortcuts: AppShortcutsProvider {
   static var appShortcuts: [AppShortcut] {
     AppShortcut(

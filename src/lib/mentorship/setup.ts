@@ -211,6 +211,13 @@ const EXTRA_DDL: string[] = [
   `ALTER TABLE "MentorshipCohort" ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE "MentorshipSession" ADD COLUMN IF NOT EXISTS "cohort" TEXT`,
   `ALTER TABLE "MentorshipAnnouncement" ADD COLUMN IF NOT EXISTS "cohort" TEXT`,
+  // Everything posted to "every cohort" before cohorts existed was really for
+  // Cohort 1 (its dates and wording); tag it so later cohorts never see it.
+  // Idempotent: only touches untagged rows older than the cohorts feature.
+  `UPDATE "MentorshipAnnouncement" SET "cohort" = '2026-C1'
+    WHERE "cohort" IS NULL AND "createdAt" < '2026-11-24T00:00:00Z'`,
+  `UPDATE "MentorshipSession" SET "cohort" = '2026-C1'
+    WHERE "cohort" IS NULL AND "menteeId" IS NULL AND "createdAt" < '2026-11-24T00:00:00Z'`,
 ];
 
 // Columns added after the initial launch. CREATE TABLE IF NOT EXISTS skips

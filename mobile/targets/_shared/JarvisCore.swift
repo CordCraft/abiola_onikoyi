@@ -253,6 +253,7 @@ struct AddTaskIntent: AppIntent {
 
 // Opening the app: these run in the app process (openAppWhenRun), which is
 // why this file is linked into the main app as well.
+@available(iOS 18.0, *)
 struct TalkToJarvisIntent: AppIntent {
   static let title: LocalizedStringResource = "Talk to Jarvis"
   static let description = IntentDescription("Open Jarvis listening, ready for a conversation.")
@@ -264,6 +265,7 @@ struct TalkToJarvisIntent: AppIntent {
   }
 }
 
+@available(iOS 18.0, *)
 struct DeskModeIntent: AppIntent {
   static let title: LocalizedStringResource = "Start desk mode"
   static let description = IntentDescription("Jarvis keeps listening for \"Hey Jarvis\", even with the screen off.")
@@ -275,6 +277,7 @@ struct DeskModeIntent: AppIntent {
   }
 }
 
+@available(iOS 18.0, *)
 struct AskJarvisIntent: AppIntent {
   static let title: LocalizedStringResource = "Ask Jarvis"
   static let description = IntentDescription("Ask Jarvis anything and hear the answer.")

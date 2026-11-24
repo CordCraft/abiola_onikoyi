@@ -10,7 +10,9 @@ import WidgetKit
 struct JarvisWidgets: WidgetBundle {
   var body: some Widget {
     TodayWidget()
-    TalkControl()
+    if #available(iOS 18.0, *) {
+      TalkControl()
+    }
   }
 }
 
@@ -211,6 +213,7 @@ struct ListView: View {
 
 // ── Control Center / Action Button / lock screen control ─────────────────────
 
+@available(iOS 18.0, *)
 struct TalkControl: ControlWidget {
   static let kind = "com.abiolaonikoyi.jarvis.talk"
 
