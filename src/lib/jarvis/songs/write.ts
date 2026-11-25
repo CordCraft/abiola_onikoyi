@@ -40,7 +40,7 @@ export type SongAnalysis = {
   production: string;
   themes: string;
   whyItWorks: string;
-  confidence: "researched" | "knows the song" | "partly" | "guessing from the title";
+  confidence: "listened" | "researched" | "knows the song" | "partly" | "guessing from the title";
   // The blueprint
   timeSignature?: string | null;
   groove?: string; // drum pattern, swing, percussion layers
@@ -79,7 +79,9 @@ export type SongPack = { suno: SunoPack; ace: AcePack };
 
 const ANALYZE = `You are a record producer and topline writer. Break down a song so precisely that another producer could build a new track with the same sound, groove, flow and feel, without copying a single lyric.
 
-You get: web research about the recording (trust its tempo, key and credits unless clearly wrong), the track length, and the original lyrics when available. Use the lyrics ONLY to measure shape: section order, line counts, syllables per line, rhyme scheme, where the hook lands and how often it repeats, call and response, chant syllables, language mix and slang register. Never quote or paraphrase a lyric line in your output (a single chant syllable such as "na-na" or "oh" may be named as a technique).
+You get: measurements from listening to the full recording when available (tempo, key, section boundaries with bar counts, energy per section, energy curve, brightness, low-end weight, percussive share, words per second and vocal coverage per section, vocal language), web research about the recording, the track length, and the original lyrics when available.
+
+How to weigh them: the measurements are what the song actually does, so they win on tempo (check the half/double-time alternative against the genre), section timing, energy shape and vocal density. Use the web for producer credits, instrument names and anything the numbers cannot tell, and to settle the key when the measured key confidence is low. Map the measured sections (A/B/C labels, bars, words per second) onto named sections using the lyrics. Translate numbers into producer language: high percussive share and onset density means busy drums; high low-end share means heavy bass or 808; low brightness means warm and dark; low words per second with high repetition means a chant hook. Use the lyrics ONLY to measure shape: section order, line counts, syllables per line, rhyme scheme, where the hook lands and how often it repeats, call and response, chant syllables, language mix and slang register. Never quote or paraphrase a lyric line in your output (a single chant syllable such as "na-na" or "oh" may be named as a technique).
 
 Reply with ONLY this JSON:
 {
@@ -100,7 +102,8 @@ Rules:
 - "structure": the section order in one line, e.g. "Intro (chant) - Chorus - Verse 1 - Pre-Chorus - Chorus - Verse 2 - Chorus - Outro".
 - "language": the real mix with rough shares, plus register (street slang, romantic, preachy).
 - "sunoTags": 8 to 14 short descriptors Suno understands, most defining first: primary genre, subgenre, tempo like "103 bpm", key or mode, vocal type and delivery, 2 to 4 signature instruments, groove, mood, production texture. No artist, producer or song names.
-- "confidence": "researched" when the research found the recording and you had the lyrics; "knows the song" if you know it well; lower otherwise.
+- "confidence": "listened" when you had audio measurements; "researched" when the research found the recording and you had the lyrics; "knows the song" if you know it well; lower otherwise.
+- In "sections", put each section's bar count and measured energy in "notes" when known (e.g. "8 bars, energy 9/10, drums drop out for the first 2 bars").
 - Plain text inside strings, no markdown, no em dashes.`;
 
 export async function analyzeSong(input: {
@@ -113,7 +116,10 @@ export async function analyzeSong(input: {
   const parts = [
     `Song: "${input.title}"${input.artist ? ` by ${input.artist}` : ""}.`,
     r?.facts.durationSec ? `Track length: ${r.facts.durationSec} seconds.` : "",
-    r ? `Web research (JSON):\n${JSON.stringify({ ...r, sources: undefined, facts: undefined })}` : "No web research available.",
+    r?.audio?.ok
+      ? `Measured by listening to the full recording (JSON):\n${JSON.stringify(r.audio)}`
+      : `No audio measurements${r?.audio?.error ? ` (${r.audio.error})` : ""}.`,
+    r ? `Web research (JSON):\n${JSON.stringify({ ...r, sources: undefined, facts: undefined, audio: undefined, listeningOn: undefined })}` : "No web research available.",
     input.lyrics
       ? `Original lyrics, for measuring shape only (never quote them):\n<lyrics>\n${input.lyrics}\n</lyrics>`
       : "No lyrics available: infer the structure from the genre and what you know, and lower the confidence.",
@@ -126,7 +132,7 @@ export async function analyzeSong(input: {
   a.instruments ??= [];
   a.sections = (a.sections ?? []).slice(0, 24);
   a.sunoTags = (a.sunoTags ?? []).slice(0, 16);
-  a.bpm = a.bpm ?? r?.bpm ?? null;
+  a.bpm = a.bpm ?? (r?.audio?.tempo ? Math.round(r.audio.tempo) : null) ?? r?.bpm ?? null;
   a.key = a.key ?? r?.key ?? null;
   a.lengthSec = r?.facts.durationSec ?? null;
   return a;

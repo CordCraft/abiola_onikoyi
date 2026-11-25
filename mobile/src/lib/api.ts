@@ -220,7 +220,7 @@ export type Song = {
   thumbnail: string | null;
   source: string;
   status: "saved" | "writing" | "ready" | "error";
-  stage?: "research" | "analysis" | "writing" | null;
+  stage?: "research" | "listening" | "analysis" | "writing" | null;
   analysis: {
     genre: string;
     subgenres: string[];

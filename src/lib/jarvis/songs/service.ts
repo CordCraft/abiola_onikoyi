@@ -9,6 +9,7 @@ import { readSongFromImage } from "@/lib/jarvis/songs/vision";
 import { addToPlaylist } from "@/lib/jarvis/songs/youtube";
 import { analyzeSong, writeSongPack, type AcePack, type SongAnalysis, type SunoPack } from "@/lib/jarvis/songs/write";
 import { researchSong, type SongResearch } from "@/lib/jarvis/songs/research";
+import { queueListen, type AudioMeasurements } from "@/lib/jarvis/songs/listen";
 import { pollAce, submitAce, type Generation } from "@/lib/jarvis/songs/fal";
 
 // The "like this song" flow:
@@ -24,6 +25,10 @@ import { pollAce, submitAce, type Generation } from "@/lib/jarvis/songs/fal";
 export const STYLE_NOTES_KEY = "songs_style_notes";
 // A writing job older than this was cut off by the platform; let it be retried.
 const STALE_MS = 3 * 60_000;
+// Listening waits for a home computer and the voice service; give it longer.
+// The sweep (/api/jarvis-songs/step, every 5 min) moves on after LISTEN_MS.
+const LISTEN_MS = 8 * 60_000;
+const LISTEN_STALE_MS = 15 * 60_000;
 
 export type SunoStored = SunoPack & { ace: AcePack };
 
@@ -36,9 +41,17 @@ export type SongView = {
   thumbnail: string | null;
   source: string;
   status: string;
-  stage: string | null; // while writing: research | analysis | writing
+  stage: string | null; // while writing: research | listening | analysis | writing
   analysis: SongAnalysis | null;
-  research: { found: boolean; producers: string[]; sources: { title: string; url: string }[]; lyricsFound: boolean } | null;
+  research: {
+    found: boolean;
+    producers: string[];
+    sources: { title: string; url: string }[];
+    lyricsFound: boolean;
+    listenedOn: string | null; // computer that played the song, when it was heard
+    heard: { tempo: number | null; key: string | null; sectionPattern: string | null } | null;
+    listenError: string | null;
+  } | null;
   suno: SunoStored | null;
   direction: string | null;
   playlistStatus: string | null;
@@ -50,7 +63,8 @@ export type SongView = {
 };
 
 export function view(s: JarvisSong): SongView {
-  const stale = s.status === "writing" && Date.now() - s.updatedAt.getTime() > STALE_MS;
+  const age = Date.now() - s.updatedAt.getTime();
+  const stale = s.status === "writing" && age > (s.stage === "listening" ? LISTEN_STALE_MS : STALE_MS);
   return {
     id: s.id,
     videoId: s.videoId,
@@ -65,7 +79,15 @@ export function view(s: JarvisSong): SongView {
     research: s.research
       ? (() => {
           const r = s.research as unknown as SongResearch;
-          return { found: r.found, producers: r.producers ?? [], sources: r.sources ?? [], lyricsFound: Boolean(r.facts?.lyricsFound) };
+          return {
+            found: r.found,
+            producers: r.producers ?? [],
+            sources: r.sources ?? [],
+            lyricsFound: Boolean(r.facts?.lyricsFound),
+            listenedOn: r.audio?.ok ? (r.listeningOn ?? null) : null,
+            heard: r.audio?.ok ? { tempo: r.audio.tempo ?? null, key: r.audio.key?.key ?? null, sectionPattern: r.audio.sectionPattern ?? null } : null,
+            listenError: r.audio && !r.audio.ok ? (r.audio.error ?? "Could not listen") : null,
+          };
         })()
       : null,
     suno: (s.suno as SunoStored | null) ?? null,
@@ -175,7 +197,7 @@ export async function likeSong(input: LikeInput): Promise<{ song: JarvisSong; du
   return { song, duplicate: false };
 }
 
-export type Step = "research" | "analysis" | "writing";
+export type Step = "research" | "listening" | "analysis" | "writing";
 type StepOpts = { notify?: boolean };
 
 async function fail(id: string, title: string, e: unknown, notify?: boolean) {
@@ -255,6 +277,28 @@ export async function runStep(id: string, step: Step, opts: StepOpts = {}): Prom
         where: { id },
         data: { research: research as unknown as Prisma.InputJsonValue, album: song.album ?? research.facts.album },
       });
+      return kick(id, "listening", opts);
+    }
+
+    if (step === "listening") {
+      // One of the owner's computers plays (downloads) the whole song and the
+      // voice service measures it; saveMeasurements() or listenFinished()
+      // carries on. No computer free: go on with research and lyrics alone.
+      const research = (song.research as unknown as SongResearch | null) ?? null;
+      const machine = song.videoId
+        ? await queueListen({ id, videoId: song.videoId, title: song.title, artist: song.artist }).catch(() => null)
+        : null;
+      if (machine && research) {
+        await prisma.jarvisSong.update({
+          where: { id },
+          data: { research: { ...research, listeningOn: machine, audio: null } as unknown as Prisma.InputJsonValue },
+        });
+        return;
+      }
+      if (research) {
+        const audio: AudioMeasurements = { ok: false, error: song.videoId ? "No computer with the listener was online." : "No YouTube video to listen to." };
+        await prisma.jarvisSong.update({ where: { id }, data: { research: { ...research, audio } as unknown as Prisma.InputJsonValue } });
+      }
       return kick(id, "analysis", opts);
     }
 
@@ -300,6 +344,41 @@ export async function runStep(id: string, step: Step, opts: StepOpts = {}): Prom
   } catch (e) {
     await fail(id, song.title, e, opts.notify);
   }
+}
+
+// The voice service measured the song: keep it with the research, then
+// analyse. Ignored when the song has moved on (timed out, swapped).
+export async function saveMeasurements(songId: string, audio: AudioMeasurements): Promise<void> {
+  const song = await getSong(songId);
+  if (!song || song.status !== "writing" || song.stage !== "listening") return;
+  const research = (song.research as unknown as SongResearch | null) ?? null;
+  if (!research) return;
+  await prisma.jarvisSong.update({ where: { id: songId }, data: { research: { ...research, audio } as unknown as Prisma.InputJsonValue } });
+  await kick(songId, "analysis", { notify: true });
+}
+
+// A listening job failed on the computer (or could not be forwarded).
+export async function listenFinished(jobId: string, error: string): Promise<void> {
+  const job = await prisma.jarvisJob.findUnique({ where: { id: jobId } });
+  const songId = (job?.payload as { songId?: string } | null)?.songId;
+  if (songId) await saveMeasurements(songId, { ok: false, error });
+}
+
+// Every few minutes: songs stuck waiting for a computer go on without audio.
+export async function sweepSongs(): Promise<number> {
+  await ensureSongTables();
+  const stuck = await prisma.jarvisSong.findMany({
+    where: { status: "writing", stage: "listening", updatedAt: { lt: new Date(Date.now() - LISTEN_MS) } },
+    take: 5,
+  });
+  for (const s of stuck) {
+    await prisma.jarvisJob.updateMany({
+      where: { kind: "song_listen", status: { in: ["queued", "running"] }, payload: { path: ["songId"], equals: s.id } },
+      data: { status: "cancelled", finishedAt: new Date(), error: "Timed out" },
+    });
+    await saveMeasurements(s.id, { ok: false, error: "The computer did not finish listening in time." });
+  }
+  return stuck.length;
 }
 
 // Rewrite: a new Suno pack from the saved blueprint (one quick step). Songs

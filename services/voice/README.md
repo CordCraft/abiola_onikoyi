@@ -15,6 +15,7 @@ All except `/health` need the header `x-voice-secret: <VOICE_SECRET>` (timing-sa
 | GET | `/health` | none | `{ok, whisperModel, voices}` |
 | GET | `/voices` | none | `{default, voices:[{id,label,lang,gender,accent}]}` British male first |
 | POST | `/stt` | multipart `audio` (webm/opus, mp4/aac, ogg, wav), optional `prompt`, `language` | `{text, language, durationSec}` |
+| POST | `/music/analyze` | multipart `audio` (any format ffmpeg reads), `callback` (https URL), `songId` | 202 at once; later POSTs `{songId, ok, tempo, key, sections, energyCurve, vocals, ...}` to `callback` with `x-voice-secret`. Jarvis Songs, see `music.py`. One song at a time; Whisper runs in 30 s chunks so live voice can interleave |
 | POST | `/tts` | json `{text, voice?, speed?, format?}` | audio bytes (markdown stripped, capped at `MAX_TTS_CHARS`) |
 
 The default STT prompt lists Abiola, Onikoyi, Nikstalis, HopperTax, Onterra and similar names so they are spelled correctly. Send a `prompt` form field to override it.

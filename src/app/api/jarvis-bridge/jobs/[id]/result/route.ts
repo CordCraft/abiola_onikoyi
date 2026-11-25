@@ -1,4 +1,6 @@
+import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { listenFinished } from "@/lib/jarvis/songs/service";
 import { asResult, authMachine, json, ownedJob, toJson, unauthorized } from "../../../lib";
 
 export const runtime = "nodejs";
@@ -37,5 +39,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       }),
     },
   });
+  // A song download that failed: carry on with the song without the audio.
+  if (job.kind === "song_listen" && exitCode !== 0) after(() => listenFinished(id, String(body.error ?? text).slice(0, 300)));
   return json({ ok: true });
 }

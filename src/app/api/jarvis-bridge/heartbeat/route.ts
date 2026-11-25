@@ -22,6 +22,8 @@ export async function POST(req: Request) {
     busyJobId: typeof body.busyJobId === "string" ? body.busyJobId : null,
     repos: Array.isArray(body.repos) ? body.repos.slice(0, 80) : [],
     sessions: Array.isArray(body.sessions) ? body.sessions.slice(0, 10) : [],
+    // Bridge 2+: { listen: true } when yt-dlp is installed (Jarvis Songs)
+    capabilities: body.capabilities && typeof body.capabilities === "object" ? { listen: Boolean((body.capabilities as { listen?: unknown }).listen) } : {},
   };
   await prisma.jarvisMachine.update({
     where: { id: machine.id },

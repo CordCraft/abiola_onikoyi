@@ -5,6 +5,8 @@ Endpoints (all but /health need header x-voice-secret == env VOICE_SECRET):
   GET  /voices
   POST /stt   multipart field "audio" (+ optional "prompt", "language")
   POST /tts   json {text, voice?, speed?, format?}  -> audio/mpeg (or audio/wav)
+  POST /music/analyze  multipart "audio" + "callback" + "songId" -> 202; the
+       measurements arrive later at the callback (see music.py)
 """
 
 from __future__ import annotations
@@ -275,6 +277,37 @@ def tts(body: TtsBody):
             return Response(content=mp3, media_type="audio/mpeg", headers={"Cache-Control": "no-store"})
         log.warning("ffmpeg unavailable or failed; falling back to wav")
     return Response(content=encode_wav(samples, sr), media_type="audio/wav", headers={"Cache-Control": "no-store"})
+
+
+# ── Music (Jarvis Songs) ─────────────────────────────────────────────────────
+
+
+@app.post("/music/analyze", dependencies=[Depends(require_secret)])
+def music_analyze(
+    audio: UploadFile = File(...),
+    callback: str = Form(...),
+    songId: str = Form(...),
+):
+    import music
+
+    if not callback.startswith("https://"):
+        raise HTTPException(status_code=400, detail="callback must be https")
+    with tempfile.NamedTemporaryFile(suffix=Path(audio.filename or "a.webm").suffix or ".webm", delete=False) as tmp:
+        path = tmp.name
+        size = 0
+        while chunk := audio.file.read(1024 * 1024):
+            size += len(chunk)
+            if size > MAX_AUDIO_BYTES:
+                tmp.close()
+                os.unlink(path)
+                raise HTTPException(status_code=413, detail="audio too large")
+            tmp.write(chunk)
+    threading.Thread(
+        target=music.run_job,
+        args=(path, callback, os.environ.get("VOICE_SECRET", ""), songId[:64], state["whisper"], stt_lock),
+        daemon=True,
+    ).start()
+    return JSONResponse({"ok": True, "queued": True}, status_code=202)
 
 
 @app.exception_handler(HTTPException)

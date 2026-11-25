@@ -7,6 +7,10 @@
 //   node jarvis-bridge.mjs run --dry-run  (print the heartbeat payload, send nothing)
 //   node jarvis-bridge.mjs status         (show saved config, no secrets)
 //
+// Jarvis Songs: when yt-dlp is installed (winget install yt-dlp.yt-dlp), this
+// computer can also "listen" to a liked song: it downloads the audio, sends it
+// to Jarvis for analysis and deletes it straight away.
+//
 // Config: ~/.claude/jarvis-bridge.json  { url, machineId, secret, name, roots }
 // Setup guide: docs/JARVIS-BRIDGE.md
 
@@ -22,9 +26,11 @@ import {
   unlinkSync,
   mkdirSync,
   realpathSync,
+  rmSync,
+  mkdtempSync,
 } from "node:fs";
 import { join, resolve, relative, isAbsolute, sep, basename } from "node:path";
-import { homedir, hostname, platform, release, uptime, arch } from "node:os";
+import { homedir, hostname, platform, release, uptime, arch, tmpdir } from "node:os";
 import { execFile, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -43,6 +49,9 @@ const DEFAULT_TIMEOUT_MIN = 20;
 const MAX_FILE_BYTES = 4 * 1024 * 1024;
 const MAX_FILES = 10;
 const MAX_OUTPUT_CHARS = 100_000;
+const BRIDGE_VERSION = 2;
+const LISTEN_TIMEOUT_MS = 4 * 60_000;
+const MAX_AUDIO_BYTES = 5_400_000; // Netlify caps request bodies near 6MB
 
 // ---------------------------------------------------------------- utilities
 
@@ -289,6 +298,28 @@ export function recentSessions(limit = 10) {
 
 // --------------------------------------------------------------- heartbeat
 
+// yt-dlp and ffmpeg for Jarvis Songs: config path, PATH, then winget's links.
+let ytdlpBin = null;
+let ffmpegBin = null;
+let toolsCheckedAt = 0;
+async function resolveTool(cfgPath, name) {
+  const local = process.env.LOCALAPPDATA || join(HOME, "AppData", "Local");
+  const exe = IS_WIN ? `${name}.exe` : name;
+  const candidates = [cfgPath, name, join(local, "Microsoft", "WinGet", "Links", exe), join(HOME, "scoop", "shims", exe)];
+  for (const c of candidates.filter(Boolean)) {
+    if (c !== name && !existsSync(c)) continue;
+    const v = await run(c, ["--version"], { timeout: 15000 });
+    if (v) return c;
+  }
+  return null;
+}
+async function resolveListenTools(cfg) {
+  if (Date.now() - toolsCheckedAt < REPO_SCAN_MS && (ytdlpBin || toolsCheckedAt)) return;
+  toolsCheckedAt = Date.now();
+  ytdlpBin = await resolveTool(cfg.ytDlpPath, "yt-dlp");
+  ffmpegBin = await resolveTool(cfg.ffmpegPath, "ffmpeg");
+}
+
 let repoCache = { at: 0, repos: [] };
 let claudeVersion = null;
 let claudeBin = "claude";
@@ -339,13 +370,15 @@ async function buildHeartbeat(cfg, busyJobId) {
     repoCache = { at: Date.now(), repos: await scanRepos(cfg.roots) };
   }
   if (!claudeVersion || claudeVersion === "not found") claudeVersion = (await resolveClaude(cfg)) || "not found";
+  await resolveListenTools(cfg);
   return {
     name: cfg.name,
     hostname: hostname(),
     os: `${platform()} ${release()} ${arch()}`,
     uptimeSec: Math.round(uptime()),
     claudeVersion,
-    bridgeVersion: 1,
+    bridgeVersion: BRIDGE_VERSION,
+    capabilities: { listen: Boolean(ytdlpBin) },
     roots: cfg.roots,
     busyJobId: busyJobId || null,
     repos: repoCache.repos,
@@ -644,6 +677,87 @@ async function runJob(api, cfg, job) {
   }
 }
 
+// ------------------------------------------------------- Jarvis Songs: listen
+
+function spawnWait(cmd, args, timeoutMs) {
+  return new Promise((resolveP) => {
+    const child = spawn(cmd, args, { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
+    let err = "";
+    child.stderr.on("data", (d) => (err = (err + d).slice(-2000)));
+    const timer = setTimeout(() => {
+      killTree(child);
+      err += " (timed out)";
+    }, timeoutMs);
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      resolveP({ code: -1, err: e.message });
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolveP({ code, err: err.trim() });
+    });
+  });
+}
+
+const AUDIO_TYPES = { ".webm": "audio/webm", ".opus": "audio/ogg", ".ogg": "audio/ogg", ".m4a": "audio/mp4", ".mp4": "audio/mp4", ".mp3": "audio/mpeg" };
+
+// Downloads the song's audio (small Opus/AAC stream, about 2MB), posts the
+// bytes to Jarvis, then deletes them. The job id and video id come from the
+// server; the video id is checked before it reaches the command line.
+async function runListen(api, cfg, job) {
+  const p = job.payload || {};
+  const fail = async (message) => {
+    log("listen", job.id, "failed:", message);
+    await api.call("POST", `jobs/${job.id}/result`, { text: message, exitCode: 1, error: message }).catch((e) => log("result post failed", e.message));
+  };
+  const videoId = String(p.videoId || "");
+  if (!/^[\w-]{11}$/.test(videoId)) return fail("Bad video id.");
+  await resolveListenTools(cfg);
+  if (!ytdlpBin) return fail("yt-dlp is not installed on this computer (winget install yt-dlp.yt-dlp).");
+
+  const dir = mkdtempSync(join(tmpdir(), "jarvis-listen-"));
+  try {
+    log("listen", job.id, videoId, p.title || "");
+    const args = ["-f", "249/250/139/251/140/bestaudio", "--no-playlist", "--no-progress", "--quiet", "--no-warnings", "-o", join(dir, "song.%(ext)s"), `https://music.youtube.com/watch?v=${videoId}`];
+    if (ffmpegBin) args.unshift("--ffmpeg-location", ffmpegBin);
+    const dl = await spawnWait(ytdlpBin, args, LISTEN_TIMEOUT_MS);
+    let file = readdirSync(dir).map((n) => join(dir, n)).find((f) => !f.endsWith(".part"));
+    if (dl.code !== 0 || !file) return fail(`yt-dlp could not get the audio: ${dl.err.slice(-300) || `exit ${dl.code}`}`);
+    if (statSync(file).size > MAX_AUDIO_BYTES) {
+      if (!ffmpegBin) return fail("The audio is too large to send and ffmpeg is not installed to shrink it.");
+      const small = join(dir, "small.webm");
+      const t = await spawnWait(ffmpegBin, ["-nostdin", "-v", "error", "-y", "-i", file, "-ac", "1", "-c:a", "libopus", "-b:a", "40k", small], 120_000);
+      if (t.code !== 0) return fail(`ffmpeg could not shrink the audio: ${t.err.slice(-200)}`);
+      file = small;
+      if (statSync(file).size > MAX_AUDIO_BYTES) return fail("The audio is too large to send.");
+    }
+    const ext = (file.match(/\.[^.]+$/) || [".webm"])[0].toLowerCase();
+    const res = await fetch(`${api.base}/api/jarvis-bridge/jobs/${job.id}/audio`, {
+      method: "POST",
+      headers: {
+        "content-type": AUDIO_TYPES[ext] || "audio/webm",
+        "x-machine-id": cfg.machineId,
+        "x-machine-secret": cfg.secret,
+      },
+      body: readFileSync(file),
+      signal: AbortSignal.timeout(90_000),
+    });
+    if (!res.ok) {
+      // The server already marks the job failed when it cannot forward the audio.
+      log("listen", job.id, "upload answered", res.status, (await res.text()).slice(0, 200));
+      if (res.status !== 502) await fail(`Jarvis did not accept the audio (${res.status}).`);
+      return;
+    }
+    log("listen", job.id, "sent", statSync(file).size, "bytes");
+  } catch (e) {
+    await fail(e?.message || "listen failed");
+  } finally {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {}
+  }
+}
+
 // ---------------------------------------------------------------- the loop
 
 function acquireLock() {
@@ -697,7 +811,7 @@ async function loop(cfg) {
         const r = await api.call("GET", "jobs/next");
         if (r?.job) {
           busyJobId = r.job.id;
-          runJob(api, cfg, r.job)
+          (r.job.kind === "song_listen" ? runListen(api, cfg, r.job) : runJob(api, cfg, r.job))
             .catch((e) => log("runJob crashed", e?.message))
             .finally(() => {
               busyJobId = null;

@@ -26,6 +26,6 @@ RUN mkdir -p /models \
     && curl -fL --retry 3 -o /models/voices-v1.0.bin \
        https://github.com/thewh1teagle/kokoro-onnx/releases/download/${KOKORO_RELEASE}/voices-v1.0.bin
 
-COPY main.py .
+COPY main.py music.py ./
 
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]

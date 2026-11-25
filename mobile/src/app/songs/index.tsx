@@ -105,7 +105,7 @@ export default function SongsScreen() {
             <Text style={s.muted} numberOfLines={1}>
               {item.artist ?? "Unknown artist"}
               {" · "}
-              {item.status === "writing" ? (item.stage === "research" ? "researching the song..." : item.stage === "analysis" ? "breaking it down..." : "writing your version...") : item.status === "error" ? "needs a rewrite" : item.suno ? `"${item.suno.title}"` : "saved"}
+              {item.status === "writing" ? (item.stage === "research" ? "researching the song..." : item.stage === "listening" ? "listening to it..." : item.stage === "analysis" ? "breaking it down..." : "writing your version...") : item.status === "error" ? "needs a rewrite" : item.suno ? `"${item.suno.title}"` : "saved"}
             </Text>
           </View>
         </Pressable>

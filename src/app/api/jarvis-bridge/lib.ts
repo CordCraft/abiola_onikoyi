@@ -13,6 +13,9 @@ export const FILE_STORE = "jarvis-files";
 export const MAX_FILE_BYTES = 4 * 1024 * 1024;
 export const MAX_FILES = 10;
 export const PAIRING_KEY = "bridge_pairing";
+// Job kinds a computer runs: Claude Code tasks, and "listen to this song"
+// (download the audio for Jarvis Songs, see src/lib/jarvis/songs/listen.ts).
+export const BRIDGE_KINDS = ["machine_task", "song_listen"];
 
 export const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
@@ -65,7 +68,7 @@ export function toJson(v: unknown): Prisma.InputJsonValue {
 // Loads a job and checks it belongs to this machine.
 export async function ownedJob(machine: Machine, id: string) {
   const job = await prisma.jarvisJob.findUnique({ where: { id } });
-  if (!job || job.kind !== "machine_task" || job.target !== `machine:${machine.id}`) return null;
+  if (!job || !BRIDGE_KINDS.includes(job.kind) || job.target !== `machine:${machine.id}`) return null;
   return job;
 }
 

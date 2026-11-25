@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { authMachine, json, unauthorized } from "../../lib";
+import { BRIDGE_KINDS, authMachine, json, unauthorized } from "../../lib";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,7 +20,9 @@ export async function GET(req: Request) {
 
   for (let i = 0; i < 3; i++) {
     const next = await prisma.jarvisJob.findFirst({
-      where: { target, kind: "machine_task", status: "queued" },
+      // Older bridges only know Claude tasks; song jobs go to bridges that
+      // reported they can listen (see pickListener).
+      where: { target, kind: { in: BRIDGE_KINDS }, status: "queued" },
       orderBy: { createdAt: "asc" },
     });
     if (!next) return json({ ok: true, job: null });
@@ -28,7 +30,7 @@ export async function GET(req: Request) {
       where: { id: next.id, status: "queued" },
       data: { status: "running", startedAt: new Date(), attempts: { increment: 1 } },
     });
-    if (claimed.count === 1) return json({ ok: true, job: { id: next.id, payload: next.payload } });
+    if (claimed.count === 1) return json({ ok: true, job: { id: next.id, kind: next.kind, payload: next.payload } });
   }
   return json({ ok: true, job: null });
 }

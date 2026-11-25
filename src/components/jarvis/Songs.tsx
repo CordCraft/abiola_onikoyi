@@ -29,9 +29,10 @@ async function post<T>(url: string, body: unknown): Promise<T> {
 }
 
 const STAGE: Record<string, string> = {
-  research: "Researching the song (1 of 3)...",
-  analysis: "Breaking down the song (2 of 3)...",
-  writing: "Writing your version (3 of 3)...",
+  research: "Researching the song (1 of 4)...",
+  listening: "Listening to the whole song on one of your computers (2 of 4)...",
+  analysis: "Breaking down the song (3 of 4)...",
+  writing: "Writing your version (4 of 4)...",
 };
 
 function statusLabel(s: SongView) {
@@ -366,7 +367,7 @@ export function SongDetail({ id }: { id: string }) {
         </details>
       )}
 
-      {s.status === "writing" && <p className={card}>{STAGE[s.stage ?? ""] ?? "Writing your version..."} The whole thing takes about a minute.</p>}
+      {s.status === "writing" && <p className={card}>{STAGE[s.stage ?? ""] ?? "Writing your version..."} The whole thing takes one to four minutes.</p>}
       {s.status === "error" && <p className={`${card} text-sm text-rose-700`}>{s.error ?? "Something failed."}</p>}
 
       {a && (
@@ -408,6 +409,15 @@ export function SongDetail({ id }: { id: string }) {
           {a.mix && <p>Mix: {a.mix}</p>}
           <p>Themes: {a.themes}</p>
           <p className="text-zinc-500">Why it works: {a.whyItWorks}</p>
+          {s.research?.listenedOn && s.research.heard ? (
+            <p className="text-zinc-500">
+              Heard in full on {s.research.listenedOn}: {s.research.heard.tempo ? `${Math.round(s.research.heard.tempo)} bpm` : ""}
+              {s.research.heard.key ? `, ${s.research.heard.key}` : ""}
+              {s.research.heard.sectionPattern ? `, sections ${s.research.heard.sectionPattern}` : ""}.
+            </p>
+          ) : s.research?.listenError ? (
+            <p className="text-zinc-500">Not listened to: {s.research.listenError}</p>
+          ) : null}
           {s.research?.sources?.length ? (
             <details>
               <summary className="cursor-pointer text-zinc-500">

@@ -129,11 +129,13 @@ export default function SongScreen() {
           <ActivityIndicator />
           <Text style={s.body}>
             {song.stage === "research"
-              ? "Researching the song (1 of 3)..."
-              : song.stage === "analysis"
-                ? "Breaking down the song (2 of 3)..."
-                : "Writing your version (3 of 3)..."}{" "}
-            About a minute in all.
+              ? "Researching the song (1 of 4)..."
+              : song.stage === "listening"
+                ? "Listening to the whole song on one of your computers (2 of 4)..."
+                : song.stage === "analysis"
+                  ? "Breaking down the song (3 of 4)..."
+                  : "Writing your version (4 of 4)..."}{" "}
+            One to four minutes in all.
           </Text>
         </View>
       )}

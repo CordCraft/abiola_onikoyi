@@ -1,6 +1,7 @@
 import "server-only";
 import { ask, parseJson } from "@/lib/jarvis/songs/claude";
 import type { SongDetails } from "@/lib/jarvis/songs/ytmusic";
+import type { AudioMeasurements } from "@/lib/jarvis/songs/listen";
 
 // Step 1 of a song: look the recording up on the web, so the analysis rests
 // on facts (tempo, key, producer, drum pattern, vocal production) instead of
@@ -27,6 +28,8 @@ export type SongResearch = {
   notes: string | null; // anything else a producer would want to know
   sources: { title: string; url: string }[];
   facts: { durationSec: number | null; year: string | null; album: string | null; lyricsFound: boolean; lyricsSource: string | null };
+  listeningOn?: string | null; // the computer that fetched the audio
+  audio?: AudioMeasurements | null; // what the voice service measured in the song
 };
 
 const SYSTEM = `You are a music researcher working for a producer who wants to make an original song with the same sound and feel as a song he liked.

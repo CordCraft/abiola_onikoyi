@@ -9,6 +9,7 @@ Open `https://abiolaonikoyi.com/jarvis/machines` on your phone to use it.
 - Every 30 seconds it reports: hostname, OS, uptime, `claude --version`, git repos (branch, uncommitted changes, last commit) found one level under `~/Downloads`, `~/Documents` and `~`, and your 10 most recent Claude Code sessions.
 - Every 10 seconds it asks for work. A task runs `claude -p` in the chosen folder with a permission mode: **Look only** (`plan`, cannot change anything) or **Allowed to edit** (`acceptEdits`). Timeout 20 minutes. Progress lines appear on the page about every 15 seconds. Cancel works from the page.
 - Files the task saves in `<folder>/jarvis-out/` (edit mode only) are uploaded (max 10 files, 4MB each) and can be downloaded from the task card.
+- Jarvis Songs: when yt-dlp is installed (`winget install yt-dlp.yt-dlp`), the heartbeat reports `capabilities.listen` and the computer takes `song_listen` jobs: it downloads a liked song's audio, posts it to `/api/jarvis-bridge/jobs/<id>/audio` and deletes it. See `docs/JARVIS-SONGS.md`.
 - It never crashes on network errors: it backs off and retries. Only one bridge instance can run per computer (lock file).
 
 ## One-time setup per computer
