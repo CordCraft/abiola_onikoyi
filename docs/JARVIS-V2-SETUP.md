@@ -96,6 +96,8 @@ See `docs/JARVIS-MCP.md`: add Jarvis as a custom connector so the Claude app on 
 
 ## Setup state and hand-over (10 Nov 2026)
 
+**iPhone app (`mobile/`), state on 25 Nov 2026.** Builds 7 and 8 (1.0.0) are valid in TestFlight; build 8 was made and submitted unattended by `.github/workflows/jarvis-ios.yml` (GitHub secret `EXPO_TOKEN` "GitHub Jarvis iOS" is set, run 5 passed). App Store Connect app "Jarvis AO Companion" id 6838861147, team AK4GD5C42Y. The builds sat unseen for a day because EAS's internal group "Team (Expo)" (all builds, id 3d6e5578-40c2-4d50-abff-e151dd297540) had no testers: olayinkatonikoyi@gmail.com was added through the App Store Connect API and invited on 25 Nov. The ASC API key "Jarvis EAS" (9B4534YGDN, Admin) is stored on EAS; its .p8 is only in Downloads on the HP laptop and Apple will not issue it again. Not yet tested on the phone: pairing, widgets, Siri phrases, notification buttons, desk mode. Next: install from TestFlight with that Apple ID, pair from web Settings, report what fails. Later: Microsoft To Do and Outlook tasks into Today, and HealthKit sync ported from the older `jarvis-ios` app (same bundle id). Details in `mobile/README.md`.
+
 Live and verified on 10 Nov 2026:
 - **Listener** (Railway project "easygoing-optimism", service jarvis-listener, https://jarvis-listener-production.up.railway.app, volume /data): health ok, no missing env, triage, Gmail, Outlook and job loops running. First real signal produced from Outlook (the IDDA Azerbaijan call).
 - **Voice** (service jarvis-voice, https://jarvis-voice-production-6416.up.railway.app): Whisper small and 54 Kokoro voices.
