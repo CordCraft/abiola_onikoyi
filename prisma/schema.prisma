@@ -856,3 +856,31 @@ model JarvisAppDevice {
   lastSeenAt DateTime @default(now())
   createdAt  DateTime @default(now())
 }
+
+// A song liked from the iPhone (Control Center "Like this song", Siri or a
+// pasted YouTube Music link). Jarvis analyses it and writes a Suno-ready pack
+// (style, title, original lyrics) for the owner's own version; generations
+// made with ACE-Step on fal are kept in `generations`. Tables self-create in
+// src/lib/jarvis/songs/setup.ts.
+model JarvisSong {
+  id             String   @id @default(cuid())
+  videoId        String?
+  title          String
+  artist         String?
+  album          String?
+  thumbnail      String?
+  source         String   @default("control") // control | link | siri | manual
+  status         String   @default("saved") // saved | writing | ready | error
+  alternatives   Json? // other recent plays, for "not this one"
+  analysis       Json?
+  suno           Json? // { title, style, lyrics, exclude, notes }
+  direction      String? // the owner's note for the next rewrite
+  playlistStatus String? // added | skipped | error: ...
+  generations    Json? // [{ requestId, status, audioUrl, createdAt, ... }]
+  error          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([createdAt])
+  @@index([videoId])
+}

@@ -205,3 +205,66 @@ export async function chat(
   }
   return { threadId, reply };
 }
+
+// ── Songs: liked on YouTube Music, rewritten for Suno ────────────────────────
+// Server: /jarvis/api/songs (src/lib/jarvis/songs/* on the site).
+
+export type SongTrack = { videoId: string; title: string; artist: string | null; album: string | null; thumbnail: string | null };
+export type SongGeneration = { requestId: string; status: "queued" | "running" | "done" | "error"; audioUrls: string[]; error?: string; createdAt: string };
+export type Song = {
+  id: string;
+  videoId: string | null;
+  title: string;
+  artist: string | null;
+  album: string | null;
+  thumbnail: string | null;
+  source: string;
+  status: "saved" | "writing" | "ready" | "error";
+  analysis: {
+    genre: string;
+    subgenres: string[];
+    era: string | null;
+    bpm: number | null;
+    key: string | null;
+    mood: string[];
+    energy: string;
+    instruments: string[];
+    vocals: string;
+    structure: string;
+    production: string;
+    themes: string;
+    whyItWorks: string;
+    confidence: string;
+  } | null;
+  suno: { title: string; style: string; exclude: string; lyrics: string; tips: string } | null;
+  direction: string | null;
+  playlistStatus: string | null;
+  alternatives: SongTrack[];
+  generations: SongGeneration[];
+  error: string | null;
+  link: string | null;
+  createdAt: string;
+};
+
+export const listSongs = () => json<{ songs: Song[] }>("/jarvis/api/songs").then((r) => r.songs);
+export const getSong = (id: string) => json<{ song: Song }>(`/jarvis/api/songs/${id}`).then((r) => r.song);
+
+export function likeSong(body: { url?: string; source?: string } = {}) {
+  return json<{ song: Song; speech: string; duplicate: boolean }>("/jarvis/api/songs", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ source: "app", ...body }),
+  });
+}
+
+export function songAction(id: string, body: { action: "rewrite"; direction?: string } | { action: "swap"; videoId: string } | { action: "generate" }) {
+  return json<{ song: Song }>(`/jarvis/api/songs/${id}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }).then((r) => r.song);
+}
+
+export async function deleteSong(id: string): Promise<void> {
+  await json(`/jarvis/api/songs/${id}`, { method: "DELETE" });
+}

@@ -61,7 +61,7 @@ export async function unregisterPush(): Promise<void> {
   if (token) await unregisterPushToken(token).catch(() => {});
 }
 
-type Data = { notificationId?: string; kind?: string; threadId?: string | null };
+type Data = { notificationId?: string; kind?: string; threadId?: string | null; route?: string };
 
 export async function handleResponse(
   r: Notifications.NotificationResponse,
@@ -86,7 +86,8 @@ export async function handleResponse(
     return;
   }
   // A plain tap: the website's reply page shows the message with one-tap answers
-  if (action === Notifications.DEFAULT_ACTION_IDENTIFIER) open(`/jarvis/reply/${data.notificationId}`);
+  // (or the app screen the notification names, e.g. a song's Suno pack)
+  if (action === Notifications.DEFAULT_ACTION_IDENTIFIER) open(data.route ?? `/jarvis/reply/${data.notificationId}`);
 }
 
 export async function openOnWeb(path: string) {

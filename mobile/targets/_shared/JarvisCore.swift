@@ -130,6 +130,28 @@ enum JarvisAPI {
     return try JSONDecoder().decode(FoundTasks.self, from: data).tasks
   }
 
+  // Saves whatever YouTube Music is playing (the site reads the top of the
+  // listening history) and returns what Jarvis says about it. The Suno pack
+  // and the "ready" notification follow on the server.
+  struct LikeResult: Codable { let speech: String? ; let error: String? }
+
+  static func likeNowPlaying(source: String) async throws -> String {
+    let creds = try credentials()
+    guard let url = URL(string: creds.host + "/jarvis/api/songs") else { throw JarvisError.server("bad address") }
+    var req = URLRequest(url: url)
+    req.httpMethod = "POST"
+    req.timeoutInterval = 25
+    req.setValue("Bearer \(creds.token)", forHTTPHeaderField: "Authorization")
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    req.httpBody = try JSONSerialization.data(withJSONObject: ["source": source])
+    let (data, response) = try await URLSession.shared.data(for: req)
+    let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+    if code == 401 { throw JarvisError.notPaired }
+    let result = try? JSONDecoder().decode(LikeResult.self, from: data)
+    if code >= 400 { throw JarvisError.server(result?.error ?? "error \(code)") }
+    return result?.speech ?? "Saved."
+  }
+
   // After any change: refetch so the widget is current, then redraw it.
   static func refreshWidgets() async {
     _ = try? await today()
@@ -291,6 +313,26 @@ struct AskJarvisIntent: AppIntent {
     var parts = URLComponents(string: "jarvisapp://talk")!
     parts.queryItems = [URLQueryItem(name: "ask", value: question)]
     return .result(opensIntent: OpenURLIntent(parts.url!))
+  }
+}
+
+// Control Center heart and "Hey Siri, like this song in Jarvis". Runs in the
+// background without opening the app, so the music keeps playing; the phone
+// gets a "saved" answer from Siri and a notification when the Suno pack is
+// ready (about 20 seconds later).
+struct LikeSongIntent: AppIntent {
+  static let title: LocalizedStringResource = "Like this song"
+  static let description = IntentDescription("Save the song playing on YouTube Music to Jarvis and get your own Suno version of it.")
+
+  @Parameter(title: "Source", default: "control")
+  var source: String
+
+  init() {}
+  init(source: String) { self.source = source }
+
+  func perform() async throws -> some IntentResult & ProvidesDialog {
+    let speech = try await JarvisAPI.likeNowPlaying(source: source)
+    return .result(dialog: IntentDialog(stringLiteral: speech))
   }
 }
 

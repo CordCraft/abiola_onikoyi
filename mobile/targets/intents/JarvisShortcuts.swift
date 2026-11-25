@@ -83,6 +83,16 @@ struct JarvisShortcuts: AppShortcutsProvider {
       systemImageName: "sparkles"
     )
     AppShortcut(
+      intent: LikeSongIntent(source: "siri"),
+      phrases: [
+        "Like this song in \(.applicationName)",
+        "Save this song to \(.applicationName)",
+        "\(.applicationName) I like this song",
+      ],
+      shortTitle: "Like this song",
+      systemImageName: "heart.fill"
+    )
+    AppShortcut(
       intent: DeskModeIntent(),
       phrases: [
         "Start desk mode in \(.applicationName)",

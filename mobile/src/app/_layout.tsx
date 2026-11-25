@@ -58,12 +58,14 @@ function Shell() {
   // Notifications: buttons, taps and the push token
   useEffect(() => {
     void setupCategories();
+    // App screens ("/songs/<id>") open in the app; anything else on the web.
+    const open = (url: string) => (url.startsWith("/songs") ? router.push(url as never) : void openOnWeb(url));
     const sub = Notifications.addNotificationResponseReceivedListener((r) => {
-      void handleResponse(r, (url) => void openOnWeb(url));
+      void handleResponse(r, open);
     });
     void Notifications.getLastNotificationResponseAsync().then((r) => {
       if (r) {
-        void handleResponse(r, (url) => void openOnWeb(url));
+        void handleResponse(r, open);
         void Notifications.clearLastNotificationResponseAsync();
       }
     });
@@ -89,6 +91,8 @@ function Shell() {
         <Stack.Screen name="talk" options={{ title: "", presentation: "fullScreenModal", headerShown: false }} />
         <Stack.Screen name="chat" options={{ title: "Chat" }} />
         <Stack.Screen name="settings" options={{ title: "Settings" }} />
+        <Stack.Screen name="songs/index" options={{ title: "Songs" }} />
+        <Stack.Screen name="songs/[id]" options={{ title: "Your version" }} />
         <Stack.Screen name="pair" options={{ title: "Pair Jarvis", headerBackVisible: false }} />
       </Stack>
       {/* Voice mode stays usable when opened by Siri: the phone itself was

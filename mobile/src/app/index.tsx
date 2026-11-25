@@ -139,6 +139,7 @@ export default function TodayScreen() {
         options={{
           headerRight: () => (
             <View style={{ flexDirection: "row", gap: 18 }}>
+              <Link href="/songs" style={s.headerLink}>Songs</Link>
               <Link href="/chat" style={s.headerLink}>Chat</Link>
               <Link href="/settings" style={s.headerLink}>Settings</Link>
             </View>

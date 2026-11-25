@@ -12,6 +12,7 @@ export type AppPush = {
   body: string;
   kind: string; // health | task | signal | briefing | reply | other
   threadId?: string | null;
+  appRoute?: string; // screen in the iPhone app (mobile/) to open on tap
 };
 
 // Must match the categories registered in apps/jarvis-ios (src/notifications.ts).
@@ -38,7 +39,7 @@ export async function sendToAppDevices(p: AppPush): Promise<{ sent: number; prun
     sound: "default",
     priority: "high",
     categoryId: categoryFor(p.kind),
-    data: { notificationId: p.notificationId, kind: p.kind, threadId: p.threadId ?? null },
+    data: { notificationId: p.notificationId, kind: p.kind, threadId: p.threadId ?? null, ...(p.appRoute ? { route: p.appRoute } : {}) },
   }));
 
   const headers: Record<string, string> = { "content-type": "application/json", accept: "application/json" };

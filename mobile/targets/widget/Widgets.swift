@@ -12,6 +12,7 @@ struct JarvisWidgets: WidgetBundle {
     TodayWidget()
     if #available(iOS 18.0, *) {
       TalkControl()
+      LikeSongControl()
     }
   }
 }
@@ -225,5 +226,23 @@ struct TalkControl: ControlWidget {
     }
     .displayName("Talk to Jarvis")
     .description("Open Jarvis listening.")
+  }
+}
+
+// Swipe down from the top right, tap the heart: the song playing on YouTube
+// Music is saved and turned into your own Suno version. Runs in the
+// background, so the music keeps playing and the app does not open.
+@available(iOS 18.0, *)
+struct LikeSongControl: ControlWidget {
+  static let kind = "com.abiolaonikoyi.jarvis.likesong"
+
+  var body: some ControlWidgetConfiguration {
+    StaticControlConfiguration(kind: Self.kind) {
+      ControlWidgetButton(action: LikeSongIntent(source: "control")) {
+        Label("Like this song", systemImage: "heart.fill")
+      }
+    }
+    .displayName("Like this song")
+    .description("Save what YouTube Music is playing and write your Suno version.")
   }
 }

@@ -23,6 +23,9 @@ export type PushPayload = {
   // The chat this belongs to (Jarvis answering a reply), so the next reply
   // continues the same conversation.
   threadId?: string;
+  // A screen in the native iPhone app to open on tap (e.g. "/songs/<id>"),
+  // instead of the web reply page.
+  appRoute?: string;
 };
 
 type Stored = { id: string | null; kind: string; url: string };
@@ -73,7 +76,7 @@ export async function sendPushToAll(
   let failed = 0;
 
   if (nativeApp && stored.id) {
-    const r = await sendToAppDevices({ notificationId: stored.id, title: payload.title, body: payload.body, kind: stored.kind, threadId: payload.threadId });
+    const r = await sendToAppDevices({ notificationId: stored.id, title: payload.title, body: payload.body, kind: stored.kind, threadId: payload.threadId, appRoute: payload.appRoute });
     sent += r.sent;
     pruned += r.pruned;
     failed += r.failed;

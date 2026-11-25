@@ -125,7 +125,7 @@ export default async function JarvisLayout({
               <span className="text-[15px] font-semibold tracking-tight text-zinc-900">Jarvis</span>
             </Link>
             <nav className="hidden items-center gap-1 text-sm font-medium md:flex">
-              {[...NAV, { href: "/jarvis/signals", label: "Noticed" }, { href: "/jarvis/machines", label: "Computers" }, { href: "/jarvis/connect", label: "Connect" }, { href: "/jarvis/activity", label: "Activity" }, { href: "/jarvis/settings", label: "Settings" }].map((item) => (
+              {[...NAV, { href: "/jarvis/signals", label: "Noticed" }, { href: "/jarvis/songs", label: "Songs" }, { href: "/jarvis/machines", label: "Computers" }, { href: "/jarvis/connect", label: "Connect" }, { href: "/jarvis/activity", label: "Activity" }, { href: "/jarvis/settings", label: "Settings" }].map((item) => (
                 <Link
                   key={item.href}
                   href={item.href}
