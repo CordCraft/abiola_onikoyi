@@ -14,10 +14,14 @@ Plan B: **Make 2 takes** generates the song inside Jarvis with ACE-Step 1.5, an 
 | Where | How |
 | --- | --- |
 | Control Center | Swipe down from the top right, tap the Jarvis heart. Music keeps playing, nothing opens. |
+| Screenshot (any app) | Take a screenshot of the song (YouTube Music, Spotify, Shazam, a TikTok or Reel sound label, a lock screen player), tap the thumbnail, Share, **Jarvis**. Jarvis reads the title and artist, finds the song on YouTube Music and carries on as below. Works from Photos too. |
+| Share a link | In YouTube Music (or any app), Share, **Jarvis**. Links and shared text both work. |
 | Siri | "Hey Siri, like this song in Jarvis" (also "save this song to Jarvis"). Siri says what it saved. |
 | Action Button / Lock Screen | Same control: Settings, Action Button, Controls, Jarvis, Like this song. |
 | Jarvis app | Songs, "Like what's playing", or copy a link in YouTube Music (Share, Copy link) and tap "Paste link". |
-| Web | abiolaonikoyi.com/jarvis/songs, paste a link or leave the box empty and press Like. |
+| Web | abiolaonikoyi.com/jarvis/songs, paste a link or leave the box empty and press Like, or upload a screenshot. |
+
+If Jarvis is not in the share sheet the first time, scroll the app row to the end, tap **More**, and switch Jarvis on (drag it up to keep it near the front).
 
 If Jarvis picked the wrong song (for example you skipped quickly), open it and use **Not this song? Tap the right one**: it lists your last few plays.
 
@@ -66,6 +70,8 @@ Needs `FAL_KEY` (or `FALAI_API_KEY`) on Netlify. /jarvis/songs shows "Plan B gen
 | Control Center button, Siri phrase | `mobile/targets/widget/Widgets.swift` (`LikeSongControl`), `mobile/targets/_shared/JarvisCore.swift` (`LikeSongIntent`, runs in the background), `mobile/targets/intents/JarvisShortcuts.swift` |
 | App screens | `mobile/src/app/songs/index.tsx`, `mobile/src/app/songs/[id].tsx`; notifications carry `route` and open them |
 | API | `POST/GET /jarvis/api/songs`, `GET/POST/DELETE /jarvis/api/songs/[id]` (rewrite, swap, generate), `/jarvis/api/songs/settings`, `/jarvis/api/songs/youtube/{start,callback}` |
+| Share sheet | `mobile/targets/share/` (`ShareViewController.swift`, a share extension): shrinks the image to 1600 px JPEG and POSTs `{ image }`, `{ url }` or `{ text }` to `/jarvis/api/songs` |
+| Screenshots | `src/lib/jarvis/songs/vision.ts` reads title and artist with `claude-sonnet-5-5`; `searchSongs()` in `ytmusic.ts` (YouTube Music search, songs filter, works signed out) finds the video; other hits become "Not this song?" choices |
 | Now playing | `src/lib/jarvis/songs/ytmusic.ts`: YouTube Music `FEmusic_history` with SAPISIDHASH auth; first row is the current song. Links resolve through YouTube oEmbed. |
 | Suno pack | `src/lib/jarvis/songs/write.ts`, `claude-sonnet-5-5` (fast enough for one Netlify invocation, run in `after()`); lyrics are always original and the style never names artists (Suno blocks names) |
 | Playlist | `src/lib/jarvis/songs/youtube.ts`, tokens encrypted in JarvisSetting `songs_youtube` (not JarvisConnection, which the listener treats as mailboxes) |

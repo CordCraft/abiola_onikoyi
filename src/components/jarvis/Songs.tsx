@@ -104,6 +104,34 @@ export function SongsPage({ notice }: { notice: string | null }) {
             Like
           </button>
         </div>
+        <label className="mt-3 inline-flex cursor-pointer items-center gap-2 text-xs font-medium text-teal-700">
+          <input
+            type="file"
+            accept="image/*"
+            className="hidden"
+            disabled={busy}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (!file) return;
+              void run(async () => {
+                // Same as the iPhone share sheet: long side 1600 px, JPEG.
+                const bitmap = await createImageBitmap(file);
+                const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+                const canvas = document.createElement("canvas");
+                canvas.width = Math.round(bitmap.width * scale);
+                canvas.height = Math.round(bitmap.height * scale);
+                canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+                const image = canvas.toDataURL("image/jpeg", 0.72).split(",")[1] ?? "";
+                setMsg("Reading the screenshot…");
+                const r = await post<{ speech: string }>("/jarvis/api/songs", { image, imageType: "image/jpeg", source: "screenshot" });
+                setMsg(r.speech);
+                await load();
+              });
+            }}
+          />
+          Or upload a screenshot of the song
+        </label>
       </section>
 
       <section className="space-y-2">

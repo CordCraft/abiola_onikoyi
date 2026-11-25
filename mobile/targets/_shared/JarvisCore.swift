@@ -136,14 +136,20 @@ enum JarvisAPI {
   struct LikeResult: Codable { let speech: String? ; let error: String? }
 
   static func likeNowPlaying(source: String) async throws -> String {
+    try await likeSong(["source": source], timeout: 25)
+  }
+
+  // Share sheet: a screenshot (base64 JPEG) or a shared link / text. Reading
+  // a screenshot takes a few seconds longer, hence the longer timeout.
+  static func likeSong(_ body: [String: Any], timeout: TimeInterval = 45) async throws -> String {
     let creds = try credentials()
     guard let url = URL(string: creds.host + "/jarvis/api/songs") else { throw JarvisError.server("bad address") }
     var req = URLRequest(url: url)
     req.httpMethod = "POST"
-    req.timeoutInterval = 25
+    req.timeoutInterval = timeout
     req.setValue("Bearer \(creds.token)", forHTTPHeaderField: "Authorization")
     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    req.httpBody = try JSONSerialization.data(withJSONObject: ["source": source])
+    req.httpBody = try JSONSerialization.data(withJSONObject: body)
     let (data, response) = try await URLSession.shared.data(for: req)
     let code = (response as? HTTPURLResponse)?.statusCode ?? 0
     if code == 401 { throw JarvisError.notPaired }

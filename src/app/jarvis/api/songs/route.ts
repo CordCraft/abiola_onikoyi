@@ -1,6 +1,6 @@
 import { NextResponse, after } from "next/server";
 import { getSession } from "@/lib/session";
-import { finishLike, likeSong, listSongs, view } from "@/lib/jarvis/songs/service";
+import { finishLike, likeSong, listSongs, view, type LikeInput } from "@/lib/jarvis/songs/service";
 import { YtAuthError } from "@/lib/jarvis/songs/ytmusic";
 
 export const runtime = "nodejs";
@@ -16,11 +16,15 @@ export async function GET() {
 
 // Like a song. Body: {} = whatever is playing on YouTube Music now (the
 // Control Center button and Siri); { url } = a shared YouTube / YouTube Music
-// link; { title, artist } = typed by hand. Answers within a second or two;
+// link; { title, artist } = typed by hand; { image, imageType } = a
+// screenshot from the iPhone share sheet (read with Claude, matched on
+// YouTube Music); { text } = text shared from another app. Answers within a second or two;
 // the playlist add, the Suno pack and the "ready" push follow in after().
 export async function POST(req: Request) {
   if (!(await getSession())) return unauthorized();
-  const body = (await req.json().catch(() => ({}))) as { url?: string; videoId?: string; title?: string; artist?: string; source?: string };
+  const body = (await req.json().catch(() => ({}))) as LikeInput;
+  delete body.search;
+  if (body.image && body.image.length > 5_500_000) return NextResponse.json({ error: "That screenshot is too large." }, { status: 413 });
   try {
     const { song, duplicate } = await likeSong(body);
     if (!duplicate) after(() => finishLike(song.id));

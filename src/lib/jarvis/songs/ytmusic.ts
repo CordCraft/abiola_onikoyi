@@ -216,3 +216,53 @@ export async function trackFromVideoId(videoId: string): Promise<Track> {
   title = title.replace(/\s*[([](official|lyric|audio|video|visualizer)[^)\]]*[)\]]/gi, "").trim();
   return { videoId, title: title || "Unknown song", artist, album: null, thumbnail: j.thumbnail_url ?? null };
 }
+
+// ── Search (screenshots and typed titles) ────────────────────────────────────
+
+// ytmusicapi's "songs only" filter for the search endpoint.
+const SONGS_FILTER = "EgWKAQIIAWoMEA4QChADEAQQCRAF";
+
+// Songs matching a query, best first. Works signed out; uses the owner's
+// cookie when there is one so results match their region.
+export async function searchSongs(query: string, limit = 5): Promise<Track[]> {
+  const auth = await getYtAuth().catch(() => null);
+  let h: Record<string, string>;
+  try {
+    h = auth?.cookie ? headers(auth) : {};
+  } catch {
+    h = {};
+  }
+  if (!h.cookie) {
+    h = {
+      "content-type": "application/json",
+      origin: ORIGIN,
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36",
+      "x-youtube-client-name": "67",
+      "x-youtube-client-version": CLIENT_VERSION,
+    };
+  }
+  const res = await fetch(`${ORIGIN}/youtubei/v1/search?alt=json&prettyPrint=false`, {
+    method: "POST",
+    headers: h,
+    body: JSON.stringify({
+      context: { client: { clientName: "WEB_REMIX", clientVersion: CLIENT_VERSION, hl: "en", gl: "US" }, user: {} },
+      query,
+      params: SONGS_FILTER,
+    }),
+    cache: "no-store",
+  });
+  if (!res.ok) return [];
+  const items: Item[] = [];
+  collectItems((await res.json()) as unknown, items);
+  const out: Track[] = [];
+  const seen = new Set<string>();
+  for (const it of items) {
+    const t = parseItem(it);
+    if (t && !seen.has(t.videoId)) {
+      seen.add(t.videoId);
+      out.push(t);
+    }
+    if (out.length >= limit) break;
+  }
+  return out;
+}

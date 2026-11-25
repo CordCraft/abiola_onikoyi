@@ -10,7 +10,7 @@ Native companion to the Jarvis second brain at abiolaonikoyi.com/jarvis. Expo SD
 - **Siri** (no Shortcuts setup needed): "What's left in Jarvis", "Talk to Jarvis", "Mark a task done in Jarvis", "Add a task in Jarvis", "Move a task to tomorrow in Jarvis", "Start a task in Jarvis", "Ask Jarvis a question", "Start desk mode in Jarvis".
 - **Widgets**: home screen small, medium and large (tap-to-complete circles), lock screen circular, rectangular and inline, and a "Talk to Jarvis" control for Control Center, the lock screen and the Action Button.
 - **Notifications**: through the site's companion push (`app-push.ts`). Every banner has a Reply box that goes straight to Jarvis; tasks also have Done, signals Do it (Face ID) / Not now. Tapping opens the web reply page.
-- **Songs**: a "Like this song" control (Control Center, Action Button, lock screen) and Siri phrase save what YouTube Music is playing; the Songs screen shows the Suno pack Jarvis wrote, with Copy buttons and Open Suno, plus ACE-Step takes. Guide: `docs/JARVIS-SONGS.md` in the repo root.
+- **Songs**: a "Like this song" control (Control Center, Action Button, lock screen) and Siri phrase save what YouTube Music is playing; "Jarvis" in the share sheet (targets/share) takes a screenshot or link of any song; the Songs screen shows the Suno pack Jarvis wrote, with Copy buttons and Open Suno, plus ACE-Step takes. Guide: `docs/JARVIS-SONGS.md` in the repo root.
 - **Face ID** lock on launch and after 3 minutes away (voice mode opened by Siri skips it).
 
 "Hey Jarvis" without "Hey Siri": iPhone Settings, Accessibility, Vocal Shortcuts, Set Up, pick the Jarvis shortcut "Talk to Jarvis", say "Hey Jarvis" three times.
@@ -42,7 +42,7 @@ Native companion to the Jarvis second brain at abiolaonikoyi.com/jarvis. Expo SD
    cd mobile
    npx eas-cli@latest build -p ios --profile production --auto-submit
    ```
-   Let EAS log in to Apple, create the distribution certificate and the three provisioning profiles (app, widget, intents), register the App Group, create the App Store Connect app, and generate an App Store Connect API key for submissions. After this, builds and submissions run unattended.
+   Let EAS log in to Apple, create the distribution certificate and the three provisioning profiles (app, widget, intents, share), register the App Group, create the App Store Connect app, and generate an App Store Connect API key for submissions. After this, builds and submissions run unattended.
 2. GitHub secret: expo.dev, Account settings, Access tokens, create a token, then GitHub repo Settings, Secrets and variables, Actions, add `EXPO_TOKEN`.
 3. TestFlight on the iPhone: install the build, open Jarvis, pair from web Settings.
 

@@ -4,7 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { getSetting } from "@/lib/jarvis/sync/store";
 import { sendPushToAll } from "@/lib/jarvis/push";
 import { ensureSongTables } from "@/lib/jarvis/songs/setup";
-import { recentPlays, trackFromVideoId, videoIdFromUrl, type Track } from "@/lib/jarvis/songs/ytmusic";
+import { recentPlays, searchSongs, trackFromVideoId, videoIdFromUrl, type Track } from "@/lib/jarvis/songs/ytmusic";
+import { readSongFromImage } from "@/lib/jarvis/songs/vision";
 import { addToPlaylist } from "@/lib/jarvis/songs/youtube";
 import { writeSongPack, type AcePack, type SongAnalysis, type SunoPack } from "@/lib/jarvis/songs/write";
 import { pollAce, submitAce, type Generation } from "@/lib/jarvis/songs/fal";
@@ -75,18 +76,59 @@ export async function getSong(id: string): Promise<JarvisSong | null> {
   return prisma.jarvisSong.findUnique({ where: { id } });
 }
 
-export type LikeInput = { url?: string; videoId?: string; title?: string; artist?: string; source?: string };
+export type LikeInput = {
+  url?: string;
+  videoId?: string;
+  title?: string;
+  artist?: string;
+  source?: string;
+  // Share sheet: a screenshot (base64, no data: prefix) or shared text, which
+  // may hold a link ("Check out X on YouTube Music https://...").
+  image?: string;
+  imageType?: string;
+  text?: string;
+  search?: boolean; // title came from shared text: look it up on YouTube Music
+};
+
+// Normalised words for loose title matching.
+const words = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N} ]/gu, " ").split(/\s+/).filter(Boolean);
+
+// Best YouTube Music match for a title + artist read off a screenshot or typed.
+// Prefers a result whose title shares words with what was read.
+async function findByName(title: string, artist: string | null): Promise<{ track: Track; alternatives: Track[] }> {
+  const hits = await searchSongs(`${title} ${artist ?? ""}`.trim(), 6).catch(() => [] as Track[]);
+  const want = new Set(words(title));
+  const score = (t: Track) => words(t.title).filter((w) => want.has(w)).length;
+  const best = [...hits].sort((a, b) => score(b) - score(a))[0];
+  if (best && score(best) > 0) return { track: best, alternatives: hits };
+  return { track: { videoId: "", title: title.slice(0, 200), artist: artist?.slice(0, 200) ?? null, album: null, thumbnail: null }, alternatives: hits };
+}
 
 // Resolves and saves the song. Fast: no Claude here.
 export async function likeSong(input: LikeInput): Promise<{ song: JarvisSong; duplicate: boolean }> {
   await ensureSongTables();
   let track: Track;
   let alternatives: Track[] = [];
+  let source = input.source;
+  // Shared text: use its link if it has one, otherwise treat it as a search.
+  if (input.text && !input.url) {
+    const link = input.text.match(/https?:\/\/\S+/)?.[0];
+    if (link && videoIdFromUrl(link)) input = { ...input, url: link };
+    else if (!input.title) input = { ...input, title: input.text.replace(/https?:\/\/\S+/g, "").trim().slice(0, 200), search: true };
+  }
   const fromLink = input.url ? videoIdFromUrl(input.url) : input.videoId ?? null;
   if (input.url && !fromLink) throw new Error("That does not look like a YouTube or YouTube Music link.");
 
-  if (fromLink) {
+  if (input.image) {
+    const seen = await readSongFromImage(input.image, input.imageType ?? "image/jpeg");
+    if (!seen.found || !seen.title) throw new Error(seen.note ? `No song in that screenshot: ${seen.note}` : "Could not find a song in that screenshot.");
+    ({ track, alternatives } = await findByName(seen.title, seen.artist));
+    if (!track.album && seen.album) track = { ...track, album: seen.album };
+    source = source ?? "screenshot";
+  } else if (fromLink) {
     track = await trackFromVideoId(fromLink);
+  } else if (input.title && input.search) {
+    ({ track, alternatives } = await findByName(input.title, input.artist ?? null));
   } else if (input.title) {
     track = { videoId: "", title: input.title.slice(0, 200), artist: input.artist?.slice(0, 200) ?? null, album: null, thumbnail: null };
   } else {
@@ -111,7 +153,7 @@ export async function likeSong(input: LikeInput): Promise<{ song: JarvisSong; du
       artist: track.artist,
       album: track.album,
       thumbnail: track.thumbnail,
-      source: input.source ?? (fromLink ? "link" : input.title ? "manual" : "control"),
+      source: source ?? (fromLink ? "link" : input.title ? "manual" : "control"),
       status: "writing",
       alternatives: alternatives.length ? (alternatives as unknown as Prisma.InputJsonValue) : undefined,
     },
