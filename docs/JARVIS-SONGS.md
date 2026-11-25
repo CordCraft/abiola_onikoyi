@@ -44,7 +44,7 @@ winget install Gyan.FFmpeg
 Then update the bridge on that computer: `git pull` in the abiola_onikoyi folder (or copy the new `scripts/jarvis-bridge.mjs` and `scripts/install-jarvis-bridge.ps1`), run `powershell -ExecutionPolicy Bypass -File scripts\install-jarvis-bridge.ps1`, then `Restart-ScheduledTask -TaskName "Jarvis Bridge"` (or sign out and in). Within about 30 seconds the computer reports it can listen. 
 
 YouTube makes yt-dlp sign in, even on a home connection. Give each computer a signed-in source in `~/.claude/jarvis-bridge.json` (then restart the bridge):
-- `"ytDlpBrowser": "firefox"` reads the YouTube sign-in from Firefox on that computer (simplest; sign in to YouTube in Firefox once). Chrome and Edge lock their cookies on Windows, so they usually do not work here.
+- `"ytDlpBrowser": "firefox"` reads the YouTube sign-in from Firefox on that computer (simplest: `winget install Mozilla.Firefox`, sign in to YouTube Music in Firefox once). The bridge passes its own Node to yt-dlp to solve YouTube's JavaScript challenge, so nothing else is needed. Chrome and Edge lock their cookies on Windows, so they usually do not work here.
 - or `"ytDlpCookies": "C:\Users\you\yt-cookies.txt"`, a cookies.txt you export from a browser signed in to YouTube.
 
 Without either, the computer's download fails and Jarvis listens to the free 30-second Deezer or Apple preview instead (usually the hook). If no computer is online, it uses the preview straight away. Jarvis picks the first computer that is online and not busy. The Railway voice service also needs the update deployed (it builds from `services/voice` on push).

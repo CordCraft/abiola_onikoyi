@@ -734,6 +734,9 @@ async function runListen(api, cfg, job) {
     mkdirSync(outDir);
     const args = ["-f", "249/250/139/251/140/bestaudio", "--no-playlist", "--no-progress", "--quiet", "--no-warnings", "-o", join(outDir, "song.%(ext)s"), `https://music.youtube.com/watch?v=${videoId}`];
     if (ffmpegBin) args.unshift("--ffmpeg-location", ffmpegBin);
+    // YouTube hides audio streams behind a JavaScript challenge; yt-dlp solves
+    // it with a JS runtime, and this bridge already runs on Node.
+    args.unshift("--js-runtimes", `node:${process.execPath}`);
     // YouTube makes yt-dlp sign in. The owner sets this per computer in
     // ~/.claude/jarvis-bridge.json: "ytDlpBrowser": "firefox" (read from that
     // browser's profile) or "ytDlpCookies": "C:\\path\\cookies.txt" (copied to
