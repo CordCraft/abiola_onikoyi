@@ -1,20 +1,25 @@
 import "server-only";
-import type { JarvisSong, Prisma } from "@prisma/client";
+import { Prisma, type JarvisSong } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getSetting } from "@/lib/jarvis/sync/store";
 import { sendPushToAll } from "@/lib/jarvis/push";
 import { ensureSongTables } from "@/lib/jarvis/songs/setup";
-import { recentPlays, searchSongs, trackFromVideoId, videoIdFromUrl, type Track } from "@/lib/jarvis/songs/ytmusic";
+import { recentPlays, searchSongs, songDetails, trackFromVideoId, videoIdFromUrl, type Track } from "@/lib/jarvis/songs/ytmusic";
 import { readSongFromImage } from "@/lib/jarvis/songs/vision";
 import { addToPlaylist } from "@/lib/jarvis/songs/youtube";
-import { writeSongPack, type AcePack, type SongAnalysis, type SunoPack } from "@/lib/jarvis/songs/write";
+import { analyzeSong, writeSongPack, type AcePack, type SongAnalysis, type SunoPack } from "@/lib/jarvis/songs/write";
+import { researchSong, type SongResearch } from "@/lib/jarvis/songs/research";
 import { pollAce, submitAce, type Generation } from "@/lib/jarvis/songs/fal";
 
 // The "like this song" flow:
-// 1. likeSong(): find the song (YouTube Music history, or a pasted link), save
-//    it, and answer at once (the Control Center button waits on this).
-// 2. finishLike() in after(): add it to the Novale playlist, write the Suno
-//    pack with Claude, push "ready" to the phone.
+// 1. likeSong(): find the song (YouTube Music history, a link or a
+//    screenshot), save it, and answer at once (the Control Center button
+//    waits on this).
+// 2. finishLike() in after(): add it to the Novale playlist, then three
+//    steps, each in its own function invocation so none hits Netlify's
+//    time limit (kick() chains them through /api/jarvis-songs/step):
+//    research (web facts + YouTube Music length and lyrics), analysis (a
+//    producer's blueprint), writing (the Suno pack), then push "ready".
 
 export const STYLE_NOTES_KEY = "songs_style_notes";
 // A writing job older than this was cut off by the platform; let it be retried.
@@ -31,7 +36,9 @@ export type SongView = {
   thumbnail: string | null;
   source: string;
   status: string;
+  stage: string | null; // while writing: research | analysis | writing
   analysis: SongAnalysis | null;
+  research: { found: boolean; producers: string[]; sources: { title: string; url: string }[]; lyricsFound: boolean } | null;
   suno: SunoStored | null;
   direction: string | null;
   playlistStatus: string | null;
@@ -53,7 +60,14 @@ export function view(s: JarvisSong): SongView {
     thumbnail: s.thumbnail,
     source: s.source,
     status: stale ? "error" : s.status,
+    stage: s.status === "writing" && !stale ? s.stage : null,
     analysis: (s.analysis as SongAnalysis | null) ?? null,
+    research: s.research
+      ? (() => {
+          const r = s.research as unknown as SongResearch;
+          return { found: r.found, producers: r.producers ?? [], sources: r.sources ?? [], lyricsFound: Boolean(r.facts?.lyricsFound) };
+        })()
+      : null,
     suno: (s.suno as SunoStored | null) ?? null,
     direction: s.direction,
     playlistStatus: s.playlistStatus,
@@ -161,37 +175,122 @@ export async function likeSong(input: LikeInput): Promise<{ song: JarvisSong; du
   return { song, duplicate: false };
 }
 
-// Writes (or rewrites) the Suno pack. Safe to call from after().
-export async function writePack(id: string, opts: { notify?: boolean; direction?: string | null } = {}): Promise<void> {
+export type Step = "research" | "analysis" | "writing";
+type StepOpts = { notify?: boolean };
+
+async function fail(id: string, title: string, e: unknown, notify?: boolean) {
+  const msg = e instanceof Error ? e.message.slice(0, 300) : "failed";
+  await prisma.jarvisSong.update({ where: { id }, data: { status: "error", stage: null, error: msg } });
+  if (notify) {
+    await sendPushToAll({
+      title: `Saved ${title}, but the Suno pack failed`,
+      body: `${msg}. Open it in Jarvis and tap Rewrite.`,
+      url: `/jarvis/songs/${id}`,
+      kind: "other",
+      appRoute: `/songs/${id}`,
+    }).catch(() => {});
+  }
+}
+
+// Starts the next step in a fresh invocation (its own time budget). Runs it
+// here instead when not on Netlify (local dev) or the hand-off fails.
+async function kick(id: string, step: Step, opts: StepOpts): Promise<void> {
+  const base = process.env.URL || process.env.DEPLOY_PRIME_URL;
+  const secret = process.env.CRON_SECRET;
+  if (base && secret) {
+    try {
+      const res = await fetch(`${base}/api/jarvis-songs/step`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-cron-secret": secret },
+        body: JSON.stringify({ id, step, notify: Boolean(opts.notify) }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (res.ok) return;
+    } catch {
+      // fall through and do it here
+    }
+  }
+  await runStep(id, step, opts);
+}
+
+const emptyResearch = (song: JarvisSong, details: Awaited<ReturnType<typeof songDetails>> | null): SongResearch => ({
+  found: false,
+  genre: null,
+  subgenres: [],
+  bpm: null,
+  key: null,
+  timeSignature: null,
+  releaseYear: details?.year ?? null,
+  producers: [],
+  instrumentation: [],
+  drums: null,
+  bass: null,
+  harmony: null,
+  vocals: null,
+  languages: null,
+  arrangement: null,
+  soundsLike: [],
+  notes: null,
+  sources: [],
+  facts: {
+    durationSec: details?.durationSec ?? null,
+    year: details?.year ?? null,
+    album: details?.album ?? song.album,
+    lyricsFound: Boolean(details?.lyrics),
+    lyricsSource: details?.lyricsSource ?? null,
+  },
+});
+
+// One step of the pipeline. Safe to call from after().
+export async function runStep(id: string, step: Step, opts: StepOpts = {}): Promise<void> {
   const song = await getSong(id);
   if (!song) return;
-  const previous = song.suno as SunoStored | null;
-  await prisma.jarvisSong.update({
-    where: { id },
-    data: { status: "writing", error: null, ...(opts.direction !== undefined ? { direction: opts.direction } : {}) },
-  });
+  await prisma.jarvisSong.update({ where: { id }, data: { status: "writing", stage: step, error: null } });
   try {
+    if (step === "research") {
+      const details = song.videoId ? await songDetails(song.videoId).catch(() => null) : null;
+      // The web part is a bonus: on failure the lyrics and length still help.
+      const research = await researchSong({ title: song.title, artist: song.artist, album: song.album, details }).catch(() => emptyResearch(song, details));
+      await prisma.jarvisSong.update({
+        where: { id },
+        data: { research: research as unknown as Prisma.InputJsonValue, album: song.album ?? research.facts.album },
+      });
+      return kick(id, "analysis", opts);
+    }
+
+    if (step === "analysis") {
+      // Lyrics are fetched again rather than stored: they are only measured.
+      const details = song.videoId ? await songDetails(song.videoId).catch(() => null) : null;
+      const analysis = await analyzeSong({
+        title: song.title,
+        artist: song.artist,
+        research: (song.research as unknown as SongResearch | null) ?? null,
+        lyrics: details?.lyrics ?? null,
+      });
+      await prisma.jarvisSong.update({ where: { id }, data: { analysis: analysis as unknown as Prisma.InputJsonValue } });
+      return kick(id, "writing", opts);
+    }
+
+    const analysis = song.analysis as SongAnalysis | null;
+    if (!analysis) return kick(id, "analysis", opts);
+    const previous = song.suno as SunoStored | null;
     const styleNotes = await getSetting(STYLE_NOTES_KEY).catch(() => null);
     const pack = await writeSongPack({
       title: song.title,
       artist: song.artist,
-      album: song.album,
+      analysis,
       styleNotes,
-      direction: opts.direction ?? song.direction,
+      direction: song.direction,
       previousTitle: previous?.title ?? null,
     });
     await prisma.jarvisSong.update({
       where: { id },
-      data: {
-        status: "ready",
-        analysis: pack.analysis as unknown as Prisma.InputJsonValue,
-        suno: { ...pack.suno, ace: pack.ace } as unknown as Prisma.InputJsonValue,
-      },
+      data: { status: "ready", stage: null, suno: { ...pack.suno, ace: pack.ace } as unknown as Prisma.InputJsonValue },
     });
     if (opts.notify) {
       await sendPushToAll({
         title: `Your version of ${song.title} is ready`,
-        body: `"${pack.suno.title}": ${pack.analysis.genre}, ${pack.analysis.bpm ? `${pack.analysis.bpm} bpm, ` : ""}${pack.analysis.mood.slice(0, 2).join(", ")}. Tap to copy it into Suno.`,
+        body: `"${pack.suno.title}": ${analysis.genre}, ${analysis.bpm ? `${analysis.bpm} bpm, ` : ""}${(analysis.mood ?? []).slice(0, 2).join(", ")}. Tap to copy it into Suno.`,
         url: `/jarvis/songs/${id}`,
         kind: "other",
         tag: `song-${id}`,
@@ -199,21 +298,21 @@ export async function writePack(id: string, opts: { notify?: boolean; direction?
       }).catch(() => {});
     }
   } catch (e) {
-    const msg = e instanceof Error ? e.message.slice(0, 300) : "failed";
-    await prisma.jarvisSong.update({ where: { id }, data: { status: "error", error: msg } });
-    if (opts.notify) {
-      await sendPushToAll({
-        title: `Saved ${song.title}, but the Suno pack failed`,
-        body: `${msg}. Open it in Jarvis and tap Rewrite.`,
-        url: `/jarvis/songs/${id}`,
-        kind: "other",
-        appRoute: `/songs/${id}`,
-      }).catch(() => {});
-    }
+    await fail(id, song.title, e, opts.notify);
   }
 }
 
-// Background half of a like: playlist + Suno pack + push.
+// Rewrite: a new Suno pack from the saved blueprint (one quick step). Songs
+// liked before the blueprint existed, or with redo set, are researched again.
+export async function writePack(id: string, opts: { notify?: boolean; direction?: string | null; redo?: boolean } = {}): Promise<void> {
+  const song = await getSong(id);
+  if (!song) return;
+  if (opts.direction !== undefined) await prisma.jarvisSong.update({ where: { id }, data: { direction: opts.direction } });
+  const hasBlueprint = Boolean((song.analysis as SongAnalysis | null)?.sections?.length);
+  await runStep(id, opts.redo || !hasBlueprint ? "research" : "writing", { notify: opts.notify });
+}
+
+// Background half of a like: playlist, then research, blueprint, Suno pack, push.
 export async function finishLike(id: string): Promise<void> {
   const song = await getSong(id);
   if (!song) return;
@@ -221,7 +320,7 @@ export async function finishLike(id: string): Promise<void> {
     const playlistStatus = await addToPlaylist(song.videoId);
     await prisma.jarvisSong.update({ where: { id }, data: { playlistStatus } });
   }
-  await writePack(id, { notify: true });
+  await runStep(id, "research", { notify: true });
 }
 
 // "Not this one": swap to another recent play, then rewrite.
@@ -238,8 +337,11 @@ export async function swapSong(id: string, videoId: string): Promise<JarvisSong>
       album: alt.album,
       thumbnail: alt.thumbnail,
       status: "writing",
+      stage: "research",
       playlistStatus: null,
       error: null,
+      research: Prisma.DbNull,
+      analysis: Prisma.DbNull,
     },
   });
 }

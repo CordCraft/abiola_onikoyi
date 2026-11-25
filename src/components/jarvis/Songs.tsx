@@ -28,8 +28,14 @@ async function post<T>(url: string, body: unknown): Promise<T> {
   return j;
 }
 
+const STAGE: Record<string, string> = {
+  research: "Researching the song (1 of 3)...",
+  analysis: "Breaking down the song (2 of 3)...",
+  writing: "Writing your version (3 of 3)...",
+};
+
 function statusLabel(s: SongView) {
-  if (s.status === "writing") return "Writing your version...";
+  if (s.status === "writing") return STAGE[s.stage ?? ""] ?? "Writing your version...";
   if (s.status === "error") return "Needs a rewrite";
   return s.suno ? `"${s.suno.title}"` : "Saved";
 }
@@ -360,7 +366,7 @@ export function SongDetail({ id }: { id: string }) {
         </details>
       )}
 
-      {s.status === "writing" && <p className={card}>Writing your version. This takes about 20 seconds.</p>}
+      {s.status === "writing" && <p className={card}>{STAGE[s.stage ?? ""] ?? "Writing your version..."} The whole thing takes about a minute.</p>}
       {s.status === "error" && <p className={`${card} text-sm text-rose-700`}>{s.error ?? "Something failed."}</p>}
 
       {a && (
@@ -371,15 +377,53 @@ export function SongDetail({ id }: { id: string }) {
             {a.subgenres?.length ? `, ${a.subgenres.join(", ")}` : ""}
             {a.bpm ? ` · ${a.bpm} bpm` : ""}
             {a.key ? ` · ${a.key}` : ""}
+            {a.timeSignature ? ` · ${a.timeSignature}` : ""}
             {a.era ? ` · ${a.era}` : ""}
           </p>
           <p>Mood: {a.mood?.join(", ")}. Energy: {a.energy}.</p>
-          <p>Vocals: {a.vocals}</p>
+          {a.groove && <p>Groove: {a.groove}</p>}
+          {a.bass && <p>Bass: {a.bass}</p>}
+          {a.harmony && <p>Harmony: {a.harmony}</p>}
           <p>Instruments: {a.instruments?.join(", ")}</p>
+          <p>Vocals: {a.vocals}</p>
+          {a.vocalProduction && <p>Vocal production: {a.vocalProduction}</p>}
+          {a.melody && <p>Melody: {a.melody}</p>}
+          {a.language && <p>Language: {a.language}</p>}
+          {a.hook && <p>Hook: {a.hook}</p>}
+          {a.lyricCraft && <p>Lyric craft: {a.lyricCraft}</p>}
           <p>Structure: {a.structure}</p>
+          {a.sections?.length ? (
+            <details>
+              <summary className="cursor-pointer text-zinc-500">Section map ({a.sections.length} sections)</summary>
+              <ul className="mt-1 space-y-1">
+                {a.sections.map((x, i) => (
+                  <li key={i}>
+                    <b>{x.name}</b>: {x.lines} lines, {x.syllables} syllables, rhyme {x.rhyme}, {x.delivery}, energy {x.energy}/10. {x.notes}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
           <p>Production: {a.production}</p>
+          {a.mix && <p>Mix: {a.mix}</p>}
           <p>Themes: {a.themes}</p>
           <p className="text-zinc-500">Why it works: {a.whyItWorks}</p>
+          {s.research?.sources?.length ? (
+            <details>
+              <summary className="cursor-pointer text-zinc-500">
+                Sources{s.research.lyricsFound ? " (lyrics measured, not copied)" : ""}
+              </summary>
+              <ul className="mt-1 space-y-1">
+                {s.research.sources.map((x) => (
+                  <li key={x.url}>
+                    <a href={x.url} target="_blank" rel="noreferrer" className="underline">
+                      {x.title || x.url}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
         </section>
       )}
 
@@ -400,6 +444,10 @@ export function SongDetail({ id }: { id: string }) {
           <button className={btn} disabled={busy || s.status === "writing"} onClick={() => act({ action: "rewrite", direction })}>
             Rewrite
           </button>
+          <button className={`${btn} ml-2`} disabled={busy || s.status === "writing"} onClick={() => act({ action: "reanalyze", direction })}>
+            Re-analyse the song
+          </button>
+          <p className="text-xs text-zinc-500">Rewrite keeps the breakdown and writes new lyrics. Re-analyse researches the song again first (about a minute).</p>
         </section>
       )}
 

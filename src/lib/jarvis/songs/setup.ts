@@ -26,6 +26,8 @@ const DDL: string[] = [
 )`,
   `CREATE INDEX IF NOT EXISTS "JarvisSong_createdAt_idx" ON "JarvisSong"("createdAt")`,
   `CREATE INDEX IF NOT EXISTS "JarvisSong_videoId_idx" ON "JarvisSong"("videoId")`,
+  `ALTER TABLE "JarvisSong" ADD COLUMN IF NOT EXISTS "stage" TEXT`,
+  `ALTER TABLE "JarvisSong" ADD COLUMN IF NOT EXISTS "research" JSONB`,
   `ALTER TABLE "JarvisSong" ENABLE ROW LEVEL SECURITY`,
 ];
 

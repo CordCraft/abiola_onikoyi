@@ -266,3 +266,90 @@ export async function searchSongs(query: string, limit = 5): Promise<Track[]> {
   }
   return out;
 }
+
+// ── Song facts (length, year, lyrics) ────────────────────────────────────────
+
+export type SongDetails = {
+  durationSec: number | null;
+  year: string | null;
+  album: string | null;
+  byline: string | null; // "Wizkid • Made In Lagos • 2020"
+  lyrics: string | null; // for analysis only; never shown, stored or reused
+  lyricsSource: string | null;
+};
+
+function findAll(node: unknown, key: string, out: unknown[] = []): unknown[] {
+  if (!node || typeof node !== "object") return out;
+  if (Array.isArray(node)) {
+    for (const n of node) findAll(n, key, out);
+    return out;
+  }
+  for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+    if (k === key) out.push(v);
+    else findAll(v, key, out);
+  }
+  return out;
+}
+
+type Runs = { runs?: { text?: string }[] };
+const runsText = (r: Runs | undefined) => (r?.runs ?? []).map((x) => x.text ?? "").join("");
+
+// What YouTube Music shows beside the player: length, album, year and the
+// lyrics tab (Musixmatch / LyricFind). Works signed out. Every part is
+// optional; a failure returns what was found.
+export async function songDetails(videoId: string): Promise<SongDetails> {
+  const out: SongDetails = { durationSec: null, year: null, album: null, byline: null, lyrics: null, lyricsSource: null };
+  const h = {
+    "content-type": "application/json",
+    origin: ORIGIN,
+    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36",
+    "x-youtube-client-name": "67",
+    "x-youtube-client-version": CLIENT_VERSION,
+  };
+  const context = { client: { clientName: "WEB_REMIX", clientVersion: CLIENT_VERSION, hl: "en", gl: "US" }, user: {} };
+  const post = async (ep: string, body: Record<string, unknown>) => {
+    const res = await fetch(`${ORIGIN}/youtubei/v1/${ep}?alt=json&prettyPrint=false`, {
+      method: "POST",
+      headers: h,
+      body: JSON.stringify({ context, ...body }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) throw new Error(`YouTube Music answered ${res.status}`);
+    return (await res.json()) as unknown;
+  };
+  try {
+    const next = await post("next", {
+      videoId,
+      isAudioOnly: true,
+      playlistId: `RDAMVM${videoId}`,
+      enablePersistentPlaylistPanel: true,
+      tunerSettingValue: "AUTOMIX_SETTING_NORMAL",
+    });
+    const panel = (findAll(next, "playlistPanelVideoRenderer") as { videoId?: string; lengthText?: Runs; longBylineText?: Runs }[]).find(
+      (p) => p.videoId === videoId,
+    );
+    if (panel) {
+      const len = runsText(panel.lengthText).match(/^(?:(\d+):)?(\d+):(\d{2})$/);
+      if (len) out.durationSec = Number(len[1] ?? 0) * 3600 + Number(len[2]) * 60 + Number(len[3]);
+      out.byline = runsText(panel.longBylineText) || null;
+      const parts = (out.byline ?? "").split(" • ").map((s) => s.trim());
+      out.year = parts.find((p) => /^(19|20)\d{2}$/.test(p)) ?? null;
+      if (parts.length >= 3) out.album = parts[1] || null;
+    }
+    const tabs = findAll(next, "tabRenderer") as { title?: string; endpoint?: { browseEndpoint?: { browseId?: string } } }[];
+    const lyricsId = tabs.find((t) => /lyric/i.test(t.title ?? ""))?.endpoint?.browseEndpoint?.browseId;
+    if (lyricsId) {
+      const page = await post("browse", { browseId: lyricsId });
+      const shelf = (findAll(page, "musicDescriptionShelfRenderer") as { description?: Runs; footer?: Runs }[])[0];
+      const text = runsText(shelf?.description).trim();
+      if (text) {
+        out.lyrics = text.slice(0, 12000);
+        out.lyricsSource = runsText(shelf?.footer).replace(/^Source:\s*/i, "").trim() || null;
+      }
+    }
+  } catch {
+    // Partial facts are still useful.
+  }
+  return out;
+}

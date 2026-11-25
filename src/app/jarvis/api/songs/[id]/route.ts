@@ -19,7 +19,8 @@ export async function GET(_req: Request, { params }: Ctx) {
   return NextResponse.json({ song: view(fresh) }, { headers: { "cache-control": "no-store" } });
 }
 
-// { action: "rewrite", direction? }  new Suno pack, optionally steered
+// { action: "rewrite", direction? }  new Suno pack from the saved blueprint, optionally steered
+// { action: "reanalyze", direction? } research and blueprint again, then a new pack
 // { action: "swap", videoId }        "not this one": pick another recent play
 // { action: "generate" }             make two takes with ACE-Step (fal)
 export async function POST(req: Request, { params }: Ctx) {
@@ -29,10 +30,10 @@ export async function POST(req: Request, { params }: Ctx) {
   const song = await getSong(id);
   if (!song) return notFound();
   try {
-    if (body.action === "rewrite") {
+    if (body.action === "rewrite" || body.action === "reanalyze") {
       const direction = body.direction?.trim().slice(0, 600) || null;
-      await prisma.jarvisSong.update({ where: { id }, data: { status: "writing", error: null } });
-      after(() => writePack(id, { direction }));
+      await prisma.jarvisSong.update({ where: { id }, data: { status: "writing", stage: body.action === "reanalyze" ? "research" : "writing", error: null } });
+      after(() => writePack(id, { direction, redo: body.action === "reanalyze" }));
       return NextResponse.json({ song: view((await getSong(id))!) });
     }
     if (body.action === "swap" && body.videoId) {

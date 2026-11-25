@@ -4,8 +4,10 @@ Swipe down from the top right of the iPhone while YouTube Music is playing, tap 
 
 1. saves the song that is playing (works with AirPods, speaker, anything, because it reads your YouTube Music history, not the microphone),
 2. adds it to a private **Novale Likes** playlist on the Novale YouTube channel (optional),
-3. writes **your own version** for Suno: Style of Music, Title, Exclude styles and **original** lyrics with Suno's `[Verse]` / `[Chorus]` tags, plus a short analysis of why the song works,
-4. sends a notification about 20 seconds later. Tap it, tap **Copy** on each part, tap **Open Suno**, paste into Create, Custom.
+3. **researches the song**: tempo, key, producer, drum pattern and vocal production from the web (songbpm, tunebat, Genius credits, reviews), plus its length and lyrics from YouTube Music,
+4. **breaks it down like a producer**: groove, bass, harmony, melody, vocal production, language mix, hook mechanics, and a section map (line counts, syllables per line, rhyme scheme, delivery, energy). The original lyrics are only measured for shape; they are never shown, stored or reused,
+5. writes **your own version** for Suno to that blueprint: a detailed Style of Music (genre, exact bpm, key, vocal, instruments and how they play, mix), Exclude styles, Title and **original** lyrics that follow the same sections, line lengths, rhyme scheme, hook pattern and language mix, with Suno performance cues like `[Chorus: group vocals, call and response]`,
+6. sends a notification about a minute later. Tap it, tap **Copy** on each part, tap **Open Suno**, paste into Create, Custom.
 
 Plan B: **Make 2 takes** generates the song inside Jarvis with ACE-Step 1.5, an open-source model, on fal.ai (about 11 US cents for two 3-minute takes), so you can compare it with Suno.
 
@@ -25,7 +27,7 @@ If Jarvis is not in the share sheet the first time, scroll the app row to the en
 
 If Jarvis picked the wrong song (for example you skipped quickly), open it and use **Not this song? Tap the right one**: it lists your last few plays.
 
-**Rewrite** writes a fresh version; the box takes a direction like "Afrobeats, female vocal, about leaving Lagos". Standing notes about the Novale sound live on /jarvis/songs and apply to every version.
+**Rewrite** writes a fresh version from the saved breakdown (quick). **Re-analyse** researches and breaks the song down again first; use it when the breakdown looks wrong, and on songs liked before 25 Nov 2026 (Rewrite does it for them automatically). The box takes a direction like "Afrobeats, female vocal, about leaving Lagos". Standing notes about the Novale sound live on /jarvis/songs and apply to every version.
 
 ## One-time setup
 
@@ -73,7 +75,9 @@ Needs `FAL_KEY` (or `FALAI_API_KEY`) on Netlify. /jarvis/songs shows "Plan B gen
 | Share sheet | `mobile/targets/share/` (`ShareViewController.swift`, a share extension): shrinks the image to 1600 px JPEG and POSTs `{ image }`, `{ url }` or `{ text }` to `/jarvis/api/songs` |
 | Screenshots | `src/lib/jarvis/songs/vision.ts` reads title and artist with `claude-sonnet-5-5`; `searchSongs()` in `ytmusic.ts` (YouTube Music search, songs filter, works signed out) finds the video; other hits become "Not this song?" choices |
 | Now playing | `src/lib/jarvis/songs/ytmusic.ts`: YouTube Music `FEmusic_history` with SAPISIDHASH auth; first row is the current song. Links resolve through YouTube oEmbed. |
-| Suno pack | `src/lib/jarvis/songs/write.ts`, `claude-sonnet-5-5` (fast enough for one Netlify invocation, run in `after()`); lyrics are always original and the style never names artists (Suno blocks names) |
+| Pipeline | `runStep()` in `src/lib/jarvis/songs/service.ts`: research, analysis, writing, each in its own invocation (`kick()` POSTs `/api/jarvis-songs/step` with `x-cron-secret`, which runs the step in `after()`); `JarvisSong.stage` shows progress |
+| Research | `src/lib/jarvis/songs/research.ts`, `claude-opus-5-5` with web search (3 searches max); `songDetails()` in `ytmusic.ts` reads length, year and lyrics (Musixmatch / LyricFind via the YouTube Music lyrics tab, signed out). Stored in `JarvisSong.research` without lyrics |
+| Blueprint and Suno pack | `src/lib/jarvis/songs/write.ts`: `analyzeSong()` (lyrics measured for shape only) and `writeSongPack()` (never sees the original lyrics), both `claude-opus-5-5` via `claude.ts` (server-side refusal fallbacks). Style never names artists (Suno blocks names) |
 | Playlist | `src/lib/jarvis/songs/youtube.ts`, tokens encrypted in JarvisSetting `songs_youtube` (not JarvisConnection, which the listener treats as mailboxes) |
 | ACE-Step | `src/lib/jarvis/songs/fal.ts`, fal queue API, polled whenever the song is opened |
 | Table | `JarvisSong`, created by `ensureSongTables()` in `src/lib/jarvis/songs/setup.ts` |

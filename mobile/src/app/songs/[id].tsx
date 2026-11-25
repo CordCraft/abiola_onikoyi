@@ -127,7 +127,14 @@ export default function SongScreen() {
       {song.status === "writing" && (
         <View style={[s.card, { flexDirection: "row", gap: 10, alignItems: "center" }]}>
           <ActivityIndicator />
-          <Text style={s.body}>Writing your version. About 20 seconds.</Text>
+          <Text style={s.body}>
+            {song.stage === "research"
+              ? "Researching the song (1 of 3)..."
+              : song.stage === "analysis"
+                ? "Breaking down the song (2 of 3)..."
+                : "Writing your version (3 of 3)..."}{" "}
+            About a minute in all.
+          </Text>
         </View>
       )}
       {song.status === "error" && <Text style={[s.msg, { color: t.danger }]}>{song.error ?? "Something failed."} Tap Rewrite below.</Text>}
@@ -159,8 +166,17 @@ export default function SongScreen() {
             {a.key ? `, ${a.key}` : ""}
           </Text>
           <Text style={s.body}>Mood: {a.mood?.join(", ")}. {a.energy}</Text>
+          {a.groove ? <Text style={s.body}>Groove: {a.groove}</Text> : null}
+          {a.harmony ? <Text style={s.body}>Harmony: {a.harmony}</Text> : null}
           <Text style={s.body}>Vocals: {a.vocals}</Text>
+          {a.vocalProduction ? <Text style={s.body}>Vocal production: {a.vocalProduction}</Text> : null}
+          {a.language ? <Text style={s.body}>Language: {a.language}</Text> : null}
+          {a.hook ? <Text style={s.body}>Hook: {a.hook}</Text> : null}
           <Text style={s.body}>Sound: {a.instruments?.join(", ")}. {a.production}</Text>
+          <Text style={s.body}>Structure: {a.structure}</Text>
+          {a.sections?.map((x, i) => (
+            <Text key={i} style={s.muted}>{`${x.name}: ${x.lines} lines, ${x.syllables} syllables, rhyme ${x.rhyme}, ${x.delivery}`}</Text>
+          ))}
           <Text style={s.body}>Themes: {a.themes}</Text>
           <Text style={s.muted}>{a.whyItWorks}</Text>
         </View>
@@ -179,6 +195,9 @@ export default function SongScreen() {
           />
           <Pressable disabled={busy || song.status === "writing"} style={[s.bigBtn, { backgroundColor: t.navy }]} onPress={() => act({ action: "rewrite", direction })}>
             <Text style={[s.bigBtnText, { color: t.bg }]}>Write a new version</Text>
+          </Pressable>
+          <Pressable disabled={busy || song.status === "writing"} onPress={() => act({ action: "reanalyze", direction })}>
+            <Text style={[s.muted, { textDecorationLine: "underline" }]}>Re-analyse the song first (about a minute)</Text>
           </Pressable>
         </View>
       )}

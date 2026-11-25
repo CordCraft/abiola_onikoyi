@@ -220,6 +220,7 @@ export type Song = {
   thumbnail: string | null;
   source: string;
   status: "saved" | "writing" | "ready" | "error";
+  stage?: "research" | "analysis" | "writing" | null;
   analysis: {
     genre: string;
     subgenres: string[];
@@ -235,6 +236,17 @@ export type Song = {
     themes: string;
     whyItWorks: string;
     confidence: string;
+    timeSignature?: string | null;
+    groove?: string;
+    bass?: string;
+    harmony?: string;
+    melody?: string;
+    vocalProduction?: string;
+    language?: string;
+    hook?: string;
+    lyricCraft?: string;
+    mix?: string;
+    sections?: { name: string; lines: number; syllables: string; rhyme: string; delivery: string; energy: number; notes: string }[];
   } | null;
   suno: { title: string; style: string; exclude: string; lyrics: string; tips: string } | null;
   direction: string | null;
@@ -257,7 +269,7 @@ export function likeSong(body: { url?: string; source?: string } = {}) {
   });
 }
 
-export function songAction(id: string, body: { action: "rewrite"; direction?: string } | { action: "swap"; videoId: string } | { action: "generate" }) {
+export function songAction(id: string, body: { action: "rewrite" | "reanalyze"; direction?: string } | { action: "swap"; videoId: string } | { action: "generate" }) {
   return json<{ song: Song }>(`/jarvis/api/songs/${id}`, {
     method: "POST",
     headers: { "content-type": "application/json" },

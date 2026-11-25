@@ -872,7 +872,9 @@ model JarvisSong {
   source         String   @default("control") // control | link | siri | manual
   status         String   @default("saved") // saved | writing | ready | error
   alternatives   Json? // other recent plays, for "not this one"
-  analysis       Json?
+  stage          String? // while writing: research | analysis | writing
+  research       Json? // web facts + YouTube Music length (never lyrics)
+  analysis       Json? // the producer's blueprint
   suno           Json? // { title, style, lyrics, exclude, notes }
   direction      String? // the owner's note for the next rewrite
   playlistStatus String? // added | skipped | error: ...
