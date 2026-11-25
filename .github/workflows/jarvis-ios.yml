@@ -67,4 +67,9 @@ jobs:
 
       - name: Build and submit to TestFlight
         if: steps.decide.outputs.action == 'build'
+        # The team id lets EAS use the App Store Connect API key it stores to
+        # create provisioning profiles for new targets (e.g. the share
+        # extension) without a prompt.
+        env:
+          EXPO_APPLE_TEAM_ID: AK4GD5C42Y
         run: eas build --platform ios --profile production --auto-submit --non-interactive --no-wait
