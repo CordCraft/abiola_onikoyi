@@ -9,7 +9,7 @@ import { readSongFromImage } from "@/lib/jarvis/songs/vision";
 import { addToPlaylist } from "@/lib/jarvis/songs/youtube";
 import { analyzeSong, writeSongPack, type AcePack, type SongAnalysis, type SunoPack } from "@/lib/jarvis/songs/write";
 import { researchSong, type SongResearch } from "@/lib/jarvis/songs/research";
-import { queueListen, type AudioMeasurements } from "@/lib/jarvis/songs/listen";
+import { PREVIEW_LABEL, listenToPreview, queueListen, type AudioMeasurements } from "@/lib/jarvis/songs/listen";
 import { pollAce, submitAce, type Generation } from "@/lib/jarvis/songs/fal";
 
 // The "like this song" flow:
@@ -295,8 +295,16 @@ export async function runStep(id: string, step: Step, opts: StepOpts = {}): Prom
         });
         return;
       }
+      // No computer: listen to the 30-second preview instead.
+      if (research && (await listenToPreview(id, song.title, song.artist))) {
+        await prisma.jarvisSong.update({
+          where: { id },
+          data: { research: { ...research, listeningOn: PREVIEW_LABEL, audio: null } as unknown as Prisma.InputJsonValue },
+        });
+        return;
+      }
       if (research) {
-        const audio: AudioMeasurements = { ok: false, error: song.videoId ? "No computer with the listener was online." : "No YouTube video to listen to." };
+        const audio: AudioMeasurements = { ok: false, error: song.videoId ? "No computer with the listener was online and no preview was found." : "No audio found for this song." };
         await prisma.jarvisSong.update({ where: { id }, data: { research: { ...research, audio } as unknown as Prisma.InputJsonValue } });
       }
       return kick(id, "analysis", opts);
@@ -361,7 +369,20 @@ export async function saveMeasurements(songId: string, audio: AudioMeasurements)
 export async function listenFinished(jobId: string, error: string): Promise<void> {
   const job = await prisma.jarvisJob.findUnique({ where: { id: jobId } });
   const songId = (job?.payload as { songId?: string } | null)?.songId;
-  if (songId) await saveMeasurements(songId, { ok: false, error });
+  if (!songId) return;
+  // The computer could not get the full song: fall back to the preview.
+  const song = await getSong(songId);
+  const research = (song?.research as unknown as SongResearch | null) ?? null;
+  if (song && research && song.stage === "listening" && research.listeningOn !== PREVIEW_LABEL) {
+    if (await listenToPreview(songId, song.title, song.artist)) {
+      await prisma.jarvisSong.update({
+        where: { id: songId },
+        data: { research: { ...research, listeningOn: PREVIEW_LABEL, fullSongError: error.slice(0, 300) } as unknown as Prisma.InputJsonValue },
+      });
+      return;
+    }
+  }
+  await saveMeasurements(songId, { ok: false, error });
 }
 
 // Every few minutes: songs stuck waiting for a computer go on without audio.

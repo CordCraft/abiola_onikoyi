@@ -306,6 +306,18 @@ async function resolveTool(cfgPath, name) {
   const local = process.env.LOCALAPPDATA || join(HOME, "AppData", "Local");
   const exe = IS_WIN ? `${name}.exe` : name;
   const candidates = [cfgPath, name, join(local, "Microsoft", "WinGet", "Links", exe), join(HOME, "scoop", "shims", exe)];
+  // winget often skips the Links shortcut and only edits PATH, which a running
+  // scheduled task never sees: look in its package folders too
+  // (yt-dlp.yt-dlp_*\yt-dlp.exe, Gyan.FFmpeg_*\ffmpeg-*\bin\ffmpeg.exe).
+  try {
+    const pkgs = join(local, "Microsoft", "WinGet", "Packages");
+    for (const pkg of readdirSync(pkgs)) {
+      if (!pkg.toLowerCase().includes(name.toLowerCase())) continue;
+      const dir = join(pkgs, pkg);
+      candidates.push(join(dir, exe));
+      for (const sub of readdirSync(dir)) candidates.push(join(dir, sub, "bin", exe));
+    }
+  } catch {}
   for (const c of candidates.filter(Boolean)) {
     if (c !== name && !existsSync(c)) continue;
     const v = await run(c, ["--version"], { timeout: 15000 });
@@ -718,10 +730,22 @@ async function runListen(api, cfg, job) {
   const dir = mkdtempSync(join(tmpdir(), "jarvis-listen-"));
   try {
     log("listen", job.id, videoId, p.title || "");
-    const args = ["-f", "249/250/139/251/140/bestaudio", "--no-playlist", "--no-progress", "--quiet", "--no-warnings", "-o", join(dir, "song.%(ext)s"), `https://music.youtube.com/watch?v=${videoId}`];
+    const outDir = join(dir, "out");
+    mkdirSync(outDir);
+    const args = ["-f", "249/250/139/251/140/bestaudio", "--no-playlist", "--no-progress", "--quiet", "--no-warnings", "-o", join(outDir, "song.%(ext)s"), `https://music.youtube.com/watch?v=${videoId}`];
     if (ffmpegBin) args.unshift("--ffmpeg-location", ffmpegBin);
+    // YouTube makes yt-dlp sign in. The owner sets this per computer in
+    // ~/.claude/jarvis-bridge.json: "ytDlpBrowser": "firefox" (read from that
+    // browser's profile) or "ytDlpCookies": "C:\\path\\cookies.txt" (copied to
+    // this temp folder first, since yt-dlp rewrites the file).
+    if (cfg.ytDlpBrowser) args.unshift("--cookies-from-browser", String(cfg.ytDlpBrowser));
+    else if (cfg.ytDlpCookies && existsSync(cfg.ytDlpCookies)) {
+      const copy = join(dir, "cookies.txt");
+      writeFileSync(copy, readFileSync(cfg.ytDlpCookies));
+      args.unshift("--cookies", copy);
+    }
     const dl = await spawnWait(ytdlpBin, args, LISTEN_TIMEOUT_MS);
-    let file = readdirSync(dir).map((n) => join(dir, n)).find((f) => !f.endsWith(".part"));
+    let file = readdirSync(outDir).map((n) => join(outDir, n)).find((f) => !f.endsWith(".part"));
     if (dl.code !== 0 || !file) return fail(`yt-dlp could not get the audio: ${dl.err.slice(-300) || `exit ${dl.code}`}`);
     if (statSync(file).size > MAX_AUDIO_BYTES) {
       if (!ffmpegBin) return fail("The audio is too large to send and ffmpeg is not installed to shrink it.");

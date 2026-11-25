@@ -71,6 +71,47 @@ export async function queueListen(song: { id: string; videoId: string; title: st
   return machine.name;
 }
 
+export const PREVIEW_LABEL = "the 30-second preview";
+
+// Safety net when no computer can get the full song: the free 30-second
+// preview from Deezer (or Apple), usually the hook. Public, no sign-in.
+async function findPreview(title: string, artist: string | null): Promise<string | null> {
+  const clean = (s: string) => s.replace(/\s*[([].*?[)\]]/g, "").trim();
+  const t = clean(title);
+  const a = artist ? clean(artist.split(/,|&| feat/i)[0]) : "";
+  try {
+    const q = a ? `artist:"${a}" track:"${t}"` : t;
+    const r = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=3`, { signal: AbortSignal.timeout(8000) });
+    const j = (await r.json()) as { data?: { preview?: string }[] };
+    const hit = j.data?.find((d) => d.preview);
+    if (hit?.preview) return hit.preview;
+  } catch {}
+  try {
+    const r = await fetch(`https://itunes.apple.com/search?entity=song&limit=3&term=${encodeURIComponent(`${t} ${a}`.trim())}`, { signal: AbortSignal.timeout(8000) });
+    const j = (await r.json()) as { results?: { previewUrl?: string }[] };
+    return j.results?.find((d) => d.previewUrl)?.previewUrl ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// True when a preview was found and handed to the voice service.
+export async function listenToPreview(songId: string, title: string, artist: string | null): Promise<boolean> {
+  const url = await findPreview(title, artist);
+  if (!url) return false;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) return false;
+    const buf = await res.arrayBuffer();
+    if (!buf.byteLength || buf.byteLength > 5_000_000) return false;
+    const type = res.headers.get("content-type") || "audio/mpeg";
+    await forwardAudio(songId, new Blob([buf], { type }), type.includes("mp4") || url.includes(".m4a") ? "preview.m4a" : "preview.mp3");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Hands the downloaded audio to the voice service. Answers fast: the
 // analysis runs there and calls back.
 export async function forwardAudio(songId: string, audio: Blob, fileName: string): Promise<void> {

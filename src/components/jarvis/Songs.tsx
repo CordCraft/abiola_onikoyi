@@ -411,7 +411,7 @@ export function SongDetail({ id }: { id: string }) {
           <p className="text-zinc-500">Why it works: {a.whyItWorks}</p>
           {s.research?.listenedOn && s.research.heard ? (
             <p className="text-zinc-500">
-              Heard in full on {s.research.listenedOn}: {s.research.heard.tempo ? `${Math.round(s.research.heard.tempo)} bpm` : ""}
+              {s.research.listenedOn === "the 30-second preview" ? "Heard the 30-second preview" : `Heard in full on ${s.research.listenedOn}`}: {s.research.heard.tempo ? `${Math.round(s.research.heard.tempo)} bpm` : ""}
               {s.research.heard.key ? `, ${s.research.heard.key}` : ""}
               {s.research.heard.sectionPattern ? `, sections ${s.research.heard.sectionPattern}` : ""}.
             </p>

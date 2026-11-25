@@ -28,7 +28,8 @@ export type SongResearch = {
   notes: string | null; // anything else a producer would want to know
   sources: { title: string; url: string }[];
   facts: { durationSec: number | null; year: string | null; album: string | null; lyricsFound: boolean; lyricsSource: string | null };
-  listeningOn?: string | null; // the computer that fetched the audio
+  listeningOn?: string | null; // the computer that fetched the audio, or the preview
+  fullSongError?: string; // why the full song could not be fetched (preview used)
   audio?: AudioMeasurements | null; // what the voice service measured in the song
 };
 
