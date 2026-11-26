@@ -51,8 +51,8 @@ export async function people(limit = 60) {
 
 export async function openSignals(days = 7) {
   return q(
-    `SELECT id, kind, title, status FROM "JarvisSignal"
-     WHERE "createdAt" > now() - ($1 || ' days')::interval AND status IN ('new','pushed','snoozed','approved')
+    `SELECT id, kind, title, status, "dueAt" FROM "JarvisSignal"
+     WHERE "createdAt" > now() - ($1 || ' days')::interval AND status IN ('new','pushed','snoozed','approved','delegated')
      ORDER BY "createdAt" DESC LIMIT 60`,
     [String(days)],
   ).catch(() => []);

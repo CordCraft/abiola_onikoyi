@@ -2,7 +2,7 @@ import webpush from 'web-push';
 import { config } from './config.js';
 import { q, one } from './db.js';
 import { rhythm } from './context.js';
-import { minutesIn, parseHm, clip } from './util.js';
+import { minutesIn, parseHm, clip, effectiveScoreSql } from './util.js';
 
 // Push notifications with manners: quiet hours, an hourly and a daily cap, and
 // low-value items held back for the digest instead of interrupting.
@@ -99,7 +99,7 @@ export async function flushHeld() {
   const held = await q(
     `SELECT id FROM "JarvisSignal" WHERE status = 'new' AND kind <> 'fyi' AND "pushedAt" IS NULL
        AND autonomy = 'ask' AND score >= 60 AND "createdAt" > now() - interval '18 hours'
-     ORDER BY score DESC LIMIT 3`,
+     ORDER BY ${effectiveScoreSql()} DESC LIMIT 3`,
   );
   for (const h of held) await pushSignal(h.id);
   // Snoozed signals come back when their time is up.

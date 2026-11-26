@@ -6,7 +6,7 @@ export function projectHealth(p: {
   tasks: { status: string; dueDate: Date | null }[];
 }): number {
   const days = Math.floor((Date.now() - p.lastActivityAt.getTime()) / 864e5);
-  const open = p.tasks.filter((t) => t.status !== "done");
+  const open = p.tasks.filter((t) => t.status === "todo" || t.status === "doing");
   const overdue = open.filter((t) => t.dueDate && t.dueDate.getTime() < Date.now()).length;
 
   let score = 100;

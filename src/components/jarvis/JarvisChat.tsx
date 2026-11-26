@@ -305,6 +305,7 @@ export function JarvisChat({
   contextPrefix,
   quickReplies,
   autoFocus,
+  itemRef,
 }: {
   initialThreadId: string | null;
   initialItems: ChatItem[];
@@ -315,6 +316,8 @@ export function JarvisChat({
   // One-tap answers shown above the input (notification replies).
   quickReplies?: string[];
   autoFocus?: boolean;
+  // "task-<id>" | "signal-<id>": the item this chat is about (item pages).
+  itemRef?: string;
 }) {
   const [threadId, setThreadId] = useState(initialThreadId);
   const [items, setItems] = useState<ChatItem[]>(initialItems);
@@ -1101,6 +1104,7 @@ export function JarvisChat({
 ${text}` : text,
                   attachments,
                   voice: isVoice,
+                  ...(itemRef && !threadIdRef.current ? { item: itemRef } : {}),
                 },
           ),
           signal: controller.signal,

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getProject, listVentures, PRIORITIES } from "@/lib/jarvis/queries";
 import { ProjectForm } from "@/components/jarvis/ProjectForm";
+import { DelegationForm } from "@/components/jarvis/DelegationForm";
 import { ConfirmSubmit } from "@/components/dashboard/ConfirmSubmit";
 import { formatDate } from "@/lib/format";
 import {
@@ -49,7 +50,7 @@ export default async function ProjectDetailPage({
         <h2 className="text-lg font-semibold text-zinc-900">Tasks</h2>
         <ul className="mt-3 space-y-2">
           {project.tasks.length === 0 ? <li className="text-sm text-zinc-500">No tasks yet.</li> : null}
-          {project.tasks.map((t) => (
+          {project.tasks.filter((t) => t.status !== "archived").map((t) => (
             <li key={t.id} className="flex items-center justify-between gap-3 rounded-lg border border-zinc-100 px-3 py-2">
               <div className="flex items-center gap-3">
                 <form action={cycleTask}>
@@ -58,7 +59,7 @@ export default async function ProjectDetailPage({
                     {t.status}
                   </SubmitButton>
                 </form>
-                <span className={`text-sm ${t.status === "done" ? "text-zinc-400 line-through" : "text-zinc-800"}`}>{t.title}</span>
+                <Link href={`/jarvis/items/task-${t.id}`} className={`text-sm hover:text-indigo-700 ${t.status === "done" ? "text-zinc-400 line-through" : "text-zinc-800"}`}>{t.title}</Link>
               </div>
               <div className="flex items-center gap-3">
                 {t.dueDate ? <span className="text-xs text-zinc-400">{formatDate(t.dueDate)}</span> : null}
@@ -170,6 +171,20 @@ export default async function ProjectDetailPage({
             summary: project.summary,
           }}
           submitLabel="Save changes"
+        />
+      </section>
+
+      <section className="rounded-2xl border border-zinc-200 bg-white p-6">
+        <h2 className="text-lg font-semibold text-zinc-900">Who handles this first</h2>
+        <p className="mb-4 mt-1 text-sm text-zinc-500">
+          A co-host or assistant. What Jarvis notices for this project waits for them, closes itself when they answer, and reaches you only if it is still open.
+        </p>
+        <DelegationForm
+          projectId={project.id}
+          name={project.delegateName}
+          contact={project.delegateContact}
+          mins={project.escalateMins}
+          kinds={project.delegateKinds}
         />
       </section>
 

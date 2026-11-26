@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { linkThread } from "@/lib/jarvis/items";
 import Anthropic from "@anthropic-ai/sdk";
 import { verifySession } from "@/lib/dal";
 import { prisma } from "@/lib/prisma";
@@ -138,6 +139,9 @@ export async function POST(req: Request) {
     attachments?: Attachment[];
     voice?: boolean;
     resumeStateId?: string;
+    // "task-<id>" | "signal-<id>": this chat is about one item; a new thread
+    // is linked to it so the item page reopens the same conversation.
+    item?: string;
   };
   try {
     body = (await req.json()) as typeof body;
@@ -183,6 +187,7 @@ export async function POST(req: Request) {
           message.slice(0, 60) || attachments.map((a) => a.name).join(", ").slice(0, 60);
         const t = await prisma.jarvisThread.create({ data: { title } });
         threadId = t.id;
+        if (typeof body.item === "string" && body.item) await linkThread(body.item, t.id).catch(() => {});
       }
     } catch (e) {
       console.error("jarvis/chat: thread resolution failed", e);

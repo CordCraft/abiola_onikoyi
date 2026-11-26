@@ -87,3 +87,49 @@ export function tzOffsetMinutes(tz, d = new Date()) {
   if (!m) return 0;
   return (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3] || 0));
 }
+
+// ---- Task and signal hygiene helpers (pure, unit tested) ------------------------------------
+
+const STOPWORDS = new Set([
+  'the', 'and', 'for', 'with', 'from', 'that', 'this', 'into', 'onto', 'about', 'your', 'you', 'our', 'his', 'her',
+  'their', 'are', 'was', 'were', 'will', 'can', 'not', 'but', 'have', 'has', 'had', 'out', 'all', 'any', 'get', 'got',
+  'via', 'per', 're', 'fw', 'fwd', 'please', 'pls', 'asap', 'today', 'tomorrow', 'week', 'need', 'needs',
+]);
+
+// Lowercase, strip punctuation, drop stopwords and words under 3 characters.
+export function normWords(s) {
+  return new Set(
+    String(s || '')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length >= 3 && !STOPWORDS.has(w)),
+  );
+}
+
+// Word Jaccard similarity of two titles (0..1).
+export function jaccard(a, b) {
+  const A = a instanceof Set ? a : normWords(a);
+  const B = b instanceof Set ? b : normWords(b);
+  if (!A.size || !B.size) return 0;
+  let inter = 0;
+  for (const w of A) if (B.has(w)) inter += 1;
+  return inter / (A.size + B.size - inter);
+}
+
+const PRIORITY_RANK = { low: 0, medium: 1, high: 2, urgent: 3 };
+export function higherPriority(a, b) {
+  return (PRIORITY_RANK[b] ?? -1) > (PRIORITY_RANK[a] ?? -1) ? b : a || b;
+}
+
+// Signals fade: half their weight every 36 hours since they last changed.
+export const HALF_LIFE_HOURS = 36;
+export function effectiveScore(score, updatedAt, now = Date.now()) {
+  const hours = Math.max(0, (now - new Date(updatedAt).getTime()) / 3600e3);
+  return Number(score || 0) * Math.pow(0.5, hours / HALF_LIFE_HOURS);
+}
+// The same, as a SQL expression over a JarvisSignal row (optionally aliased).
+export function effectiveScoreSql(alias = '') {
+  const p = alias ? `${alias}.` : '';
+  return `(${p}score * power(0.5, GREATEST(0, EXTRACT(EPOCH FROM (now() - ${p}"updatedAt"))) / 3600.0 / ${HALF_LIFE_HOURS}))`;
+}

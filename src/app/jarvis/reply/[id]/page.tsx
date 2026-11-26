@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { verifySession } from "@/lib/dal";
 import { prisma } from "@/lib/prisma";
 import { ensureCompanionTables } from "@/lib/jarvis/companion-setup";
@@ -29,6 +29,9 @@ export default async function ReplyPage({ params }: { params: Promise<{ id: stri
   if (!n.openedAt) await prisma.jarvisNotification.update({ where: { id }, data: { openedAt: new Date() } }).catch(() => {});
 
   const ref = (n.ref ?? {}) as Record<string, string>;
+  // A notification about one task or signal opens that item's own page, so
+  // every reply about it lands in the same chat.
+  if (!n.threadId && (ref.signalId || ref.taskId)) redirect(`/jarvis/items/${ref.signalId ? `signal-${ref.signalId}` : `task-${ref.taskId}`}`);
   const kind = n.kind && QUICK[n.kind] ? n.kind : "other";
   const refBits = Object.entries(ref)
     .map(([k, v]) => `${k}: ${v}`)

@@ -39,7 +39,7 @@ async function getToday(): Promise<string> {
   endOfToday.setHours(23, 59, 59, 999);
   const [tasks, briefing, signals] = await Promise.all([
     prisma.jarvisTask.findMany({
-      where: { status: { not: "done" }, dueDate: { not: null, lte: endOfToday } },
+      where: { status: { in: ["todo", "doing"] }, dueDate: { not: null, lte: endOfToday } },
       orderBy: { dueDate: "asc" },
       take: 30,
     }),

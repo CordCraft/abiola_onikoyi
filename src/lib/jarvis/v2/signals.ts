@@ -43,7 +43,7 @@ export async function decideSignal(id: string, d: SignalDecision): Promise<strin
   if (!s) return "Signal not found.";
   switch (d.action) {
     case "approve": {
-      if (!["new", "pushed", "snoozed", "failed"].includes(s.status)) return `Already ${s.status}.`;
+      if (!["new", "pushed", "snoozed", "failed", "delegated"].includes(s.status)) return `Already ${s.status}.`;
       await prisma.jarvisSignal.update({ where: { id }, data: { status: "approved", decidedAt: new Date() } });
       await enqueueJob("apply_signal", { signalId: id, ...(d.text ? { text: d.text } : {}), mode: d.mode ?? "send" });
       return "On it.";

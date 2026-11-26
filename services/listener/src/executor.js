@@ -6,6 +6,7 @@ import { sendGmail, gmailDraft } from './gmail.js';
 import { sendOutlook, outlookDraft } from './outlook.js';
 import { sendPush, mayInterrupt } from './push.js';
 import { clip, tzOffsetMinutes } from './util.js';
+import { createTaskDeduped } from './hygiene.js';
 
 // Runs the jobs: applying an approved signal, undoing it, and direct requests from chat.
 // Nothing here sends a message unless a person approved it (push button, signal page or chat).
@@ -24,14 +25,10 @@ async function connById(id) {
   return null;
 }
 
-async function createTask({ title, dueDate, priority = 'medium', projectId = null }) {
-  const id = newId();
-  await q(
-    `INSERT INTO "JarvisTask" (id, "projectId", title, status, priority, "dueDate", "createdAt", "updatedAt")
-     VALUES ($1, $2, $3, 'todo', $4, $5, now(), now())`,
-    [id, projectId, clip(title, 200), priority, dueDate ? new Date(dueDate) : null],
-  );
-  return { taskId: id };
+// Every task the listener makes goes through the dedupe helper (an open near-duplicate is
+// updated instead of a new row being added).
+async function createTask({ title, dueDate, priority = 'medium', projectId = null, sameAsTaskId = '', threadId = null }) {
+  return createTaskDeduped({ title, dueDate, priority, projectId, sameAsTaskId, threadId });
 }
 
 async function sendReply(p, mode = 'send') {
@@ -120,7 +117,8 @@ async function undoSignal({ signalId }) {
   const r = s.result || {};
   if (r.event?.eventId) await deleteEvent(r.event);
   for (const ev of r.events || []) if (ev?.eventId) await deleteEvent(ev).catch(() => {});
-  if (r.taskId) await q(`DELETE FROM "JarvisTask" WHERE id = $1`, [r.taskId]);
+  // A merged task existed before this signal, so undo leaves it alone.
+  if (r.taskId && !r.merged) await q(`DELETE FROM "JarvisTask" WHERE id = $1`, [r.taskId]);
   if (r.sent) throw new Error('a sent message cannot be unsent');
   await q(`UPDATE "JarvisSignal" SET status = 'undone', "updatedAt" = now() WHERE id = $1`, [s.id]);
   return { undone: true };
@@ -133,6 +131,12 @@ const HANDLERS = {
   delete_event: (p) => deleteEvent(p),
   create_task: (p) => createTask(p),
   send_message: (p) => sendReply(p, p.mode || 'send'),
+  // A note from Jarvis into the owner's own WhatsApp chat ("Message yourself"); not capped.
+  send_whatsapp_self: async (p) => {
+    if (!p.text) throw new Error('nothing to send');
+    if (!wa) throw new Error('WhatsApp is not running');
+    return wa.sendSelf(p.text);
+  },
   whatsapp_logout: async () => {
     await wa?.logout();
     return { ok: true };

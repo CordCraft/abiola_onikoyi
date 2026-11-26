@@ -15,6 +15,7 @@ import { storeInbound } from './accounts.js';
 import { q, one, newId, setSetting, getSetting } from './db.js';
 import { sleep, jitter, clip, dateKeyIn } from './util.js';
 import { transcribe } from './voice.js';
+import { postToSiteWa } from './site.js';
 
 const digits = (s) => String(s || '').split('@')[0].split(':')[0].replace(/\D/g, '');
 
@@ -47,6 +48,21 @@ export class WhatsApp {
     this.names = new Map(); // jid -> push name
     this.voiceQueue = Promise.resolve();
     this.restarting = false;
+    this.sentIds = new Set(); // ids of messages this listener sent, newest 200
+  }
+
+  rememberSent(id) {
+    if (!id) return;
+    this.sentIds.add(id);
+    while (this.sentIds.size > 200) this.sentIds.delete(this.sentIds.values().next().value);
+  }
+
+  // The owner's own chat ("Message yourself"): remoteJid is his own number or his own LID.
+  isSelfChat(m, jid) {
+    if (!this.account || jid.endsWith('@g.us')) return false;
+    const d = digits(jid);
+    if (d === this.account || digits(m.key?.remoteJidAlt) === this.account) return true;
+    return !!this.lid && d === this.lid;
   }
 
   async publishStatus(extra = {}) {
@@ -100,6 +116,7 @@ export class WhatsApp {
         this.state = 'open';
         this.pairingCode = null;
         this.account = digits(sock.user?.id);
+        this.lid = digits(sock.user?.lid || sock.authState.creds.me?.lid) || null;
         console.log(`[whatsapp] connected as ${this.account}`);
         await this.publishStatus();
       }
@@ -159,6 +176,8 @@ export class WhatsApp {
     if (!msg || msg.protocolMessage || msg.reactionMessage || msg.senderKeyDistributionMessage && Object.keys(msg).length === 1) return;
     const isGroup = jid.endsWith('@g.us');
     const fromMe = !!m.key.fromMe;
+    const selfChat = this.isSelfChat(m, jid);
+    if (selfChat && this.sentIds.has(m.key.id)) return; // Jarvis's own note echoing back
     const senderJid = isGroup ? m.key.participantPn || m.key.participant || '' : m.key.remoteJidAlt || jid;
     const sender = fromMe ? this.account : digits(senderJid) || digits(jid);
     if (m.pushName && !fromMe) this.names.set(senderJid || jid, m.pushName);
@@ -178,6 +197,13 @@ export class WhatsApp {
       return;
     }
     if (!body) return;
+
+    // The self-chat is Jarvis's inbox: commands go to the site, never into triage.
+    if (selfChat) {
+      if (/^\s*jarvis:/i.test(body)) return;
+      postToSiteWa({ text: body, messageId: m.key.id, at: occurredAt.toISOString() });
+      return;
+    }
 
     await storeInbound({
       source: 'whatsapp',
@@ -228,7 +254,17 @@ export class WhatsApp {
     await sleep(Math.min(9000, 1500 + clip(text, 600).length * 45) * (0.8 + Math.random() * 0.4));
     await this.sock.sendPresenceUpdate('paused', jid).catch(() => {});
     const res = await this.sock.sendMessage(jid, { text });
+    this.rememberSent(res?.key?.id);
     await setSetting('whatsapp_sends', { day, count: sentToday + 1 });
+    return { id: res?.key?.id || null };
+  }
+
+  // A note from Jarvis into the owner's own chat. Prefixed "Jarvis:" so it is never read back
+  // as a command; not counted against the daily cap (it only ever reaches the owner).
+  async sendSelf(text) {
+    if (this.state !== 'open' || !this.sock || !this.account) throw new Error('WhatsApp is not connected');
+    const res = await this.sock.sendMessage(`${this.account}@s.whatsapp.net`, { text: `Jarvis: ${text}` });
+    this.rememberSent(res?.key?.id);
     return { id: res?.key?.id || null };
   }
 

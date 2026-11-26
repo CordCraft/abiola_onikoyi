@@ -97,6 +97,13 @@ model JarvisProject {
   notes          JarvisNote[]
   decisions      JarvisDecision[]
   documents      JarvisDocument[]
+  // Who handles this project's guest replies and follow-ups (for example a
+  // co-host). Matching signals wait for them and only reach the owner if
+  // still open after escalateMins.
+  delegateName    String?
+  delegateContact String?
+  escalateMins    Int?
+  delegateKinds   String? // comma list, default "reply,followup"
 
   @@index([status, lastActivityAt])
 }
@@ -106,12 +113,18 @@ model JarvisTask {
   project     JarvisProject? @relation(fields: [projectId], references: [id], onDelete: Cascade)
   projectId   String?
   title       String
-  status      String         @default("todo") // todo | doing | done
+  status      String         @default("todo") // todo | doing | done | archived
   priority    String         @default("medium")
   dueDate     DateTime?
   completedAt DateTime?
   // "daily" | "weekly" | "monthly": completing the task spawns the next occurrence
   recurrence  String?
+  // The chat about this task (opened from the task page).
+  threadId     String?
+  source       String? // chat | listener | app | manual
+  note         String? // the owner's plan for it, in his words
+  closedReason String?
+  mergedInto   String?
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 
@@ -722,8 +735,11 @@ model JarvisSignal {
   personKey   String?
   action      Json? // { type, payload } the one-tap action
   autonomy    String    @default("ask") // auto | ask
-  status      String    @default("new") // new | pushed | approved | applied | dismissed | snoozed | failed | undone
+  status      String    @default("new") // new | pushed | approved | applied | dismissed | snoozed | failed | undone | resolved | expired | delegated
   result      Json?
+  threadId    String? // the chat about this signal
+  delegatedTo String?
+  escalateAt  DateTime?
   dueAt       DateTime?
   snoozeUntil DateTime?
   pushedAt    DateTime?

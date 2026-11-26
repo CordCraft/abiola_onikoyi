@@ -3,6 +3,7 @@ import Link from "next/link";
 import { verifySession } from "@/lib/dal";
 import { logout } from "./actions";
 import { PhoneUseBeacon } from "@/components/jarvis/PhoneUseBeacon";
+import { ensureV2Tables } from "@/lib/jarvis/v2/setup";
 
 export const metadata: Metadata = {
   title: "Jarvis",
@@ -14,6 +15,8 @@ export const metadata: Metadata = {
   },
 };
 
+// Five everyday places, the same on desktop and phone. Everything else
+// (goals, health, memory, songs, computers, connect, settings) is under More.
 const NAV = [
   {
     href: "/jarvis",
@@ -21,6 +24,15 @@ const NAV = [
     icon: (
       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
+      </svg>
+    ),
+  },
+  {
+    href: "/jarvis/items",
+    label: "List",
+    icon: (
+      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M8.25 6.75h12M8.25 12h3m-3 5.25h12M3.75 6.75h.007v.008H3.75V6.75zm0 10.5h.007v.008H3.75v-.008z" />
       </svg>
     ),
   },
@@ -35,7 +47,7 @@ const NAV = [
   },
   {
     href: "/jarvis/ventures",
-    label: "Ventures",
+    label: "Projects",
     icon: (
       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m-.75 4.5H21m-3.75 3.75h.008v.008h-.008v-.008zm0 3h.008v.008h-.008v-.008zm0 3h.008v.008h-.008v-.008z" />
@@ -43,55 +55,11 @@ const NAV = [
     ),
   },
   {
-    href: "/jarvis/goals",
-    label: "Goals",
+    href: "/jarvis/more",
+    label: "More",
     icon: (
       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-      </svg>
-    ),
-  },
-  {
-    href: "/jarvis/health",
-    label: "Health",
-    icon: (
-      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" />
-      </svg>
-    ),
-  },
-  {
-    href: "/jarvis/memory",
-    label: "Memory",
-    icon: (
-      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23-.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5" />
-      </svg>
-    ),
-  },
-];
-
-// Phone bottom bar: the everyday surfaces.
-const MOBILE_NAV = [
-  NAV[0],
-  NAV[1],
-  {
-    href: "/jarvis/signals",
-    label: "Noticed",
-    icon: (
-      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
-      </svg>
-    ),
-  },
-  // Health replaces Computers on the phone bar (Computers is under Settings).
-  NAV.find((n) => n.href === "/jarvis/health")!,
-  {
-    href: "/jarvis/settings",
-    label: "Settings",
-    icon: (
-      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM12.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM18.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0z" />
       </svg>
     ),
   },
@@ -103,6 +71,8 @@ export default async function JarvisLayout({
   children: React.ReactNode;
 }) {
   const { user } = await verifySession();
+  // New columns (item chats, delegation) must exist before any page queries.
+  await ensureV2Tables().catch(() => {});
 
   return (
     <div className="relative min-h-screen bg-[#f6f6f9] text-zinc-900">
@@ -125,7 +95,7 @@ export default async function JarvisLayout({
               <span className="text-[15px] font-semibold tracking-tight text-zinc-900">Jarvis</span>
             </Link>
             <nav className="hidden items-center gap-1 text-sm font-medium md:flex">
-              {[...NAV, { href: "/jarvis/signals", label: "Noticed" }, { href: "/jarvis/songs", label: "Songs" }, { href: "/jarvis/machines", label: "Computers" }, { href: "/jarvis/connect", label: "Connect" }, { href: "/jarvis/activity", label: "Activity" }, { href: "/jarvis/settings", label: "Settings" }].map((item) => (
+              {NAV.map((item) => (
                 <Link
                   key={item.href}
                   href={item.href}
@@ -162,7 +132,7 @@ export default async function JarvisLayout({
       {/* Mobile bottom navigation */}
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-200/70 bg-white/85 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden">
         <div className="grid grid-cols-5">
-          {MOBILE_NAV.map((item) => (
+          {NAV.map((item) => (
             <Link
               key={item.href}
               href={item.href}

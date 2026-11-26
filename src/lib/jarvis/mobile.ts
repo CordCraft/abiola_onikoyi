@@ -57,7 +57,7 @@ export async function buildToday(limit = 25): Promise<TodayPayload> {
 
   const [open, doneRecent, signals] = await Promise.all([
     prisma.jarvisTask.findMany({
-      where: { status: { not: "done" } },
+      where: { status: { in: ["todo", "doing"] } },
       include: { project: { select: { name: true } } },
       orderBy: [{ dueDate: "asc" }, { createdAt: "asc" }],
       take: 300,

@@ -3,7 +3,8 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { config, missing } from './config.js';
-import { ensureTables, q, getSetting } from './db.js';
+import { ensureTables, ensureColumns, q, getSetting } from './db.js';
+import { expirySweep } from './hygiene.js';
 import { every } from './util.js';
 import { WhatsApp } from './whatsapp.js';
 import { pollGmail } from './gmail.js';
@@ -37,6 +38,14 @@ async function main() {
     console.error('table setup failed', e.message);
     note(e);
   });
+  // Columns for task dedupe, auto-close and co-host delegation. Never fatal: if this login may
+  // not ALTER, the site's lazy DDL adds them and the hourly sweep checks again.
+  try {
+    await ensureColumns();
+  } catch (e) {
+    console.error('column setup failed', e.message);
+    note(e);
+  }
 
   const wa = new WhatsApp();
   attachWhatsApp(wa);
@@ -73,6 +82,8 @@ async function main() {
 
   every('held-pushes', 10 * 60_000, flushHeld, { initialDelayMs: 60_000 });
   every('planner', 60_000, plannerTick, { initialDelayMs: 20_000 });
+  // Hourly: expire signals nobody acted on, archive stale listener tasks.
+  every('expiry', 60 * 60_000, expirySweep, { initialDelayMs: 90_000 });
 
   http
     .createServer(async (req, res) => {

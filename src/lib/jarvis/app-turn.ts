@@ -2,6 +2,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { encryptSession } from "@/lib/jwt";
 import { sendPushToAll } from "@/lib/jarvis/push";
+import { rememberWaThread, sendWhatsAppSelf } from "@/lib/jarvis/wa-inbox";
 
 // Runs a Jarvis chat turn on the owner's behalf for a reply typed into a
 // notification banner, then sends Jarvis's answer back as a notification
@@ -18,6 +19,8 @@ export type TurnStep = {
   resumeStateId?: string;
   replyTo?: string | null; // notification id being answered
   hop?: number;
+  item?: string; // "task-<id>" | "signal-<id>": link a new thread to this item
+  via?: "push" | "whatsapp"; // where Jarvis's answer goes (default push)
 };
 
 const MAX_HOPS = 6;
@@ -65,7 +68,7 @@ export async function runTurnStep(step: TurnStep, base: string): Promise<void> {
     const res = await fetch(`${base}/jarvis/api/chat`, {
       method: "POST",
       headers: { "content-type": "application/json", cookie: `session=${token}` },
-      body: JSON.stringify(step.resumeStateId ? { threadId, resumeStateId: step.resumeStateId } : { threadId, message: step.message, attachments: [], voice: false }),
+      body: JSON.stringify(step.resumeStateId ? { threadId, resumeStateId: step.resumeStateId } : { threadId, message: step.message, attachments: [], voice: false, ...(step.item ? { item: step.item } : {}) }),
     });
     if (!res.ok || !res.body) {
       error = `chat answered HTTP ${res.status}`;
@@ -103,7 +106,7 @@ export async function runTurnStep(step: TurnStep, base: string): Promise<void> {
   }
 
   if (resume && hop < MAX_HOPS) {
-    const ok = await startTurnStep({ threadId, resumeStateId: resume, replyTo: step.replyTo, hop: hop + 1 }, base);
+    const ok = await startTurnStep({ threadId, resumeStateId: resume, replyTo: step.replyTo, hop: hop + 1, via: step.via }, base);
     if (ok) return;
     error = "could not continue the reply";
   }
@@ -114,6 +117,12 @@ export async function runTurnStep(step: TurnStep, base: string): Promise<void> {
     await prisma.jarvisNotification.update({ where: { id: step.replyTo }, data: { threadId: threadId ?? undefined } }).catch(() => {});
   }
   if (!answer && !error) return;
+
+  if (step.via === "whatsapp") {
+    if (threadId) await rememberWaThread(threadId);
+    await sendWhatsAppSelf(error ? `I could not finish that (${error}). Try again in a minute.` : plain(answer, 3500));
+    return;
+  }
 
   await sendPushToAll({
     title: error ? "Jarvis could not finish that" : "Jarvis",
@@ -126,12 +135,12 @@ export async function runTurnStep(step: TurnStep, base: string): Promise<void> {
 }
 
 // Notification banners show plain text: drop markdown and citation markup.
-function plain(s: string): string {
+function plain(s: string, max = 900): string {
   return s
     .replace(/\[\[doc:[^|\]]+\|([^\]]+)\]\]/g, "$1")
     .replace(/\*\*([^*]+)\*\*/g, "$1")
     .replace(/^#+\s*/gm, "")
     .replace(/^\s*[-*]\s+/gm, "- ")
     .replace(/\n{3,}/g, "\n\n")
-    .slice(0, 900);
+    .slice(0, max);
 }

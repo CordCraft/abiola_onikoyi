@@ -16,7 +16,7 @@ export async function buildContext(): Promise<string> {
       include: { venture: { select: { name: true } } },
     }),
     prisma.jarvisTask.findMany({
-      where: { status: { not: "done" } },
+      where: { status: { in: ["todo", "doing"] } },
       orderBy: { dueDate: "asc" },
       take: 40,
       include: { project: { select: { name: true } } },

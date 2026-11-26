@@ -53,3 +53,43 @@ export async function setSetting(key, value) {
     [key, v],
   );
 }
+
+// Columns added after launch (the site adds the same ones lazily in src/lib/jarvis/v2/setup.ts).
+// The listener's own login may not own the tables, so ALTER can be refused; then we wait for the
+// site's DDL and only use the new columns once they really exist (schema.ready).
+const COLUMN_DDL = [
+  `ALTER TABLE "JarvisTask" ADD COLUMN IF NOT EXISTS "threadId" TEXT, ADD COLUMN IF NOT EXISTS "source" TEXT, ADD COLUMN IF NOT EXISTS "note" TEXT, ADD COLUMN IF NOT EXISTS "closedReason" TEXT, ADD COLUMN IF NOT EXISTS "mergedInto" TEXT`,
+  `ALTER TABLE "JarvisSignal" ADD COLUMN IF NOT EXISTS "threadId" TEXT, ADD COLUMN IF NOT EXISTS "delegatedTo" TEXT, ADD COLUMN IF NOT EXISTS "escalateAt" TIMESTAMP(3)`,
+  `ALTER TABLE "JarvisProject" ADD COLUMN IF NOT EXISTS "delegateName" TEXT, ADD COLUMN IF NOT EXISTS "delegateContact" TEXT, ADD COLUMN IF NOT EXISTS "escalateMins" INTEGER, ADD COLUMN IF NOT EXISTS "delegateKinds" TEXT`,
+];
+const NEEDED = {
+  JarvisTask: ['threadId', 'source', 'note', 'closedReason', 'mergedInto'],
+  JarvisSignal: ['threadId', 'delegatedTo', 'escalateAt'],
+  JarvisProject: ['delegateName', 'delegateContact', 'escalateMins', 'delegateKinds'],
+};
+export const schema = { ready: false, checkedAt: null };
+
+export async function ensureColumns() {
+  if (schema.ready) return true;
+  for (const stmt of COLUMN_DDL) {
+    try {
+      await pool.query(stmt);
+    } catch (e) {
+      console.error('[db] add columns failed (the site DDL will add them):', e.code || '', e.message);
+    }
+  }
+  try {
+    const rows = await q(
+      `SELECT table_name, column_name FROM information_schema.columns WHERE table_name = ANY($1)`,
+      [Object.keys(NEEDED)],
+    );
+    const have = new Set(rows.map((r) => `${r.table_name}.${r.column_name}`));
+    schema.ready = Object.entries(NEEDED).every(([t, cols]) => cols.every((c) => have.has(`${t}.${c}`)));
+  } catch (e) {
+    console.error('[db] column check failed:', e.message);
+    schema.ready = false;
+  }
+  schema.checkedAt = new Date().toISOString();
+  if (!schema.ready) console.error('[db] hygiene columns missing; delegation, task source and archive wait for them');
+  return schema.ready;
+}

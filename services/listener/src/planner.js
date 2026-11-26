@@ -3,7 +3,9 @@ import { q, newId, getSetting, setSetting } from './db.js';
 import { structured } from './llm.js';
 import { sendPush } from './push.js';
 import { rhythm, goalsAndProjects, upcoming, fmtEvents, OWNER_BRIEF } from './context.js';
-import { minutesIn, dateKeyIn, weekdayIn, parseHm, hm, clip, tzOffsetMinutes } from './util.js';
+import { minutesIn, dateKeyIn, weekdayIn, parseHm, hm, clip, tzOffsetMinutes, effectiveScoreSql } from './util.js';
+import { escalateDelegated } from './hygiene.js';
+import { postToSiteWa } from './site.js';
 
 // The day's rhythm: a morning plan, an evening close-out, nightly learning of the owner's
 // real hours from when he actually sends messages, and housekeeping.
@@ -64,9 +66,10 @@ export async function morningPlan({ force = false } = {}) {
   const endOfDay = new Date(startOfDay.getTime() + 864e5);
   const [events, signals, tasks, { goals, projects }] = await Promise.all([
     upcoming(1).then((evs) => evs.filter((e) => new Date(e.start) < endOfDay && new Date(e.end || e.start) >= startOfDay)),
-    q(`SELECT id, kind, title, detail, score, "dueAt" FROM "JarvisSignal" WHERE status IN ('new','pushed','snoozed') AND kind <> 'plan' ORDER BY score DESC LIMIT 15`),
+    // Ranked by effective score: older signals fade (half weight every 36 hours untouched).
+    q(`SELECT id, kind, title, detail, round(${effectiveScoreSql()})::int AS score, "dueAt" FROM "JarvisSignal" WHERE status IN ('new','pushed','snoozed') AND kind <> 'plan' ORDER BY ${effectiveScoreSql()} DESC LIMIT 15`),
     q(`SELECT t.id, t.title, t.priority, t."dueDate", p.name AS project FROM "JarvisTask" t LEFT JOIN "JarvisProject" p ON p.id = t."projectId"
-       WHERE t.status <> 'done' AND (t."dueDate" <= $1 OR t.priority = 'high') ORDER BY t."dueDate" NULLS LAST LIMIT 20`, [new Date(endOfDay.getTime() + 864e5)]),
+       WHERE t.status IN ('todo','doing') AND (t."dueDate" <= $1 OR t.priority = 'high') ORDER BY t."dueDate" NULLS LAST LIMIT 20`, [new Date(endOfDay.getTime() + 864e5)]),
     goalsAndProjects(),
   ]);
 
@@ -122,7 +125,7 @@ export async function eveningCloseout() {
   const r = await rhythm();
   const [done, open] = await Promise.all([
     q(`SELECT count(*)::int AS n FROM "JarvisTask" WHERE status = 'done' AND "completedAt" > now() - interval '14 hours'`),
-    q(`SELECT title FROM "JarvisSignal" WHERE status IN ('new','pushed') AND kind <> 'plan' AND kind <> 'fyi' ORDER BY score DESC LIMIT 3`),
+    q(`SELECT title FROM "JarvisSignal" WHERE status IN ('new','pushed') AND kind <> 'plan' AND kind <> 'fyi' ORDER BY ${effectiveScoreSql()} DESC LIMIT 3`),
   ]);
   const carry = open.map((s) => s.title).join('; ');
   await sendPush({
@@ -166,7 +169,15 @@ export async function plannerTick() {
   const day = dateKeyIn(r.tz);
   const weekday = weekdayIn(r.tz);
   const wake = parseHm(r.quietEnd, 6 * 60 + 30) + 20;
-  if (now >= wake && now < wake + 180) await once(`plan:${day}`, () => morningPlan());
+  // Co-host signals nobody handled in time come back to the owner.
+  await escalateDelegated().catch((e) => console.error('[planner] escalate', e.message));
+  if (now >= wake && now < wake + 180) {
+    await once(`plan:${day}`, async () => {
+      await morningPlan();
+      // The site then sends the numbered list to the owner's WhatsApp self-chat.
+      postToSiteWa({ command: 'list', reason: 'morning' });
+    });
+  }
   const workEnd = parseHm(r.workEnd, 18 * 60);
   if (r.workdays.includes(weekday) && now >= workEnd && now < workEnd + 60) await once(`stop:${day}`, () => eveningCloseout());
   if (now >= 3 * 60 && now < 4 * 60) {

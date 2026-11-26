@@ -13,7 +13,7 @@ export async function GET(req: Request) {
   if (!(await getSession())) return unauthorized();
   const q = (new URL(req.url).searchParams.get("q") ?? "").trim();
   const tasks = await prisma.jarvisTask.findMany({
-    where: { status: { not: "done" }, ...(q ? { title: { contains: q, mode: "insensitive" } } : {}) },
+    where: { status: { in: ["todo", "doing"] }, ...(q ? { title: { contains: q, mode: "insensitive" } } : {}) },
     orderBy: [{ dueDate: "asc" }, { createdAt: "desc" }],
     take: 30,
     select: { id: true, title: true, priority: true, status: true, dueDate: true },

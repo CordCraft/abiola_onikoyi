@@ -1,10 +1,9 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
-import { openSignals } from "@/lib/jarvis/v2/signals";
+import { needsYou } from "@/lib/jarvis/items";
 import { listAllEvents } from "@/lib/jarvis/v2/calendar";
-import { toView } from "@/lib/jarvis/v2/view";
 import { ensureV2Tables } from "@/lib/jarvis/v2/setup";
-import { SignalCard } from "@/components/jarvis/SignalCard";
+import { ItemRow } from "@/components/jarvis/ItemRow";
 import { JarvisOrb } from "@/components/jarvis/Orb";
 import { PushToggle } from "@/components/jarvis/PushToggle";
 
@@ -41,11 +40,13 @@ export async function TodayPanel() {
   await ensureV2Tables();
   const { now, from, endOfDay, planSince, nowHm } = clock();
 
-  const [needs, plan, cal] = await Promise.all([
-    openSignals(30).then((all) => all.filter((s) => s.kind !== "plan").slice(0, 6)),
+  const [all, plan, cal] = await Promise.all([
+    needsYou(200),
     prisma.jarvisSignal.findFirst({ where: { kind: "plan", createdAt: { gte: planSince } }, orderBy: { createdAt: "desc" } }),
     listAllEvents(from, endOfDay).catch(() => ({ events: [], connected: 0, errors: [] as string[] })),
   ]);
+  // The short list: at most 7, best first. The rest is one tap away.
+  const needs = all.slice(0, 7);
   const planPayload = (plan?.action as { payload?: { plan?: { summary?: string; top_moves?: { title: string; why: string }[]; stop_at?: string; blocks?: { start: string; end: string; title: string; kind: string }[] } } } | null)?.payload?.plan;
   const nextEvent = cal.events.find((e) => !e.allDay && new Date(e.end || e.start).getTime() > now);
   const currentBlock = planPayload?.blocks?.find((b) => b.start <= nowHm && b.end > nowHm);
@@ -60,7 +61,7 @@ export async function TodayPanel() {
           <div className="min-w-0 flex-1 text-center md:text-left">
             <p className="text-xs font-medium uppercase tracking-[0.16em] text-sky-300/80">{greeting()}, Abiola</p>
             <h1 className="mt-1.5 text-2xl font-semibold tracking-tight md:text-3xl">
-              {currentBlock ? `Now: ${currentBlock.title}` : nextEvent ? `Next: ${nextEvent.title} at ${time(nextEvent.start)}` : needs.length ? `${needs.length} thing${needs.length === 1 ? "" : "s"} need you` : "All clear. I am listening."}
+              {currentBlock ? `Now: ${currentBlock.title}` : nextEvent ? `Next: ${nextEvent.title} at ${time(nextEvent.start)}` : all.length ? `${all.length} thing${all.length === 1 ? "" : "s"} need you` : "All clear. I am listening."}
             </h1>
             {planPayload?.summary && <p className="mt-2 text-sm text-sky-100/80">{planPayload.summary}</p>}
             <div className="mt-4 flex flex-wrap justify-center gap-2 md:justify-start">
@@ -94,9 +95,9 @@ export async function TodayPanel() {
       <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
         <div className="space-y-3">
           <div className="flex items-baseline justify-between">
-            <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-500">Needs you</h2>
-            <Link href="/jarvis/signals" className="text-xs text-zinc-500 hover:text-zinc-900">
-              Everything Jarvis noticed
+            <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-500">Needs you{all.length ? ` (${all.length})` : ""}</h2>
+            <Link href="/jarvis/items" className="text-xs text-zinc-500 hover:text-zinc-900">
+              {all.length > needs.length ? `See all ${all.length} and tidy up` : "Your list"}
             </Link>
           </div>
           {needs.length === 0 ? (
@@ -104,10 +105,14 @@ export async function TodayPanel() {
               Nothing waiting on you. {cal.connected === 0 && <Link href="/jarvis/connect" className="font-medium text-indigo-600">Connect WhatsApp and your mailboxes</Link>}
             </p>
           ) : (
-            needs.map((s) => <SignalCard key={s.id} s={toView(s)} compact />)
+            <ul className="divide-y divide-zinc-100 overflow-hidden rounded-2xl border border-white/60 bg-white/85 shadow-sm">
+              {needs.map((i, n) => (
+                <ItemRow key={i.ref} item={i} n={n + 1} />
+              ))}
+            </ul>
           )}
           {plan && (
-            <Link href={`/jarvis/signals/${plan.id}`} className="block text-sm font-medium text-indigo-600">
+            <Link href={`/jarvis/items/signal-${plan.id}`} className="block text-sm font-medium text-indigo-600">
               See today&apos;s full plan
             </Link>
           )}

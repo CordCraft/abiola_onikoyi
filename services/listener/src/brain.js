@@ -1,11 +1,12 @@
 import { config } from './config.js';
-import { q, one, newId } from './db.js';
+import { q, one, newId, schema } from './db.js';
 import { structured } from './llm.js';
 import { goalsAndProjects, people, openSignals, upcoming, fmtEvents, rhythm, OWNER_BRIEF } from './context.js';
 import { clip } from './util.js';
 import { pushSignal } from './push.js';
 import { enqueue } from './jobs.js';
 import { prefilterReason, mustKeep, isUrgent, shouldTriageNow, makeLimiter } from './gate.js';
+import { resolveFromReplies, applyResolved, openTasks, delegateProjects, delegateKindsOf, delegationFor } from './hygiene.js';
 
 // The triage brain: reads new messages in small batches, finds what matters, and turns it
 // into signals with one-tap actions. The model proposes; this code decides what may run
@@ -16,8 +17,21 @@ const BATCH = 30;
 const SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['items'],
+  required: ['items', 'resolved'],
   properties: {
+    resolved: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'kind', 'reason'],
+        properties: {
+          id: { type: 'string' },
+          kind: { type: 'string', enum: ['signal', 'task'] },
+          reason: { type: 'string' },
+        },
+      },
+    },
     items: {
       type: 'array',
       items: {
@@ -62,11 +76,12 @@ const SCHEMA = {
           task: {
             type: 'object',
             additionalProperties: false,
-            required: ['title', 'due_date', 'priority'],
+            required: ['title', 'due_date', 'priority', 'same_as_task_id'],
             properties: {
               title: { type: 'string' },
               due_date: { type: 'string' },
               priority: { type: 'string', enum: ['low', 'medium', 'high'] },
+              same_as_task_id: { type: 'string' },
             },
           },
           reply: {
@@ -85,7 +100,7 @@ const RULES = `You are Jarvis, the owner's silent chief of staff. You read every
 
 Item kinds:
 - event: a meeting, call, appointment, flight, deadline-with-a-time, school or family event with a specific date (and usually time). Fill "calendar" (ISO 8601 with the owner's UTC offset for start and end; default 60 minutes if no end; all_day true with YYYY-MM-DD dates when there is no time). purpose "work" for business, "personal" for family, health, friends, church, personal admin. confirmed true only if the date and time are agreed (not merely proposed or asked).
-- task: something the owner must do (including promises HE made in his own messages, such as "I will send it tomorrow"). Fill "task" (due_date YYYY-MM-DD or "").
+- task: something the owner must do (including promises HE made in his own messages, such as "I will send it tomorrow"). Fill "task" (due_date YYYY-MM-DD or ""). task.same_as_task_id: if it is the same piece of work as an open task listed below, that task's id (it is then updated, not duplicated), else "".
 - reply: someone is waiting on an answer from him and the thread has gone unanswered. Draft a short reply in "reply.text" in his voice: warm, direct, brief, no em dashes, same language as the thread, no promises he did not make.
 - opportunity: money, a deal, a partner, an intro, a tender, a client lead, a chance to move a venture or the USD 1M goal forward.
 - followup: something he is waiting on from someone else that is going stale, or a person worth reconnecting with.
@@ -97,6 +112,8 @@ project_id: the id of the matching project from the list, or "". same_as_signal_
 person: the main other person (key = phone digits or lowercase email, from the message sender), relation guess, org if known; empty strings if none.
 due_at: ISO time it matters by, or "".
 inbound_ids: the message ids this item comes from. Group several messages about one thing into one item.
+Co-hosts: some projects have a co-host who handles guest and partner replies (listed under "Co-hosts"). Still return items for those projects as usual; the code routes them to the co-host first.
+resolved: list an open signal (kind "signal") or open task (kind "task") from the lists below ONLY when these new messages clearly show it is already done or no longer needed: the owner or a co-host already replied, the document was sent, the payment was made, the meeting happened or was cancelled, the guest checked out. reason: one short sentence saying what shows it is done (for example "You sent Taslim the PEL doc on WhatsApp"). Never guess; when unsure leave it out. Use [] when nothing is resolved.
 Fill unused sub-objects with empty strings and false. Never invent facts that are not in the messages. Never use em dashes.`;
 
 // Which mailbox an email arrived in (outlook:<mailbox>:<id>, gmail:<mailbox>:<id>).
@@ -218,13 +235,14 @@ async function gatePhase() {
 let snapshotMemo = { at: 0, text: '', tz: '' };
 async function stableSnapshot(r) {
   if (snapshotMemo.text && Date.now() - snapshotMemo.at < 10 * 60e3 && snapshotMemo.tz === r.tz) return snapshotMemo.text;
-  const [{ goals, projects, ventures }, known, events] = await Promise.all([goalsAndProjects(), people(), upcoming(10)]);
+  const [{ goals, projects, ventures }, known, events, delegates] = await Promise.all([goalsAndProjects(), people(), upcoming(10), delegateProjects()]);
   const text = [
     `Goals:\n${goals.map((g) => `- ${g.title}${g.horizon ? ` (${g.horizon})` : ''}`).join('\n') || '(none)'}`,
     `Ventures: ${ventures.map((v) => v.name).join(', ') || '(none)'}`,
     `Projects (id | name | status | priority):\n${projects.map((p) => `- ${p.id} | ${p.name}${p.venture ? ` [${p.venture}]` : ''} | ${p.status} | ${p.priority}`).join('\n') || '(none)'}`,
     `Known people:\n${known.map((p) => `- ${p.key} ${p.name || ''} ${p.relation ? `(${p.relation})` : ''} ${p.org || ''}`.trim()).join('\n') || '(none yet)'}`,
     `Calendar next 10 days:\n${fmtEvents(events, r.tz)}`,
+    `Co-hosts (project id | project | co-host | handles):\n${delegates.map((d) => `- ${d.id} | ${d.name} | ${d.delegateName} | ${delegateKindsOf(d).join(', ')}`).join('\n') || '(none)'}`,
   ].join('\n\n');
   snapshotMemo = { at: Date.now(), text, tz: r.tz };
   return text;
@@ -255,7 +273,7 @@ async function triagePhase() {
   const fresh = ready;
   const r = await rhythm();
   const ctx = { tz: r.tz };
-  const [snapshot, open, history] = await Promise.all([stableSnapshot(r), openSignals(), threadContext(fresh)]);
+  const [snapshot, open, history, tasks] = await Promise.all([stableSnapshot(r), openSignals(), threadContext(fresh), openTasks(40)]);
   const nowLocal = new Date().toLocaleString('en-GB', { timeZone: r.tz, dateStyle: 'full', timeStyle: 'short' });
 
   // Stable first (instructions, then the owner's world with the cache breakpoint); everything
@@ -264,7 +282,7 @@ async function triagePhase() {
     { type: 'text', text: `${OWNER_BRIEF}\n\n${RULES}` },
     { type: 'text', text: snapshot, cache_control: { type: 'ephemeral' } },
   ];
-  const user = `Now: ${nowLocal} (${r.tz}).\n\nOpen signals (id | kind | title):\n${open.map((s) => `- ${s.id} | ${s.kind} | ${s.title}`).join('\n') || '(none)'}\n\n${history ? `Earlier messages in these threads, for context only:\n${history}\n\n` : ''}New messages to triage:\n\n${fresh.map((m) => fmtMessage(m, ctx)).join('\n\n')}`;
+  const user = `Now: ${nowLocal} (${r.tz}).\n\nOpen signals (id | kind | status | title):\n${open.map((s) => `- ${s.id} | ${s.kind} | ${s.status} | ${s.title}`).join('\n') || '(none)'}\n\nOpen tasks (id | title | due):\n${tasks.map((t) => `- ${t.id} | ${t.title} | ${t.dueDate ? new Date(t.dueDate).toISOString().slice(0, 10) : ''}`).join('\n') || '(none)'}\n\n${history ? `Earlier messages in these threads, for context only:\n${history}\n\n` : ''}New messages to triage:\n\n${fresh.map((m) => fmtMessage(m, ctx)).join('\n\n')}`;
 
   let result;
   limiter.record();
@@ -277,6 +295,8 @@ async function triagePhase() {
     await q(`UPDATE "JarvisInbound" SET "triagedAt" = now() WHERE id = ANY($1) AND COALESCE((triage->>'tries')::int, 0) >= 3`, [fresh.map((m) => m.id)]);
     return 0;
   }
+
+  await applyResolved(result.resolved, { signalIds: new Set(open.map((s) => s.id)), taskIds: new Set(tasks.map((t) => t.id)) }).catch((e) => console.error('[brain] resolve', e.message));
 
   const freshIds = new Set(fresh.map((m) => m.id));
   const byId = new Map(fresh.map((m) => [m.id, m]));
@@ -294,6 +314,8 @@ async function triagePhase() {
 // Called every 45 seconds. Returns the most rows either step handled, so the caller can keep
 // going while a backlog is draining.
 export async function triageOnce() {
+  // Close what the owner or a co-host has already answered before anything is pushed again.
+  await resolveFromReplies().catch((e) => console.error('[brain] resolve from replies', e.message));
   const gated = await gatePhase();
   const triaged = await triagePhase();
   return Math.max(gated, triaged);
@@ -327,7 +349,7 @@ async function saveSignal(item, ids, byId, r) {
   } else if (item.kind === 'task' || item.kind === 'followup' || item.kind === 'opportunity') {
     action = {
       type: 'create_task',
-      payload: { title: item.task.title || item.title, dueDate: item.task.due_date || null, priority: item.task.priority || 'medium', projectId: item.project_id || null },
+      payload: { title: item.task.title || item.title, dueDate: item.task.due_date || null, priority: item.task.priority || 'medium', projectId: item.project_id || null, sameAsTaskId: item.task.same_as_task_id || '', threadId: first.threadKey || null },
     };
     if (item.kind === 'task') autonomy = 'auto';
   } else if (item.kind === 'reply' && item.reply.text) {
@@ -362,11 +384,24 @@ async function saveSignal(item, ids, byId, r) {
   }
 
   const id = newId();
-  await q(
-    `INSERT INTO "JarvisSignal" (id, kind, title, detail, why, score, source, "inboundIds", "projectId", "personKey", action, autonomy, status, "dueAt", "updatedAt")
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'new',$13, now())`,
-    [id, item.kind, clip(item.title, 140), item.detail, item.why, score, first.source, JSON.stringify(ids), projectId, item.person.key || null, action ? JSON.stringify(action) : null, autonomy, validIso(item.due_at) ? new Date(item.due_at) : null],
-  );
+  const base = [id, item.kind, clip(item.title, 140), item.detail, item.why, score, first.source, JSON.stringify(ids), projectId, item.person.key || null, action ? JSON.stringify(action) : null, autonomy, validIso(item.due_at) ? new Date(item.due_at) : null];
+  // A project with a co-host (for example Najeeb on the Airbnb flats): their kinds go to the
+  // co-host first and only come back to the owner if nobody handles them in time.
+  const delegate = await delegationFor(projectId, item.kind);
+  if (schema.ready) {
+    await q(
+      `INSERT INTO "JarvisSignal" (id, kind, title, detail, why, score, source, "inboundIds", "projectId", "personKey", action, autonomy, "dueAt", status, "threadId", "delegatedTo", "escalateAt", "updatedAt")
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17, now())`,
+      [...base, delegate ? 'delegated' : 'new', first.threadKey || null, delegate?.name || null, delegate ? new Date(Date.now() + delegate.mins * 60e3) : null],
+    );
+  } else {
+    await q(
+      `INSERT INTO "JarvisSignal" (id, kind, title, detail, why, score, source, "inboundIds", "projectId", "personKey", action, autonomy, status, "dueAt", "updatedAt")
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'new',$13, now())`,
+      base,
+    );
+  }
+  if (delegate) return;
 
   if (autonomy === 'auto' && action) {
     await enqueue('apply_signal', { signalId: id, auto: true });

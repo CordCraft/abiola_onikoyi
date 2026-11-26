@@ -9,6 +9,7 @@ import { gh } from "@/lib/jarvis/sync/github";
 import { v2Tools, executeV2Tool, V2_TOOL_NAMES } from "@/lib/jarvis/tools-v2";
 import { machineTools, executeMachineTool, MACHINE_TOOL_NAMES } from "@/lib/jarvis/tools-machines";
 import { healthTools, executeHealthTool, HEALTH_TOOL_NAMES } from "@/lib/jarvis/tools-health";
+import { closeItem, mergeTasks, parseRef } from "@/lib/jarvis/items";
 
 // Jarvis tool surface. Read tools run live queries. Write tools apply
 // IMMEDIATELY (no confirmation step) and report a receipt the UI shows with an
@@ -25,7 +26,10 @@ export type SavedRecord = {
     | "decision"
     | "goal"
     | "document"
-    | "github_issue";
+    | "github_issue"
+    | "item_closed"
+    | "task_updated"
+    | "task_merged";
   id: string;
   summary: string;
   undoable: boolean;
@@ -213,12 +217,70 @@ const coreTools = [
   },
   {
     name: "complete_task",
-    description: "Mark a task done. Provide taskId or an exact-enough title.",
+    description: "Mark a task done. Provide taskId or an exact-enough title, and the owner's reason or how it got done when he gave one.",
     input_schema: {
       type: "object" as const,
       properties: {
         taskId: { type: "string" },
         title: { type: "string" },
+        reason: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "close_item",
+    description:
+      "Close any item on the owner's list (a task or a signal) when he says it is done, was handled by someone else, or is no longer needed. ref is 'task-<id>' or 'signal-<id>'. outcome 'done' when it was done, 'dropped' when it is no longer needed. Always pass his reason in his words.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        ref: { type: "string" },
+        outcome: { type: "string", enum: ["done", "dropped"] },
+        reason: { type: "string" },
+      },
+      required: ["ref", "reason"],
+    },
+  },
+  {
+    name: "update_task",
+    description:
+      "Change an open task: new title, due date (YYYY-MM-DD or full ISO time), priority (low|medium|high), status (todo|doing), or note = the owner's plan for it in his words (replaces the old note). When he says he will do it on a day, set dueDate to that day.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        taskId: { type: "string" },
+        title: { type: "string" },
+        dueDate: { type: "string" },
+        priority: { type: "string" },
+        status: { type: "string" },
+        note: { type: "string" },
+      },
+      required: ["taskId"],
+    },
+  },
+  {
+    name: "merge_tasks",
+    description: "Merge duplicate open tasks into one: keeps keepId (earliest due date, highest priority) and archives the duplicates.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        keepId: { type: "string" },
+        duplicateIds: { type: "array", items: { type: "string" } },
+      },
+      required: ["keepId", "duplicateIds"],
+    },
+  },
+  {
+    name: "get_activity",
+    description:
+      "Recent work activity synced from GitHub (commits, PRs), Netlify (deploys), Supabase (project status) and Claude Code sessions, plus current alerts. Use it to check whether something was already done.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        days: { type: "number", description: "How far back, 1 to 90 (default 7)" },
+        source: { type: "string", description: "github | netlify | supabase | claude" },
+        query: { type: "string", description: "Words to match in the title or subject" },
+        projectName: { type: "string" },
       },
     },
   },
@@ -434,7 +496,7 @@ async function findDuplicateTask(
     if (rows[0]) return rows[0];
   } catch {
     const t = await prisma.jarvisTask.findFirst({
-      where: { title: { equals: title, mode: "insensitive" }, status: { not: "done" } },
+      where: { title: { equals: title, mode: "insensitive" }, status: { in: ["todo", "doing"] } },
       include: { project: { select: { name: true } } },
     });
     if (t) return { id: t.id, title: t.title, projectName: t.project?.name ?? null };
@@ -769,6 +831,7 @@ export async function executeTool(
           priority: str(input.priority) ?? "medium",
           dueDate: parseDate(input.dueDate),
           recurrence: recurrence && RECURRENCES.has(recurrence) ? recurrence : null,
+          source: "chat",
         },
       });
       await bump(ref?.id);
@@ -825,14 +888,14 @@ export async function executeTool(
         const title = str(input.title);
         if (title) {
           task = await prisma.jarvisTask.findFirst({
-            where: { title: { contains: title, mode: "insensitive" }, status: { not: "done" } },
+            where: { title: { contains: title, mode: "insensitive" }, status: { in: ["todo", "doing"] } },
           });
         }
       }
       if (!task) return "No matching open task found.";
       await prisma.jarvisTask.update({
         where: { id: task.id },
-        data: { status: "done", completedAt: new Date() },
+        data: { status: "done", completedAt: new Date(), closedReason: str(input.reason) ?? null },
       });
       await bump(task.projectId);
       const nextDue = await respawnRecurringTask(task);
@@ -843,6 +906,47 @@ export async function executeTool(
         undoable: true,
       });
       return `SAVED: task "${task.title}" marked done.${nextDue ? ` It repeats ${task.recurrence}; the next occurrence is due ${formatDate(nextDue)}.` : ""}`;
+    }
+    case "close_item": {
+      const ref = str(input.ref) ?? "";
+      if (!parseRef(ref)) return "ref must look like task-<id> or signal-<id>.";
+      const reason = str(input.reason) ?? "";
+      const r = await closeItem(ref, reason, input.outcome === "dropped" && ref.startsWith("task") ? "archived" : "done");
+      if (r.startsWith("Closed")) saved({ kind: "item_closed", id: ref, summary: r, undoable: false });
+      return r;
+    }
+    case "update_task": {
+      const id = str(input.taskId);
+      if (!id) return "taskId is required.";
+      const t = await prisma.jarvisTask.findUnique({ where: { id } });
+      if (!t) return "Task not found.";
+      const data: Record<string, unknown> = {};
+      const title = str(input.title);
+      if (title) data.title = title;
+      const due = str(input.dueDate);
+      if (due) {
+        const d = new Date(due);
+        if (Number.isNaN(d.getTime())) return "dueDate is not a date.";
+        data.dueDate = d;
+      }
+      const pr = str(input.priority);
+      if (pr && ["low", "medium", "high"].includes(pr)) data.priority = pr;
+      const st = str(input.status);
+      if (st && ["todo", "doing"].includes(st)) data.status = st;
+      const note = str(input.note);
+      if (note) data.note = note.slice(0, 2000);
+      if (!Object.keys(data).length) return "Nothing to change.";
+      await prisma.jarvisTask.update({ where: { id }, data });
+      saved({ kind: "task_updated", id, summary: `Updated "${title ?? t.title}"`, undoable: false });
+      return `SAVED: task "${title ?? t.title}" updated (${Object.keys(data).join(", ")}).`;
+    }
+    case "merge_tasks": {
+      const keep = str(input.keepId);
+      const dups = Array.isArray(input.duplicateIds) ? (input.duplicateIds as unknown[]).map(String) : [];
+      if (!keep || !dups.length) return "keepId and duplicateIds are required.";
+      const r = await mergeTasks(keep, dups);
+      if (r.startsWith("Merged")) saved({ kind: "task_merged", id: keep, summary: r, undoable: false });
+      return r;
     }
     case "log_note": {
       const body = str(input.body);

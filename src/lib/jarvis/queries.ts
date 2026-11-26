@@ -29,7 +29,7 @@ export async function getOverview() {
       },
     }),
     prisma.jarvisTask.findMany({
-      where: { status: { not: "done" }, dueDate: { not: null } },
+      where: { status: { in: ["todo", "doing"] }, dueDate: { not: null } },
       orderBy: { dueDate: "asc" },
       take: 25,
       include: { project: true },

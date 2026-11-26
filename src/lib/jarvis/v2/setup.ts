@@ -62,6 +62,9 @@ const DDL: string[] = [
     "autonomy" TEXT NOT NULL DEFAULT 'ask',
     "status" TEXT NOT NULL DEFAULT 'new',
     "result" JSONB,
+    "threadId" TEXT,
+    "delegatedTo" TEXT,
+    "escalateAt" TIMESTAMP(3),
     "dueAt" TIMESTAMP(3),
     "snoozeUntil" TIMESTAMP(3),
     "pushedAt" TIMESTAMP(3),
@@ -144,11 +147,18 @@ const DDL: string[] = [
   `ALTER TABLE "JarvisPerson" ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE "JarvisPasskey" ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE "JarvisMachine" ENABLE ROW LEVEL SECURITY`,
+  // Items: every task and signal can carry its own chat, closes itself and
+  // can wait for a delegate (see src/lib/jarvis/items.ts).
+  `ALTER TABLE "JarvisTask" ADD COLUMN IF NOT EXISTS "threadId" TEXT, ADD COLUMN IF NOT EXISTS "source" TEXT, ADD COLUMN IF NOT EXISTS "note" TEXT, ADD COLUMN IF NOT EXISTS "closedReason" TEXT, ADD COLUMN IF NOT EXISTS "mergedInto" TEXT`,
+  `ALTER TABLE "JarvisSignal" ADD COLUMN IF NOT EXISTS "threadId" TEXT, ADD COLUMN IF NOT EXISTS "delegatedTo" TEXT, ADD COLUMN IF NOT EXISTS "escalateAt" TIMESTAMP(3)`,
+  `ALTER TABLE "JarvisProject" ADD COLUMN IF NOT EXISTS "delegateName" TEXT, ADD COLUMN IF NOT EXISTS "delegateContact" TEXT, ADD COLUMN IF NOT EXISTS "escalateMins" INTEGER, ADD COLUMN IF NOT EXISTS "delegateKinds" TEXT`,
 ];
 
 let ensured: Promise<void> | null = null;
 
 export function ensureV2Tables(): Promise<void> {
+  // Local SQLite test runs get every column from `prisma db push`.
+  if (process.env.DATABASE_URL?.startsWith("file:")) return Promise.resolve();
   if (!ensured) {
     ensured = (async () => {
       for (const stmt of DDL) await prisma.$executeRawUnsafe(stmt);

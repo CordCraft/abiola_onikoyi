@@ -24,7 +24,7 @@ export async function POST(req: Request) {
 
   const [dueTasks, newlyStalled] = await Promise.all([
     prisma.jarvisTask.findMany({
-      where: { status: { not: "done" }, dueDate: { lte: endOfTomorrow } },
+      where: { status: { in: ["todo", "doing"] }, dueDate: { lte: endOfTomorrow } },
       orderBy: { dueDate: "asc" },
       take: 6,
       include: { project: { select: { name: true } } },
